@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+.eggs/
+*.db
+*.db-journal
+
+# Node
+node_modules/
+frontend/dist/
+examples/demo_app/frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project temp
+tmp/
+*.log
+.~*
+
+# Internal orchestration artifacts
+.codemaster_memory/
+.codemaster_orchestration/
+.codemaster_research/
+.port_sessions/
+reports/codemaster/
+docs/codemaster/
+
+# Environment
+.env
+!.env.example
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/

@@ -1,0 +1,24 @@
+{
+  "include_globs": [
+    "frontend/src/**/*.tsx",
+    "frontend/src/**/*.ts",
+    "backend/app/**/*.py",
+    "backend/tests/**/*.py"
+  ],
+  "exclude_globs": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/*.min.js",
+    "**/__pycache__/**"
+  ],
+  "preferred_order": [
+    "frontend/src/main.tsx",
+    "frontend/src/App.tsx",
+    "frontend/src/pages/Dashboard.tsx",
+    "frontend/src/pages/Users.tsx",
+    "backend/app/main.py",
+    "backend/app/api.py"
+  ],
+  "line_density_target": 55
+}

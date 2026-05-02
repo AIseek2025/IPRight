@@ -1,0 +1,11 @@
+{
+  "product_name": "智慧园区管理平台",
+  "version": "V1.0",
+  "app_type": "admin_web",
+  "frontend_framework": "react_vite",
+  "backend_framework": "fastapi",
+  "entry_routes": ["/login", "/dashboard"],
+  "demo_accounts": [
+    {"role": "admin", "username": "admin", "password": "admin123"}
+  ]
+}

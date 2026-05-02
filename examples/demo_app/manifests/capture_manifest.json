@@ -1,0 +1,11 @@
+{
+  "scenarios": [
+    {"id": "login-page", "title": "登录页", "route": "/login", "actions": [], "priority": 1},
+    {"id": "dashboard", "title": "系统首页", "route": "/dashboard", "actions": ["login_as_admin"], "requires_auth": true, "priority": 2},
+    {"id": "user-list", "title": "用户管理", "route": "/users", "actions": ["login_as_admin"], "requires_auth": true, "priority": 3},
+    {"id": "device-list", "title": "设备管理", "route": "/devices", "actions": ["login_as_admin"], "requires_auth": true, "priority": 4},
+    {"id": "reports", "title": "报表统计", "route": "/reports", "actions": ["login_as_admin"], "requires_auth": true, "priority": 5},
+    {"id": "alerts", "title": "设备告警", "route": "/alerts", "actions": ["login_as_admin"], "requires_auth": true, "priority": 6},
+    {"id": "settings", "title": "系统设置", "route": "/settings", "actions": ["login_as_admin"], "requires_auth": true, "priority": 7}
+  ]
+}

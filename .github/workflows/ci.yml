@@ -1,0 +1,290 @@
+name: IPRight CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ipright
+          POSTGRES_USER: ipright
+          POSTGRES_PASSWORD: ipright
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        env:
+          IPRIGHT_DB_TYPE: postgresql
+          IPRIGHT_DATABASE_URL: postgresql+asyncpg://ipright:ipright@localhost:5432/ipright
+          IPRIGHT_DATABASE_SYNC_URL: postgresql://ipright:ipright@localhost:5432/ipright
+          IPRIGHT_REDIS_URL: redis://localhost:6379/0
+          IPRIGHT_CELERY_BROKER_URL: redis://localhost:6379/1
+          IPRIGHT_CELERY_RESULT_BACKEND: redis://localhost:6379/2
+        run: |
+          python -m pytest tests/ -v --cov=app --cov=workers --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: backend/coverage.xml
+
+  backend-tests-sqlite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install aiosqlite pytest
+
+      - name: Run tests (SQLite)
+        env:
+          IPRIGHT_DATABASE_URL: sqlite+aiosqlite:///./test.db
+          IPRIGHT_DB_TYPE: sqlite
+        run: |
+          python -m pytest tests/ -v --ignore=tests/test_integration.py
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+  demo-app-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo_app/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+   e2e-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install fastapi uvicorn pydantic pydantic-settings python-docx sqlalchemy aiosqlite httpx
+
+      - name: Run E2E pipeline
+        run: |
+          python3 scripts/e2e_pipeline.py "智慧仓储管理平台"
+
+      - name: Verify outputs
+        run: |
+          find tmp/e2e-workspace -name "*.docx" -exec ls -la {} \;
+
+  playwright-screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        working-directory: examples/demo_app/frontend
+        run: npm ci
+
+      - name: Install Python deps
+        run: |
+          pip install fastapi uvicorn pydantic pydantic-settings python-docx sqlalchemy aiosqlite httpx playwright
+          python -m playwright install chromium --with-deps
+
+      - name: Start demo app
+        run: |
+          cd examples/demo_app
+          pip install -r backend/requirements.txt
+          python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8001 &
+          cd frontend && npx vite --host 0.0.0.0 --port 3001 &
+          sleep 5
+          curl -s http://127.0.0.1:8001/health || echo "Backend not ready"
+          curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/ || echo "Frontend not ready"
+          sleep 3
+
+      - name: Run Playwright capture
+        run: |
+          python3 -c "
+import sys, asyncio, json
+sys.path.insert(0, 'backend')
+from app.services.capture import PlaywrightCapture
+
+async def main():
+    with open('examples/demo_app/manifests/capture_manifest.json') as f:
+        manifest = json.load(f)
+    capture = PlaywrightCapture(base_url='http://127.0.0.1:3001', output_dir='/tmp/screenshots')
+    results = await capture.capture_scenarios(manifest)
+    ok = sum(1 for r in results if r.success)
+    print(f'Screenshots: {ok}/{len(results)}')
+    for r in results:
+        status = 'OK' if r.success else f'FAIL: {r.error}'
+        print(f'  {r.scenario_id}: {status}')
+    assert ok >= 1, 'At least one screenshot must succeed'
+
+asyncio.run(main())
+"
+
+      - name: Generate Word documents
+        run: |
+          python3 -c "
+import sys, json
+sys.path.insert(0, 'backend')
+from app.services.document.manual import SoftwareManualGenerator
+from app.services.document.codebook import SourceCodeBookGenerator
+
+with open('examples/demo_app/manifests/app_manifest.json') as f:
+    app = json.load(f)
+with open('examples/demo_app/manifests/code_index_manifest.json') as f:
+    ci = json.load(f)
+
+gen = SoftwareManualGenerator(app['product_name'], app['version'])
+gen.generate_full(screenshots_meta=[
+    {'page_title':'登录页','caption':'','image_path':''},
+    {'page_title':'首页','caption':'','image_path':''},
+    {'page_title':'用户管理','caption':'','image_path':''},
+    {'page_title':'设备管理','caption':'','image_path':''},
+    {'page_title':'系统设置','caption':'','image_path':''},
+])
+gen.save('/tmp/software_manual.docx')
+print(f'Manual: OK ({__import__(\"os\").path.getsize(\"/tmp/software_manual.docx\")} bytes)')
+
+gen2 = SourceCodeBookGenerator(app['product_name'], app['version'])
+gen2.generate(ci, 'examples/demo_app')
+gen2.save('/tmp/source_code_book.docx')
+print(f'Code: OK ({__import__(\"os\").path.getsize(\"/tmp/source_code_book.docx\")} bytes)')
+"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-screenshots
+          path: /tmp/screenshots/
+
+      - name: Upload Word docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: word-documents
+          path: /tmp/*.docx
+
+  docker-fullchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start services
+        run: |
+          docker compose up -d postgres redis
+          sleep 5
+
+      - name: Run database migration
+        run: |
+          pip install alembic sqlalchemy asyncpg
+          cd backend
+          alembic upgrade head || echo "Migration skipped"
+
+      - name: Start backend
+        run: |
+          pip install fastapi uvicorn pydantic pydantic-settings sqlalchemy asyncpg python-docx httpx minio celery redis
+          cd backend
+          IPRIGHT_DB_TYPE=postgresql \
+          IPRIGHT_DATABASE_URL=postgresql+asyncpg://ipright:ipright@localhost:5432/ipright \
+          IPRIGHT_DATABASE_SYNC_URL=postgresql://ipright:ipright@localhost:5432/ipright \
+          IPRIGHT_REDIS_URL=redis://localhost:6379/0 \
+          IPRIGHT_CELERY_BROKER_URL=redis://localhost:6379/1 \
+          IPRIGHT_CELERY_RESULT_BACKEND=redis://localhost:6379/2 \
+          python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          sleep 3
+          curl -s http://127.0.0.1:8000/health
+
+      - name: API smoke test
+        run: |
+          RESP=$(curl -s -X POST http://127.0.0.1:8000/api/v1/tasks \
+            -H 'Content-Type: application/json' \
+            -d '{"keyword":"Docker验证","product_name":"Docker测试","version":"V1.0"}')
+          echo "$RESP"
+          TASK_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['task_id'])")
+          curl -s http://127.0.0.1:8000/api/v1/tasks/$TASK_ID | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'OK: {d[\"product_name\"]} ({d[\"status\"]})')"

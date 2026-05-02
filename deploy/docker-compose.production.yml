@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ipright-postgres
+    environment:
+      POSTGRES_DB: ipright
+      POSTGRES_USER: ipright
+      POSTGRES_PASSWORD: ${IPRIGHT_POSTGRES_PASSWORD:-ipright_prod_change_me}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - ipright_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ipright-redis
+    ports:
+      - "127.0.0.1:16379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ipright_redisdata:/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: ipright-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${IPRIGHT_MINIO_ACCESS_KEY:-iprightminio}
+      MINIO_ROOT_PASSWORD: ${IPRIGHT_MINIO_SECRET_KEY:-iprightminio_change_me}
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    volumes:
+      - ipright_miniodata:/data
+    restart: unless-stopped
+
+volumes:
+  ipright_pgdata:
+  ipright_redisdata:
+  ipright_miniodata:

@@ -1,0 +1,22 @@
+{
+  "install_commands": [
+    "cd frontend && npm install",
+    "cd backend && pip install -r requirements.txt"
+  ],
+  "start_commands": [
+    "cd frontend && npm run dev -- --host 0.0.0.0 --port 3000",
+    "cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  ],
+  "working_directories": {
+    "frontend": "frontend",
+    "backend": "backend"
+  },
+  "ports": {
+    "frontend": 3000,
+    "backend": 8000
+  },
+  "health_checks": [
+    "http://127.0.0.1:3000/",
+    "http://127.0.0.1:8000/health"
+  ]
+}

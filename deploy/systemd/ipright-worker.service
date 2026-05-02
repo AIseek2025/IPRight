@@ -1,0 +1,15 @@
+[Unit]
+Description=IPRight Celery worker
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/ipright/backend
+EnvironmentFile=/opt/ipright/backend/.env.production
+ExecStart=/opt/ipright/backend/.venv/bin/celery -A workers.celery_app worker --loglevel=info --concurrency=2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
