@@ -47,6 +47,7 @@ check_port_free() {
 echo "== IPRight ECS preflight =="
 
 check_cmd python3
+check_cmd python3.11
 check_cmd node
 check_cmd npm
 check_cmd nginx

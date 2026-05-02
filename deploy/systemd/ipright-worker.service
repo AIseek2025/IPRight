@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
+User=admin
 WorkingDirectory=/opt/ipright/backend
 EnvironmentFile=/opt/ipright/backend/.env.production
 ExecStart=/opt/ipright/backend/.venv/bin/celery -A workers.celery_app worker --loglevel=info --concurrency=2
