@@ -8,6 +8,18 @@ server {
         try_files $uri =404;
     }
 
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ipright.tech www.ipright.tech;
+
+    ssl_certificate /etc/letsencrypt/live/ipright.tech/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ipright.tech/privkey.pem;
+
     root /var/www/ipright/current;
     index index.html;
 
