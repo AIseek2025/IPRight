@@ -28,6 +28,33 @@ pip install --upgrade pip
 pip install -e .
 pip install playwright
 
+echo "-- system packages --"
+if command -v dnf >/dev/null 2>&1; then
+  sudo dnf install -y \
+    chromium-headless \
+    libreoffice-core \
+    libreoffice-writer \
+    atk \
+    at-spi2-atk \
+    gtk3 \
+    libXcomposite \
+    libXdamage \
+    libXScrnSaver
+elif command -v yum >/dev/null 2>&1; then
+  sudo yum install -y \
+    chromium-headless \
+    libreoffice-core \
+    libreoffice-writer \
+    atk \
+    at-spi2-atk \
+    gtk3 \
+    libXcomposite \
+    libXdamage \
+    libXScrnSaver
+else
+  echo "warning: unsupported package manager; install Chromium and LibreOffice deps manually" >&2
+fi
+
 if [ -f "$ENV_FILE" ]; then
   set -a
   . "$ENV_FILE"

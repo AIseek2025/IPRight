@@ -265,23 +265,38 @@ curl -fsSL https://www.ipright.tech/health
 
 ---
 
-## 7.3 当前已知剩余缺口
+## 7.3 2026-05-03 生产截图与导出能力补齐结果
 
-本轮“站点上线”已经完成，但以下能力仍需补齐后再视为“生产截图/文档导出能力完全就绪”：
+本轮已继续补齐服务器端截图与文档导出依赖，当前可视为“生产截图/文档导出能力已就绪”：
 
-1. `playwright` 浏览器本体已安装，但系统浏览器依赖尚未完全补齐
-   - 当前 `python -m playwright install-deps chromium` 会失败
-   - 根因是阿里云当前系统不是 Playwright 官方支持的 `apt-get` 发行版
-   - 需要后续按 RPM 包手工安装 Chromium 运行依赖
+1. 已通过 `dnf` 安装 RPM 依赖：
+   - `chromium-headless`
+   - `libreoffice-core`
+   - `libreoffice-writer`
+   - `atk`
+   - `at-spi2-atk`
+   - `gtk3`
+   - `libXcomposite`
+   - `libXdamage`
+   - `libXScrnSaver`
 
-2. `LibreOffice` 尚未安装成功
-   - 因此 `.docx -> .pdf` 导出能力当前不能视为已完全就绪
+2. `LibreOffice` 的 `.docx -> .pdf` 转换已真实验证通过
+   - 已在服务器上生成临时 `smoke.docx`
+   - 已成功导出 `smoke.pdf`
 
-3. 静态发布的 `current` 必须保持为软链
+3. `Playwright` 截图能力已真实验证通过
+   - 已使用生产机 Python 虚拟环境内的 `playwright` 启动 Chromium
+   - 已成功生成 `/tmp/ipright-home.png`
+
+4. `python -m playwright install-deps chromium` 在该系统仍不适合作为主安装方式
+   - 根因是阿里云当前系统不是 Playwright 官方预设的 `apt-get` 发行版
+   - 正确做法是直接用 `dnf/yum` 安装对应 RPM 依赖
+
+5. 静态发布的 `current` 仍必须保持为软链
    - 不可预先把 `/var/www/ipright/current` 建成普通目录
    - 否则会出现首页 `403` 和 `index.html` 丢失问题
 
-4. 健康检查公网口径统一使用：
+6. 健康检查公网口径统一使用：
 
 ```bash
 curl -fsSL https://ipright.tech/health
