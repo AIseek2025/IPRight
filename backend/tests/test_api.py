@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -87,3 +88,39 @@ class TestExportAPI:
     async def test_download_not_found(self, async_client):
         resp = await async_client.get("/api/v1/exports/00000000-0000-0000-0000-000000000000/download")
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestTaskBundleAPI:
+    async def test_task_bundle_not_found(self, async_client):
+        resp = await async_client.get("/api/v1/tasks/00000000-0000-0000-0000-000000000000/bundle/download")
+        assert resp.status_code == 404
+
+    async def test_task_bundle_download(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle测试", "product_name": "下载测试系统"})
+        assert resp.status_code == 201
+        task_id = resp.json()["data"]["task_id"]
+
+        task_root = tmp_path / "tasks" / task_id
+        (task_root / "workspace" / "prd").mkdir(parents=True, exist_ok=True)
+        (task_root / "artifacts" / "screenshots").mkdir(parents=True, exist_ok=True)
+        (task_root / "builds" / "build_001" / "exports").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "prd" / "product_prd.md").write_text("# PRD", encoding="utf-8")
+        (task_root / "artifacts" / "screenshots" / "home.png").write_bytes(b"png-data")
+        (task_root / "builds" / "build_001" / "exports" / "software_manual.docx").write_bytes(b"docx-data")
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp2.status_code == 200
+        assert resp2.headers["content-type"] == "application/zip"
+
+        bundle_path = tmp_path / "bundle.zip"
+        bundle_path.write_bytes(resp2.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert any(name.endswith("/workspace/prd/product_prd.md") for name in names)
+            assert any(name.endswith("/artifacts/screenshots/home.png") for name in names)
+            assert any(name.endswith("/builds/build_001/exports/software_manual.docx") for name in names)

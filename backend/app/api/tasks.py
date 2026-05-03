@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import uuid
+import zipfile
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
 from app.schemas.api import (
@@ -30,6 +35,48 @@ from app.schemas.api import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
+
+
+def _task_root(task_id: uuid.UUID) -> Path:
+    return Path(settings.WORKSPACE_ROOT) / "tasks" / str(task_id)
+
+
+def _slugify_name(value: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", value.strip())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized or "ipright"
+
+
+def _build_bundle(task: Task) -> tuple[Path, str]:
+    task_root = _task_root(task.id)
+    if not task_root.exists():
+        raise HTTPException(status_code=404, detail={"code": "TASK_WORKSPACE_NOT_FOUND", "message": "task workspace not found"})
+
+    downloads_dir = task_root / "downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = _slugify_name(task.product_name)
+    version = _slugify_name(task.version or "V1.0")
+    bundle_name = f"{slug}_{version}_{str(task.id)[:8]}_full_delivery.zip"
+    bundle_path = downloads_dir / bundle_name
+
+    root_prefix = Path(bundle_name.replace(".zip", ""))
+
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for child in sorted(task_root.iterdir(), key=lambda p: p.name):
+            if child.name == "downloads":
+                continue
+            if child.is_dir():
+                for file_path in sorted(child.rglob("*")):
+                    if file_path.is_dir():
+                        continue
+                    arcname = root_prefix / file_path.relative_to(task_root)
+                    zf.write(file_path, arcname.as_posix())
+            elif child.is_file():
+                arcname = root_prefix / child.relative_to(task_root)
+                zf.write(child, arcname.as_posix())
+
+    return bundle_path, bundle_name
 
 
 @router.post("/tasks", status_code=status.HTTP_201_CREATED)
@@ -153,6 +200,23 @@ async def get_task_exports(task_id: uuid.UUID, db: AsyncSession = Depends(get_db
     exports = exports_q.scalars().all()
     items = [ExportItem.model_validate(e) for e in exports]
     return {"code": "OK", "message": "success", "data": ExportListResponse(items=items).model_dump()}
+
+
+@router.get("/tasks/{task_id}/bundle/download")
+async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+
+    bundle_path, bundle_name = _build_bundle(task)
+    if not bundle_path.exists():
+        raise HTTPException(status_code=404, detail={"code": "TASK_BUNDLE_NOT_FOUND", "message": "bundle generation failed"})
+
+    return FileResponse(
+        path=bundle_path,
+        filename=bundle_name,
+        media_type="application/zip",
+    )
 
 
 @router.get("/tasks/{task_id}/screenshots")

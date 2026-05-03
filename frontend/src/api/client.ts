@@ -85,3 +85,7 @@ export async function cancelTask(taskId: string) {
 export function getExportDownload(exportId: string): string {
   return `/api/v1/exports/${exportId}/download`;
 }
+
+export function getTaskBundleDownload(taskId: string): string {
+  return `/api/v1/tasks/${taskId}/bundle/download`;
+}

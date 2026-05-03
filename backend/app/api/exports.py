@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import mimetypes
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -39,8 +41,8 @@ async def download_export(export_id: uuid.UUID, db: AsyncSession = Depends(get_d
     storage_root = settings.WORKSPACE_ROOT
     file_path = f"{storage_root}/tasks/{export.task_id}/builds/{export.build_id}/exports/{export.file_name}"
 
-    import os
     if os.path.exists(file_path):
-        return FileResponse(file_path, filename=export.file_name, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        media_type = mimetypes.guess_type(export.file_name)[0] or "application/octet-stream"
+        return FileResponse(file_path, filename=export.file_name, media_type=media_type)
 
     return StreamingResponse(iter([b""]), status_code=204)

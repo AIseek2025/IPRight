@@ -28,6 +28,7 @@ import {
   getTaskArtifacts,
   getTaskScreenshots,
   getExportDownload,
+  getTaskBundleDownload,
   retryTask,
   cancelTask,
 } from '@/api/client';
@@ -153,6 +154,9 @@ export default function TaskDetail() {
   const { task, timeline, exports } = dashboard;
   const progress = getProgress(task.status);
   const isTerminal = ['completed', 'failed', 'cancelled'].includes(task.status);
+  const readyExports = exports.filter((exp) => exp.status === 'ready');
+  const manualExport = readyExports.find((exp) => exp.file_name === 'software_manual.docx');
+  const codeBookExport = readyExports.find((exp) => exp.file_name === 'source_code_book.docx');
 
   return (
     <div>
@@ -300,6 +304,39 @@ export default function TaskDetail() {
 
       <div className="page-container">
         <Title level={5}>可下载文件</Title>
+        <Space style={{ marginBottom: 16 }} wrap>
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            href={getTaskBundleDownload(task.id)}
+            target="_blank"
+            disabled={!isTerminal}
+          >
+            下载整套软件/文件/文档 ZIP
+          </Button>
+          <Button
+            icon={<DownloadOutlined />}
+            href={manualExport ? getExportDownload(manualExport.id) : undefined}
+            target="_blank"
+            disabled={!manualExport}
+          >
+            下载软件说明书
+          </Button>
+          <Button
+            icon={<DownloadOutlined />}
+            href={codeBookExport ? getExportDownload(codeBookExport.id) : undefined}
+            target="_blank"
+            disabled={!codeBookExport}
+          >
+            下载源码文档
+          </Button>
+        </Space>
+        <Alert
+          style={{ marginBottom: 16 }}
+          type="info"
+          showIcon
+          message="整套 ZIP 包含当前任务目录下的软件源码、运行工作区、PRD/清单、截图工件、构建产物与导出文档。"
+        />
         {exports.length === 0 ? (
           <Empty
             description={isTerminal ? '未生成导出文件' : '请等待任务完成'}
