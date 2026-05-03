@@ -222,6 +222,75 @@ LLM_FALLBACK_MODEL=deepseek-v4-flash
 
 ---
 
+## 7.2 2026-05-03 真实上线结果
+
+本轮已真实完成：
+
+1. 本地 `IPRight` 独立 Git 仓库初始化完成，并已推送到 `AIseek2025/IPRight`
+2. 线上代码目录落到 `/opt/ipright`
+3. 基础设施容器已启动：
+   - `ipright-postgres`
+   - `ipright-redis`
+   - `ipright-minio`
+4. 生产环境变量已落到：
+   - `/opt/ipright/.deploy.env`
+   - `/opt/ipright/backend/.env.production`
+5. 后端与 worker 已以 systemd 方式运行：
+   - `ipright-api`
+   - `ipright-worker`
+6. 两个服务已启用开机自启
+7. Nginx 站点配置已落到 `/etc/nginx/conf.d/ipright.conf`
+8. HTTPS 证书已签发成功：
+   - 证书名：`ipright.tech`
+   - 域名：`ipright.tech`、`www.ipright.tech`
+   - 到期时间：`2026-07-31 23:00:21+00:00`
+9. 公网健康检查已通过：
+
+```bash
+curl -fsSL https://ipright.tech/health
+curl -fsSL https://www.ipright.tech/health
+```
+
+返回：
+
+```json
+{"status":"ok","version":"0.1.0"}
+```
+
+10. 当前线上代码提交：
+
+```text
+539fb9c
+```
+
+---
+
+## 7.3 当前已知剩余缺口
+
+本轮“站点上线”已经完成，但以下能力仍需补齐后再视为“生产截图/文档导出能力完全就绪”：
+
+1. `playwright` 浏览器本体已安装，但系统浏览器依赖尚未完全补齐
+   - 当前 `python -m playwright install-deps chromium` 会失败
+   - 根因是阿里云当前系统不是 Playwright 官方支持的 `apt-get` 发行版
+   - 需要后续按 RPM 包手工安装 Chromium 运行依赖
+
+2. `LibreOffice` 尚未安装成功
+   - 因此 `.docx -> .pdf` 导出能力当前不能视为已完全就绪
+
+3. 静态发布的 `current` 必须保持为软链
+   - 不可预先把 `/var/www/ipright/current` 建成普通目录
+   - 否则会出现首页 `403` 和 `index.html` 丢失问题
+
+4. 健康检查公网口径统一使用：
+
+```bash
+curl -fsSL https://ipright.tech/health
+```
+
+不要用 `HEAD` 方法探测该接口，因为当前后端只接受 `GET`
+
+---
+
 ## 8. 基础设施推荐部署方式
 
 推荐使用：
