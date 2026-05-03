@@ -32,21 +32,49 @@ class DemoRunner:
     def __init__(self, output_dir: Optional[Path] = None):
         self.output_dir = output_dir or PROJECT_ROOT / "tmp" / "demo_output"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir = self.output_dir / "logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         self.frontend_proc = None
         self.backend_proc = None
         self.task_id = uuid.uuid4().hex[:8]
 
+    def _tail_log(self, path: Path, *, lines: int = 20) -> str:
+        if not path.exists():
+            return "(log file missing)"
+        content = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return "\n".join(content[-lines:]) if content else "(log file empty)"
+
+    def _ensure_frontend_dependencies(self) -> None:
+        frontend_dir = DEMO_APP / "frontend"
+        node_modules = frontend_dir / "node_modules"
+        if node_modules.exists():
+            return
+
+        log("Installing demo frontend dependencies (npm ci)...")
+        subprocess.run(
+            ["npm", "ci"],
+            cwd=str(frontend_dir),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
     def start_services(self) -> bool:
         log("Starting demo app services...")
+        backend_log = self.log_dir / "demo_backend.log"
+        frontend_log = self.log_dir / "demo_frontend.log"
+        backend_log.write_text("", encoding="utf-8")
+        frontend_log.write_text("", encoding="utf-8")
 
         try:
             backend_path = DEMO_APP / "backend"
             log(f"Starting backend (uvicorn)...")
+            backend_fp = backend_log.open("w", encoding="utf-8")
             self.backend_proc = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"],
+                [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001"],
                 cwd=str(backend_path),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=backend_fp,
+                stderr=subprocess.STDOUT,
             )
             log(f"  Backend PID: {self.backend_proc.pid}")
         except Exception as e:
@@ -56,12 +84,23 @@ class DemoRunner:
         time.sleep(2)
 
         try:
-            log("Starting frontend (Vite)...")
-            self.frontend_proc = subprocess.Popen(
-                ["npx", "vite", "--host", "0.0.0.0", "--port", "3001"],
-                cwd=str(DEMO_APP / "frontend"),
+            self._ensure_frontend_dependencies()
+            frontend_path = DEMO_APP / "frontend"
+            log("Building demo frontend...")
+            subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(frontend_path),
+                check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+            )
+            log("Starting frontend (Vite preview)...")
+            frontend_fp = frontend_log.open("w", encoding="utf-8")
+            self.frontend_proc = subprocess.Popen(
+                ["npx", "vite", "preview", "--host", "127.0.0.1", "--port", "3001", "--strictPort"],
+                cwd=str(frontend_path),
+                stdout=frontend_fp,
+                stderr=subprocess.STDOUT,
             )
             log(f"  Frontend PID: {self.frontend_proc.pid}")
         except Exception as e:
@@ -100,6 +139,10 @@ class DemoRunner:
             time.sleep(1)
 
         log(f"  Health check timeout. Backend: {backend_ok}, Frontend: {frontend_ok}")
+        log("  Backend log tail:")
+        log(self._tail_log(self.log_dir / "demo_backend.log"))
+        log("  Frontend log tail:")
+        log(self._tail_log(self.log_dir / "demo_frontend.log"))
         return backend_ok
 
     def capture_screenshots(self) -> list[dict]:

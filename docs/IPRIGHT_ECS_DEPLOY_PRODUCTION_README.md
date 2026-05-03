@@ -306,6 +306,25 @@ curl -fsSL https://ipright.tech/health
 
 ---
 
+## 7.4 2026-05-03 Demo Runner 加固结果
+
+为保证服务器或新环境上的全链路验收更稳定，`scripts/demo_runner.py` 已做如下加固：
+
+1. 若示例前端缺少 `node_modules`，会自动执行 `npm ci`
+2. 前端不再直接起开发态 `vite dev`
+3. 改为先 `npm run build`，再使用 `vite preview --host 127.0.0.1 --port 3001 --strictPort`
+4. 前后端启动日志会写入 `tmp/demo_output/logs/`
+5. 当健康检查失败时，会打印前后端日志尾部，便于快速定位问题
+
+本地最新实测结果：
+
+- `scripts/demo_runner.py` 执行通过
+- 截图结果：`7/7`
+- 说明书导出：`software_manual.docx` 成功
+- 源码文档导出：`source_code_book.docx` 成功
+
+---
+
 ## 8. 基础设施推荐部署方式
 
 推荐使用：
