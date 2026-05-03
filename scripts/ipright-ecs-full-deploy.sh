@@ -56,6 +56,9 @@ npm run build
 echo "-- publish static --"
 sudo mkdir -p "$STATIC_RELEASE"
 sudo rsync -a --delete dist/ "$STATIC_RELEASE"/
+if [ -d "$STATIC_ROOT/current" ] && [ ! -L "$STATIC_ROOT/current" ]; then
+  sudo rm -rf "$STATIC_ROOT/current"
+fi
 sudo ln -sfn "$STATIC_RELEASE" "$STATIC_ROOT/current"
 
 echo "-- restart services --"
