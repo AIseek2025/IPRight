@@ -325,6 +325,47 @@ curl -fsSL https://ipright.tech/health
 
 ---
 
+## 7.5 2026-05-03 ECS 最终复跑结果
+
+已在 ECS 上用最新 `demo_runner.py` 重新执行整条演示验收链，并把产物拉回本地复核：
+
+1. 服务启动：成功
+2. 截图结果：`7/7`
+3. 说明书 Word：成功
+4. 源码文档 Word：成功
+5. 说明书 PDF：成功
+6. 源码文档 PDF：成功
+
+本地回拉产物目录：
+
+```text
+tmp/ecs_acceptance/
+```
+
+其中包含：
+
+- `report.json`
+- `screenshot_manifest.json`
+- `exports/software_manual.docx`
+- `exports/software_manual.pdf`
+- `exports/source_code_book.docx`
+- `exports/source_code_book.pdf`
+
+本轮也新增了一个便于后续无人值守复跑的脚本：
+
+```text
+scripts/ecs_acceptance_pull.py
+```
+
+该脚本能力：
+
+- 上传最新 `demo_runner.py` 到 ECS
+- 远端后台运行验收链
+- 轮询完成标记
+- 把 `report.json`、截图清单和导出产物拉回本地
+
+---
+
 ## 8. 基础设施推荐部署方式
 
 推荐使用：

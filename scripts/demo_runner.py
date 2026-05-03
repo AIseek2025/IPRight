@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,18 @@ class DemoRunner:
         self.frontend_proc = None
         self.backend_proc = None
         self.task_id = uuid.uuid4().hex[:8]
+        self.backend_port = self._find_free_port(8001)
+        self.frontend_port = self._find_free_port(3001)
+
+    def _find_free_port(self, preferred_port: int) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", preferred_port))
+                return preferred_port
+            except OSError:
+                sock.bind(("127.0.0.1", 0))
+                return int(sock.getsockname()[1])
 
     def _tail_log(self, path: Path, *, lines: int = 20) -> str:
         if not path.exists():
@@ -71,12 +84,21 @@ class DemoRunner:
             log(f"Starting backend (uvicorn)...")
             backend_fp = backend_log.open("w", encoding="utf-8")
             self.backend_proc = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001"],
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "app.main:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.backend_port),
+                ],
                 cwd=str(backend_path),
                 stdout=backend_fp,
                 stderr=subprocess.STDOUT,
             )
-            log(f"  Backend PID: {self.backend_proc.pid}")
+            log(f"  Backend PID: {self.backend_proc.pid} (port {self.backend_port})")
         except Exception as e:
             log(f"  Backend start failed: {e}")
             return False
@@ -97,12 +119,21 @@ class DemoRunner:
             log("Starting frontend (Vite preview)...")
             frontend_fp = frontend_log.open("w", encoding="utf-8")
             self.frontend_proc = subprocess.Popen(
-                ["npx", "vite", "preview", "--host", "127.0.0.1", "--port", "3001", "--strictPort"],
+                [
+                    "npx",
+                    "vite",
+                    "preview",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.frontend_port),
+                    "--strictPort",
+                ],
                 cwd=str(frontend_path),
                 stdout=frontend_fp,
                 stderr=subprocess.STDOUT,
             )
-            log(f"  Frontend PID: {self.frontend_proc.pid}")
+            log(f"  Frontend PID: {self.frontend_proc.pid} (port {self.frontend_port})")
         except Exception as e:
             log(f"  Frontend start failed: {e}")
             self.stop_services()
@@ -118,7 +149,7 @@ class DemoRunner:
 
         while time.time() - start < timeout:
             try:
-                resp = httpx.get("http://127.0.0.1:8001/health", timeout=2)
+                resp = httpx.get(f"http://127.0.0.1:{self.backend_port}/health", timeout=2)
                 if resp.status_code == 200:
                     if not backend_ok:
                         log(f"  Backend healthy: {resp.json()}")
@@ -127,7 +158,7 @@ class DemoRunner:
                 pass
 
             try:
-                resp = httpx.get("http://127.0.0.1:3001/", timeout=2, follow_redirects=True)
+                resp = httpx.get(f"http://127.0.0.1:{self.frontend_port}/", timeout=2, follow_redirects=True)
                 if resp.status_code < 500:
                     frontend_ok = True
             except Exception:
@@ -160,7 +191,7 @@ class DemoRunner:
         capture_manifest = json.loads(capture_manifest_path.read_text(encoding="utf-8"))
 
         capture = PlaywrightCapture(
-            base_url="http://127.0.0.1:3001",
+            base_url=f"http://127.0.0.1:{self.frontend_port}",
             output_dir=str(screenshots_dir),
             headless=True,
         )
