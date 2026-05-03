@@ -65,6 +65,7 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                 sr = await service.create_stage_run(build, stage_name.value)
                 task.status = next_status.value
                 task.current_stage = next_status.value
+                await service.mark_build_running(build, stage_name.value)
                 await db.flush()
 
                 try:
@@ -78,18 +79,21 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                         await service.complete_stage_run(sr)
                     else:
                         await service.fail_stage_run(sr, result.error or "unknown error")
+                        await service.mark_build_failed(build, result.error or "unknown error")
                         await service.mark_failed(task, result.error or "unknown error")
                         await db.commit()
                         return
                 except Exception as e:
                     logger.exception(f"Stage {stage_name.value} failed")
                     await service.fail_stage_run(sr, str(e))
+                    await service.mark_build_failed(build, str(e))
                     await service.mark_failed(task, str(e))
                     await db.commit()
                     return
 
             current_status = next_status
             if current_status == TopLevelStatus.COMPLETED:
+                await service.mark_build_completed(build)
                 await service.mark_completed(task)
                 await db.commit()
                 return
@@ -100,7 +104,7 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
 def _status_to_stage(status: TopLevelStatus) -> StageName | None:
     mapping = {
         TopLevelStatus.PLANNING: StageName.PLAN,
-        TopLevelStatus.CODING: StageName.BUILD,
+        TopLevelStatus.CODING: None,
         TopLevelStatus.BUILDING: StageName.BUILD,
         TopLevelStatus.RUNNING: StageName.VERIFY_RUN,
         TopLevelStatus.CAPTURING: StageName.CAPTURE,

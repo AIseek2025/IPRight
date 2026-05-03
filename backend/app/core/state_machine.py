@@ -99,7 +99,7 @@ STAGE_TRANSITIONS: dict[TopLevelStatus, TopLevelStatus] = {
 
 TOPLEVEL_TO_STAGE: dict[TopLevelStatus, StageName | None] = {
     TopLevelStatus.PLANNING: StageName.PLAN,
-    TopLevelStatus.CODING: StageName.BUILD,
+    TopLevelStatus.CODING: None,
     TopLevelStatus.BUILDING: StageName.BUILD,
     TopLevelStatus.RUNNING: StageName.VERIFY_RUN,
     TopLevelStatus.CAPTURING: StageName.CAPTURE,

@@ -35,7 +35,9 @@ class TestStageHandlers:
 
         mock_session = AsyncMock()
         mock_session_factory = MagicMock()
-        mock_session_factory.return_value.__aenter__.return_value = mock_session
+        mock_session_scope = AsyncMock()
+        mock_session_scope.__aenter__.return_value = mock_session
+        mock_session_factory.return_value.return_value = mock_session_scope
 
         async def _run():
             ctx = StageContext(
@@ -56,7 +58,8 @@ class TestStageHandlers:
 
     def test_status_to_stage_mapping(self):
         assert _status_to_stage(TopLevelStatus.PLANNING) == StageName.PLAN
-        assert _status_to_stage(TopLevelStatus.CODING) == StageName.BUILD
+        assert _status_to_stage(TopLevelStatus.CODING) is None
+        assert _status_to_stage(TopLevelStatus.BUILDING) == StageName.BUILD
         assert _status_to_stage(TopLevelStatus.RUNNING) == StageName.VERIFY_RUN
         assert _status_to_stage(TopLevelStatus.CAPTURING) == StageName.CAPTURE
         assert _status_to_stage(TopLevelStatus.WRITING_MANUAL) == StageName.COMPOSE_MANUAL

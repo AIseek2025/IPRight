@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import os
 
 from typing import AsyncGenerator
 
@@ -10,16 +12,37 @@ from app.core.config import settings
 
 _engine = None
 _async_session_factory = None
+_engine_pid = None
+_engine_loop_id = None
+
+
+def _current_loop_id():
+    try:
+        return id(asyncio.get_running_loop())
+    except RuntimeError:
+        return None
 
 
 def _get_engine():
-    global _engine
-    if _engine is None:
+    global _engine, _async_session_factory, _engine_pid, _engine_loop_id
+    current_pid = os.getpid()
+    current_loop_id = _current_loop_id()
+
+    if _engine is None or _engine_pid != current_pid or _engine_loop_id != current_loop_id:
         db_url = settings.DATABASE_URL
         if "sqlite" in db_url:
             _engine = create_async_engine(db_url, echo=settings.DEBUG)
         else:
-            _engine = create_async_engine(db_url, echo=settings.DEBUG, pool_size=10)
+            # Celery tasks call asyncio.run() per execution, so pooled asyncpg
+            # connections can become bound to a previous event loop.
+            _engine = create_async_engine(
+                db_url,
+                echo=settings.DEBUG,
+                poolclass=pool.NullPool,
+            )
+        _async_session_factory = None
+        _engine_pid = current_pid
+        _engine_loop_id = current_loop_id
     return _engine
 
 

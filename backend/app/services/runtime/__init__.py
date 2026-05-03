@@ -76,12 +76,14 @@ class SandboxRuntime:
         report = RuntimeHealthReport(success=False)
 
         port_patterns = run_manifest.get("ports", {})
+        frontend_port = port_patterns.get("frontend")
+        backend_port = port_patterns.get("backend")
         if not health_urls and port_patterns:
             for name, port in port_patterns.items():
                 health_urls.append(f"http://127.0.0.1:{port}/")
 
         for url in health_urls:
-            await self._check_url(url, report, timeout)
+            await self._check_url(url, report, timeout, frontend_port, backend_port)
 
         if health_urls:
             report.frontend_ok = any(h.get("frontend") for h in report.health_checks)
@@ -90,19 +92,37 @@ class SandboxRuntime:
         report.success = all(h.get("ok") for h in report.health_checks)
         return report
 
-    async def _check_url(self, url: str, report: RuntimeHealthReport, timeout: int) -> None:
+    async def _check_url(
+        self,
+        url: str,
+        report: RuntimeHealthReport,
+        timeout: int,
+        frontend_port: int | None,
+        backend_port: int | None,
+    ) -> None:
         async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
             for attempt in range(max(1, timeout // 3)):
                 try:
                     resp = await client.get(url)
                     is_ok = resp.status_code < 500
-                    is_frontend = "/login" in url or ":3000" in url
+                    is_frontend = False
+                    is_backend = False
+
+                    if frontend_port and f":{frontend_port}" in url:
+                        is_frontend = True
+                    elif backend_port and f":{backend_port}" in url:
+                        is_backend = True
+                    elif "/login" in url:
+                        is_frontend = True
+                    elif "/health" in url:
+                        is_backend = True
+
                     report.health_checks.append({
                         "url": url,
                         "status_code": resp.status_code,
                         "ok": is_ok,
                         "frontend": is_frontend,
-                        "backend": not is_frontend,
+                        "backend": is_backend,
                     })
                     if is_ok:
                         return

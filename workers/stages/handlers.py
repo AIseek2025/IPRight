@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -59,7 +60,7 @@ async def _create_artifact(
     local_path: str | None = None,
     metadata: dict | None = None,
 ) -> Artifact:
-    async with db_factory() as db:
+    async with db_factory()() as db:
         artifact = Artifact(
             task_id=uuid.UUID(task_id),
             build_id=uuid.UUID(build_id) if build_id else None,
@@ -85,7 +86,7 @@ def _load_manifest(task_id: str, manifest_name: str) -> dict | None:
 async def run_plan_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[plan] Generating PRD for task {ctx.task_id}")
 
-    async with ctx.db_factory() as db:
+    async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
         if not task:
             return StageResult(success=False, error="Task not found")
@@ -210,7 +211,7 @@ def _template_work_order(task) -> str:
 async def run_build_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[build] Generating app and manifests for task {ctx.task_id}")
 
-    async with ctx.db_factory() as db:
+    async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
         if not task:
             return StageResult(success=False, error="Task not found")
@@ -218,6 +219,17 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     mdir = manifests_dir(ctx.task_id)
     product_name = task.product_name
     version = task.version
+
+    app_root = os.path.join(workspace_path(ctx.task_id), "app")
+    frontend_dst = os.path.join(app_root, "frontend")
+    backend_dst = os.path.join(app_root, "backend")
+    repo_root = Path(__file__).resolve().parents[2]
+    frontend_src = repo_root / "examples" / "demo_app" / "frontend"
+    backend_src = repo_root / "examples" / "demo_app" / "backend"
+
+    os.makedirs(app_root, exist_ok=True)
+    shutil.copytree(frontend_src, frontend_dst, dirs_exist_ok=True)
+    shutil.copytree(backend_src, backend_dst, dirs_exist_ok=True)
 
     app_manifest = {
         "product_name": product_name,
@@ -233,17 +245,17 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
 
     run_manifest = {
         "install_commands": [
-            "cd frontend && npm install",
-            "cd backend && pip install -r requirements.txt",
+            "cd app/frontend && npm install && node node_modules/vite/bin/vite.js build",
+            "/opt/ipright/backend/.venv/bin/python -m pip install -r app/backend/requirements.txt",
         ],
         "start_commands": [
-            "cd frontend && npm run dev -- --host 0.0.0.0 --port 3000",
-            "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+            "cd app/frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 23100 --strictPort",
+            "cd app/backend && /opt/ipright/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 23180",
         ],
-        "ports": {"frontend": 3000, "backend": 8000},
+        "ports": {"frontend": 23100, "backend": 23180},
         "health_checks": [
-            "http://127.0.0.1:3000/",
-            "http://127.0.0.1:8000/health",
+            "http://127.0.0.1:23100/",
+            "http://127.0.0.1:23180/health",
         ],
     }
 
@@ -258,9 +270,9 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
 
     code_index_manifest = {
         "include_globs": [
-            "frontend/src/**/*.ts",
-            "frontend/src/**/*.tsx",
-            "backend/app/**/*.py",
+            "app/frontend/src/**/*.ts",
+            "app/frontend/src/**/*.tsx",
+            "app/backend/app/**/*.py",
         ],
         "exclude_globs": [
             "**/node_modules/**",
@@ -270,10 +282,10 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
             "**/__pycache__/**",
         ],
         "preferred_order": [
-            "frontend/src/main.tsx",
-            "frontend/src/App.tsx",
-            "frontend/src/pages/*.tsx",
-            "backend/app/main.py",
+            "app/frontend/src/main.tsx",
+            "app/frontend/src/App.tsx",
+            "app/frontend/src/pages/*.tsx",
+            "app/backend/app/main.py",
         ],
         "line_density_target": 55,
     }
@@ -338,7 +350,7 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
     if not installed:
         logger.warning(f"[verify_run] Some deps failed to install for task {ctx.task_id}")
 
-    services = await runtime.start_services(run_manifest)
+    await runtime.start_services(run_manifest)
     await asyncio_sleep(5)
 
     health_report = await runtime.run_health_checks(run_manifest, timeout=30)
@@ -347,8 +359,6 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
     if run_manifest.get("ports", {}).get("frontend"):
         port = run_manifest["ports"]["frontend"]
         login_ok = await runtime.check_login_page(f"http://127.0.0.1:{port}")
-
-    runtime.stop_all()
 
     report_path = os.path.join(artifacts_dir(ctx.task_id), "health_report.json")
     report_data = {
@@ -405,9 +415,17 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
 
     output_dir = screenshots_dir(ctx.task_id)
 
+    from app.services.runtime import SandboxRuntime
     from app.services.capture import PlaywrightCapture
+    runtime = SandboxRuntime(workspace_path(ctx.task_id))
+    await runtime.start_services(run_manifest or {})
+    await asyncio_sleep(8)
+
     capture = PlaywrightCapture(base_url=base_url, output_dir=output_dir, headless=True)
-    results = await capture.capture_scenarios(capture_manifest, demo_accounts)
+    try:
+        results = await capture.capture_scenarios(capture_manifest, demo_accounts)
+    finally:
+        runtime.stop_all()
 
     screenshot_manifest_data = []
     for r in results:
@@ -428,7 +446,7 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
                 "screenshot_image", os.path.basename(r.image_path), r.image_path,
             )
 
-        async with ctx.db_factory() as db:
+        async with ctx.db_factory()() as db:
             screenshot = Screenshot(
                 task_id=uuid.UUID(ctx.task_id),
                 build_id=uuid.UUID(ctx.build_id),
@@ -461,7 +479,7 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
 async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[compose_manual] Generating software manual for task {ctx.task_id}")
 
-    async with ctx.db_factory() as db:
+    async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
         if not task:
             return StageResult(success=False, error="Task not found")
@@ -509,7 +527,7 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
 async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[compose_code_book] Generating source code book for task {ctx.task_id}")
 
-    async with ctx.db_factory() as db:
+    async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
         if not task:
             return StageResult(success=False, error="Task not found")
@@ -547,7 +565,7 @@ async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
 async def run_publish_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[publish] Publishing exports for task {ctx.task_id}")
 
-    async with ctx.db_factory() as db:
+    async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
         if not task:
             return StageResult(success=False, error="Task not found")

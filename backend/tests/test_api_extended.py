@@ -8,15 +8,19 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 os.environ["IPRIGHT_DATABASE_URL"] = "sqlite+aiosqlite:///./test_api.db"
 os.environ["IPRIGHT_DB_TYPE"] = "sqlite"
+os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine
+from app.models.db import Build, Task
+from app.services import TaskService
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -47,6 +51,33 @@ class TestTaskLifecycle:
         assert resp2.json()["data"]["keyword"] == "生命周期测试"
         assert resp2.json()["data"]["status"] == "queued"
 
+    async def test_create_task_creates_active_build(self, async_client):
+        resp = await async_client.post(
+            "/api/v1/tasks",
+            json={"keyword": "构建派发测试", "product_name": "构建派发系统"},
+        )
+        assert resp.status_code == 201
+        task_id = resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            assert task.active_build_id is not None
+
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+
+            assert len(builds) == 1
+            assert builds[0].build_no == 1
+            assert builds[0].trigger_type == "create"
+            assert builds[0].status == "queued"
+            assert str(builds[0].id) == str(task.active_build_id)
+
     async def test_create_and_cancel(self, async_client):
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "取消测试"})
         task_id = resp.json()["data"]["task_id"]
@@ -66,6 +97,68 @@ class TestTaskLifecycle:
 
         resp3 = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={"from_stage": "capturing"})
         assert resp3.status_code == 200
+
+    async def test_retry_creates_new_build_and_switches_active_build(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "二次构建测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        retry_resp = await async_client.post(
+            f"/api/v1/tasks/{task_id}/retry",
+            json={"from_stage": "capturing"},
+        )
+        assert retry_resp.status_code == 200
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            assert task.active_build_id is not None
+
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+
+            assert len(builds) == 2
+            assert [build.build_no for build in builds] == [1, 2]
+            assert [build.trigger_type for build in builds] == ["create", "retry"]
+            assert str(builds[-1].id) == str(task.active_build_id)
+
+    async def test_task_service_marks_build_completed(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "构建完成态测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert build is not None
+
+            service = TaskService(session)
+            await service.mark_build_running(build, "verify_run")
+            await service.mark_build_completed(build)
+            await session.commit()
+
+        async with get_session_factory()() as session:
+            build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == uuid.UUID(task_id)).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert build is not None
+            assert build.status == "completed"
+            assert build.current_stage == "completed"
+            assert build.finished_at is not None
 
     async def test_get_dashboard(self, async_client):
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "dashboard测试"})

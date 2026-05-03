@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
+from app.services import TaskService
 from app.schemas.api import (
     ArtifactItem,
     ArtifactListResponse,
@@ -35,6 +37,7 @@ from app.schemas.api import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
+logger = logging.getLogger(__name__)
 
 
 def _task_root(task_id: uuid.UUID) -> Path:
@@ -81,6 +84,7 @@ def _build_bundle(task: Task) -> tuple[Path, str]:
 
 @router.post("/tasks", status_code=status.HTTP_201_CREATED)
 async def create_task(body: TaskCreateRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    service = TaskService(db)
     task = Task(
         id=uuid.uuid4(),
         keyword=body.keyword,
@@ -93,6 +97,8 @@ async def create_task(body: TaskCreateRequest, db: AsyncSession = Depends(get_db
     db.add(task)
     await db.flush()
 
+    build = await service.start_build(task, trigger_type="create")
+
     event = TaskEvent(
         task_id=task.id,
         event_type="task_created",
@@ -102,6 +108,26 @@ async def create_task(body: TaskCreateRequest, db: AsyncSession = Depends(get_db
     db.add(event)
 
     await db.commit()
+
+    if settings.AUTO_DISPATCH_TASKS:
+        try:
+            from workers.celery_app import orchestrate_task
+
+            orchestrate_task.delay(str(task.id), str(build.id))
+        except Exception as exc:
+            logger.exception("Failed to dispatch task %s build %s", task.id, build.id)
+            async with db.begin():
+                fresh_task = await db.get(Task, task.id)
+                if fresh_task:
+                    fresh_task.status = "failed"
+                    fresh_task.current_stage = "planning"
+                db.add(TaskEvent(
+                    task_id=task.id,
+                    build_id=build.id,
+                    event_type="task_dispatch_failed",
+                    title="任务派发失败",
+                    detail=str(exc),
+                ))
 
     return {"code": "OK", "message": "success", "data": TaskCreateResponse(
         task_id=str(task.id), status=task.status
@@ -235,14 +261,38 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
+    service = TaskService(db)
+    build = await service.start_build(task, trigger_type="retry")
+
     event = TaskEvent(
         task_id=task.id,
+        build_id=build.id,
         event_type="task_retry",
         title="任务重试",
         detail=f"从阶段 {body.from_stage} 重试" if body.from_stage else "全局重试",
     )
     db.add(event)
     await db.commit()
+
+    if settings.AUTO_DISPATCH_TASKS:
+        try:
+            from workers.celery_app import orchestrate_task
+
+            orchestrate_task.delay(str(task.id), str(build.id))
+        except Exception as exc:
+            logger.exception("Failed to redispatch task %s build %s", task.id, build.id)
+            async with db.begin():
+                fresh_task = await db.get(Task, task.id)
+                if fresh_task:
+                    fresh_task.status = "failed"
+                    fresh_task.current_stage = body.from_stage or "planning"
+                db.add(TaskEvent(
+                    task_id=task.id,
+                    build_id=build.id,
+                    event_type="task_retry_dispatch_failed",
+                    title="任务重试派发失败",
+                    detail=str(exc),
+                ))
 
     return {"code": "OK", "message": "重试已触发", "data": {"task_id": str(task_id)}}
 

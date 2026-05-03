@@ -39,8 +39,10 @@ class TaskService:
         )
         last_build = last_build_q.scalar()
         build_no = (last_build.build_no + 1) if last_build else 1
+        build_id = uuid.uuid4()
 
         build = Build(
+            id=build_id,
             task_id=task.id,
             build_no=build_no,
             status="queued",
@@ -48,7 +50,8 @@ class TaskService:
             current_stage="plan",
         )
         self.db.add(build)
-        task.active_build_id = build.id
+        task.active_build_id = build_id
+        task.updated_at = datetime.utcnow()
         await self.db.flush()
         return build
 
@@ -72,6 +75,11 @@ class TaskService:
         await self.db.flush()
         return sr
 
+    async def mark_build_running(self, build: Build, stage_name: str) -> None:
+        build.status = StageStatus.RUNNING.value
+        build.current_stage = stage_name
+        await self.db.flush()
+
     async def complete_stage_run(self, stage_run: StageRun) -> None:
         stage_run.status = StageStatus.SUCCEEDED.value
         stage_run.finished_at = datetime.utcnow()
@@ -81,6 +89,19 @@ class TaskService:
         stage_run.status = StageStatus.FAILED.value
         stage_run.finished_at = datetime.utcnow()
         stage_run.failure_reason = reason
+        await self.db.flush()
+
+    async def mark_build_failed(self, build: Build, reason: str) -> None:
+        build.status = TopLevelStatus.FAILED.value
+        build.current_stage = TopLevelStatus.FAILED.value
+        build.failure_reason = reason
+        build.finished_at = datetime.utcnow()
+        await self.db.flush()
+
+    async def mark_build_completed(self, build: Build) -> None:
+        build.status = TopLevelStatus.COMPLETED.value
+        build.current_stage = TopLevelStatus.COMPLETED.value
+        build.finished_at = datetime.utcnow()
         await self.db.flush()
 
     async def advance_task(self, task: Task) -> "Optional[TopLevelStatus]":
@@ -93,6 +114,7 @@ class TaskService:
 
     async def mark_failed(self, task: Task, reason: str) -> None:
         task.status = TopLevelStatus.FAILED.value
+        task.current_stage = TopLevelStatus.FAILED.value
         task.updated_at = datetime.utcnow()
         event = TaskEvent(
             task_id=task.id,
@@ -105,6 +127,7 @@ class TaskService:
 
     async def mark_completed(self, task: Task) -> None:
         task.status = TopLevelStatus.COMPLETED.value
+        task.current_stage = TopLevelStatus.COMPLETED.value
         task.updated_at = datetime.utcnow()
         event = TaskEvent(
             task_id=task.id,
