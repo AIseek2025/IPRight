@@ -14,6 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 os.environ["IPRIGHT_DATABASE_URL"] = "sqlite+aiosqlite:///./test_api.db"
 os.environ["IPRIGHT_DB_TYPE"] = "sqlite"
+os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine, get_session_factory

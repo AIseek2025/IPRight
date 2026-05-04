@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     WORKSPACE_ROOT: str = "/tmp/ipright-workspace"
     MAX_RETRY_PER_STAGE: int = 2
     TASK_TIMEOUT_SECONDS: int = 3600
+    AUTO_DISPATCH_TASKS: bool = True
 
     model_config = {"env_prefix": "IPRIGHT_", "env_file": ".env"}
 
