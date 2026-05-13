@@ -75,7 +75,16 @@
    - 阶段测试矩阵
    - 自动化测试与人工抽检建议
 
-12. `codemaster/DEEPSEEK_MODEL_ROUTING_POLICY.md`
+12. `IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
+   - 生产部署、预检、Playwright 修复与任务复跑手册
+
+13. `IPRIGHT_CLEANUP_STRATEGY_AND_RESULT.md`
+   - 本地工作区与 ECS 的瘦身边界、清理策略与实际结果
+
+14. `IPRIGHT_REPOSITORY_RETENTION_AND_REFACTOR_PLAN.md`
+   - 仓库长期保留、淘汰、合并与目录整顿方案
+
+15. `codemaster/DEEPSEEK_MODEL_ROUTING_POLICY.md`
    - `deepseek-v4-pro` 与 `deepseek-v4-flash` 的职责分工
    - `CodeMaster` 主开发链、说明书链、终审链的模型选择规则
    - 思考模式、验收边界与旧别名迁移要求
