@@ -2,10 +2,15 @@
 set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/ipright}"
-BACKEND_DIR="${BACKEND_DIR:-$APP_ROOT/backend}"
-FRONTEND_DIR="${FRONTEND_DIR:-$APP_ROOT/frontend}"
+CURRENT_ROOT="${CURRENT_ROOT:-$APP_ROOT/current}"
+if [ ! -d "$CURRENT_ROOT" ]; then
+  CURRENT_ROOT="$APP_ROOT"
+fi
+BACKEND_DIR="${BACKEND_DIR:-$CURRENT_ROOT/backend}"
+FRONTEND_DIR="${FRONTEND_DIR:-$CURRENT_ROOT/frontend}"
 STATIC_ROOT="${STATIC_ROOT:-/var/www/ipright}"
-ENV_FILE="${ENV_FILE:-$BACKEND_DIR/.env.production}"
+ENV_FILE="${ENV_FILE:-$APP_ROOT/backend/.env.production}"
+VENV_DIR="${VENV_DIR:-$APP_ROOT/backend/.venv}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3.11}"
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_ROOT/shared/ms-playwright}"
 RELEASE_TS="$(date +%Y%m%d-%H%M%S)"
@@ -13,8 +18,10 @@ STATIC_RELEASE="$STATIC_ROOT/releases/$RELEASE_TS"
 
 echo "== IPRight ECS full deploy =="
 echo "APP_ROOT=$APP_ROOT"
+echo "CURRENT_ROOT=$CURRENT_ROOT"
 echo "BACKEND_DIR=$BACKEND_DIR"
 echo "FRONTEND_DIR=$FRONTEND_DIR"
+echo "VENV_DIR=$VENV_DIR"
 echo "STATIC_RELEASE=$STATIC_RELEASE"
 echo "PYTHON_BIN=$PYTHON_BIN"
 
@@ -23,12 +30,11 @@ mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
 mkdir -p "$STATIC_ROOT/releases"
 
 echo "-- backend venv --"
-cd "$BACKEND_DIR"
-"$PYTHON_BIN" -m venv .venv
-. .venv/bin/activate
+"$PYTHON_BIN" -m venv "$VENV_DIR"
+. "$VENV_DIR/bin/activate"
 export PLAYWRIGHT_BROWSERS_PATH
 pip install --upgrade pip
-pip install -e .
+pip install -e "$BACKEND_DIR"
 pip install playwright
 
 echo "-- system packages --"
@@ -80,6 +86,7 @@ else
 fi
 
 echo "-- migrate --"
+cd "$BACKEND_DIR"
 alembic upgrade head
 
 echo "-- frontend build --"
@@ -104,5 +111,7 @@ sudo systemctl reload nginx
 echo "-- health --"
 curl -fsSL http://127.0.0.1:18000/health
 curl -I http://127.0.0.1/ || true
+sudo systemctl cat ipright-api | grep -q '/opt/ipright/current'
+sudo systemctl cat ipright-worker | grep -q '/opt/ipright/current'
 
 echo "deploy completed"

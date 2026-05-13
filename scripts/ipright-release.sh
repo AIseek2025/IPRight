@@ -120,6 +120,14 @@ if [ "\${IPRIGHT_SKIP_RESTART:-${IPRIGHT_SKIP_RESTART:-0}}" != "1" ]; then
   systemctl is-active ipright-worker || true
 fi
 
+if systemctl cat ipright-api 2>/dev/null | grep -q "${REMOTE_APP_ROOT}/current" && \
+   systemctl cat ipright-worker 2>/dev/null | grep -q "${REMOTE_APP_ROOT}/current"; then
+  echo "Topology: current release mode active"
+else
+  echo "ERROR: systemd services are not pointing to ${REMOTE_APP_ROOT}/current" >&2
+  exit 8
+fi
+
 rm -f "/tmp/${ARCHIVE_NAME}"
 EOF
 

@@ -18,9 +18,12 @@
 - 域名：`https://ipright.tech`
 - SSH 别名：`ipright-prod`
 - 代码目录：`/opt/ipright`
-- 后端目录：`/opt/ipright/backend`
-- 前端目录：`/opt/ipright/frontend`
+- 运行目录：`/opt/ipright/current`
+- 后端代码目录：`/opt/ipright/current/backend`
+- 前端代码目录：`/opt/ipright/current/frontend`
 - 共享目录：`/opt/ipright/shared`
+- 共享 venv：`/opt/ipright/backend/.venv`
+- 环境变量文件：`/opt/ipright/backend/.env.production`
 - Playwright 浏览器目录：`/opt/ipright/shared/ms-playwright`
 - 工作目录：`/opt/ipright/shared/workspace`
 - 静态资源目录：`/var/www/ipright`
@@ -33,6 +36,8 @@
 
 - `IPRight` 生产机上的 Playwright 浏览器必须固定安装到共享目录，不要依赖 `~/.cache/ms-playwright`
 - `ipright-api` 与 `ipright-worker` 都应带环境变量 `PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright`
+- `ipright-api` 与 `ipright-worker` 的 `WorkingDirectory` 和 `PYTHONPATH` 应指向 `/opt/ipright/current`
+- Python venv 与 `.env.production` 保持在 `/opt/ipright/backend`，避免每个 release 目录重复安装
 
 ## 3. 登录与目录
 
@@ -88,6 +93,8 @@ bash scripts/ipright-ecs-preflight-check.sh
 
 - `python playwright module available`
 - `playwright browser executable available: /opt/ipright/shared/ms-playwright`
+- `ipright-api uses current release topology`
+- `ipright-worker uses current release topology`
 
 如果只看到 Python 包通过，而浏览器二进制缺失，则任务截图阶段仍会失败。
 
@@ -95,14 +102,21 @@ bash scripts/ipright-ecs-preflight-check.sh
 
 ### 5.1 同步代码
 
-按项目当前发布方式，将最新代码同步到 `/opt/ipright`。
+按项目当前发布方式，将最新代码发布到 `/opt/ipright/releases/<release_id>`，再由 `/opt/ipright/current` 指向当前生效版本。
 
 若本机已有仓库且服务器可直接取代码，可在服务器执行：
 
 ```bash
 cd /opt/ipright
-git status --short
-git rev-parse --short HEAD
+readlink -f current
+git rev-parse --short HEAD || true
+```
+
+推荐使用标准发布脚本：
+
+```bash
+cd <local_repo>
+bash scripts/ipright-release.sh ipright-prod /opt/ipright
 ```
 
 ### 5.2 执行部署脚本
@@ -110,7 +124,7 @@ git rev-parse --short HEAD
 项目内标准部署脚本：
 
 ```bash
-cd /opt/ipright
+cd /opt/ipright/current
 bash scripts/ipright-ecs-full-deploy.sh
 ```
 
@@ -124,6 +138,7 @@ bash scripts/ipright-ecs-full-deploy.sh
 - 执行数据库迁移
 - 构建前端
 - 发布静态资源
+- 校验 systemd 已指向 `/opt/ipright/current`
 - 重启 `ipright-api` 与 `ipright-worker`
 
 ## 6. Playwright 截图能力修复
@@ -172,7 +187,7 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright
 再执行预检：
 
 ```bash
-cd /opt/ipright
+cd /opt/ipright/current
 bash scripts/ipright-ecs-preflight-check.sh
 ```
 
@@ -210,6 +225,14 @@ ls -lh /tmp/ipright-playwright-smoke.png
 ```
 
 ## 7. 服务状态检查
+
+### 7.1 校验运行目录
+
+```bash
+readlink -f /opt/ipright/current
+sudo systemctl cat ipright-api | grep /opt/ipright/current
+sudo systemctl cat ipright-worker | grep /opt/ipright/current
+```
 
 ```bash
 ssh ipright-prod

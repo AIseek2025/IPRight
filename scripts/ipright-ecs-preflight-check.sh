@@ -2,8 +2,13 @@
 set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/ipright}"
-BACKEND_DIR="${BACKEND_DIR:-$APP_ROOT/backend}"
-FRONTEND_DIR="${FRONTEND_DIR:-$APP_ROOT/frontend}"
+CURRENT_ROOT="${CURRENT_ROOT:-$APP_ROOT/current}"
+if [ ! -d "$CURRENT_ROOT" ]; then
+  CURRENT_ROOT="$APP_ROOT"
+fi
+BACKEND_DIR="${BACKEND_DIR:-$CURRENT_ROOT/backend}"
+FRONTEND_DIR="${FRONTEND_DIR:-$CURRENT_ROOT/frontend}"
+VENV_DIR="${VENV_DIR:-$APP_ROOT/backend/.venv}"
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_ROOT/shared/ms-playwright}"
 
 pass() {
@@ -76,7 +81,7 @@ else
   warn "libreoffice missing"
 fi
 
-if [ -x "$BACKEND_DIR/.venv/bin/python" ] && "$BACKEND_DIR/.venv/bin/python" -c "import playwright" >/dev/null 2>&1; then
+if [ -x "$VENV_DIR/bin/python" ] && "$VENV_DIR/bin/python" -c "import playwright" >/dev/null 2>&1; then
   pass "python playwright module available"
   if find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 3 -type f \( -name 'headless_shell' -o -name 'chrome-headless-shell' -o -name 'chrome' \) 2>/dev/null | grep -q .; then
     pass "playwright browser executable available: $PLAYWRIGHT_BROWSERS_PATH"
@@ -88,6 +93,7 @@ else
 fi
 
 check_path "$APP_ROOT"
+check_path "$CURRENT_ROOT"
 check_path "$BACKEND_DIR"
 check_path "$FRONTEND_DIR"
 check_path "/etc/nginx/conf.d/ipright.conf"
@@ -95,6 +101,18 @@ check_path "/var/www/ipright"
 check_path "/var/www/ipright/current"
 check_path "/etc/systemd/system/ipright-api.service"
 check_path "/etc/systemd/system/ipright-worker.service"
+
+if systemctl cat ipright-api 2>/dev/null | grep -q '/opt/ipright/current'; then
+  pass "ipright-api uses current release topology"
+else
+  warn "ipright-api not pointing to /opt/ipright/current"
+fi
+
+if systemctl cat ipright-worker 2>/dev/null | grep -q '/opt/ipright/current'; then
+  pass "ipright-worker uses current release topology"
+else
+  warn "ipright-worker not pointing to /opt/ipright/current"
+fi
 
 check_port_free 18000
 check_port_free 15432

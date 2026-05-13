@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=admin
-WorkingDirectory=/opt/ipright
+WorkingDirectory=/opt/ipright/current
 EnvironmentFile=/opt/ipright/backend/.env.production
-Environment=PYTHONPATH=/opt/ipright/backend:/opt/ipright
+Environment=PYTHONPATH=/opt/ipright/current/backend:/opt/ipright/current
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright
 ExecStart=/opt/ipright/backend/.venv/bin/celery -A workers.celery_app worker --loglevel=info --concurrency=2
 Restart=always
