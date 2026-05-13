@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import asyncio
+import contextlib
+import fcntl
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, TYPE_CHECKING
@@ -15,10 +17,12 @@ from app.core.state_machine import (
     STAGE_TRANSITIONS,
     StageName,
     StageStatus,
+    TOPLEVEL_TO_STAGE,
     TopLevelStatus,
 )
 from app.models.db import Build, StageRun, Task, TaskEvent
 from app.services import TaskService
+from workers.orchestrator.async_runner import run_async
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -36,7 +40,34 @@ def register_stage(stage: StageName):
 
 
 def run_full_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
-    asyncio.run(_async_run_pipeline(task_id, build_id))
+    with _acquire_build_lock(build_id) as acquired:
+        if not acquired:
+            logger.warning("Build %s is already running in another worker; skipping duplicate dispatch", build_id)
+            return
+        # Submit the async pipeline to the per-process shared event loop so we
+        # neither create a fresh loop per task (which throws away the
+        # SQLAlchemy engine + connection pool) nor block ``asyncio.run`` from
+        # being re-entered by sub-handlers.
+        run_async(_async_run_pipeline(task_id, build_id))
+
+
+@contextlib.contextmanager
+def _acquire_build_lock(build_id: uuid.UUID):
+    lock_path = f"/tmp/ipright-build-{build_id}.lock"
+    os.makedirs("/tmp", exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file.write(str(build_id))
+            lock_file.flush()
+            yield True
+        except BlockingIOError:
+            yield False
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
 
 
 async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
@@ -54,11 +85,41 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
             logger.error(f"Build {build_id} not found")
             return
 
+        if task.active_build_id != build.id:
+            logger.info(
+                "Build %s is no longer active for task %s (active=%s); aborting dispatch",
+                build.id,
+                task_id,
+                task.active_build_id,
+            )
+            if build.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
+                build.status = "aborted"
+                build.current_stage = "aborted"
+                build.failure_reason = "Superseded by a newer active build"
+                await db.commit()
+            return
+
         current_status = TopLevelStatus(task.status)
 
         while current_status in STAGE_TRANSITIONS:
+            await db.refresh(task)
+            await db.refresh(build)
+            if task.active_build_id != build.id:
+                logger.info(
+                    "Build %s lost active ownership for task %s before stage transition (active=%s); aborting",
+                    build.id,
+                    task_id,
+                    task.active_build_id,
+                )
+                if build.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
+                    build.status = "aborted"
+                    build.current_stage = "aborted"
+                    build.failure_reason = "Superseded by a newer active build"
+                    await db.commit()
+                return
+
             next_status = STAGE_TRANSITIONS[current_status]
-            stage_name = _status_to_stage(next_status)
+            stage_name = TOPLEVEL_TO_STAGE.get(next_status)
 
             if stage_name and stage_name in STAGE_HANDLERS:
                 logger.info(f"Running stage {stage_name.value} for task {task_id}")
@@ -99,22 +160,6 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                 return
 
             await db.commit()
-
-
-def _status_to_stage(status: TopLevelStatus) -> StageName | None:
-    mapping = {
-        TopLevelStatus.PLANNING: StageName.PLAN,
-        TopLevelStatus.CODING: None,
-        TopLevelStatus.BUILDING: StageName.BUILD,
-        TopLevelStatus.RUNNING: StageName.VERIFY_RUN,
-        TopLevelStatus.CAPTURING: StageName.CAPTURE,
-        TopLevelStatus.WRITING_MANUAL: StageName.COMPOSE_MANUAL,
-        TopLevelStatus.WRITING_CODE_BOOK: StageName.COMPOSE_CODE_BOOK,
-        TopLevelStatus.PUBLISHING: StageName.PUBLISH,
-    }
-    return mapping.get(status)
-
-
 @dataclass
 class StageContext:
     task_id: str

@@ -5,7 +5,9 @@ import uuid
 from celery import Celery
 
 from app.core.config import settings
-from workers.stages import handlers as _stage_handlers  # noqa: F401
+from workers.stages import load_stage_handlers
+
+load_stage_handlers()
 
 celery_app = Celery(
     "ipright",

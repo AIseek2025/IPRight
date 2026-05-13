@@ -1,22 +1,39 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import shutil
 import uuid
-from pathlib import Path
 
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models.db import Artifact, Build, Task, Screenshot
-from app.services.document.manual import SoftwareManualGenerator
-from app.services.document.codebook import SourceCodeBookGenerator
-from app.services.document.diagrams import generate_system_architecture_diagram
+from app.models.db import Artifact, Task
+from app.services.project_profile import (
+    build_plan_seed,
+    build_task_profile,
+)
 from app.services.validator import ManifestValidator
 from workers.orchestrator.runner import StageContext, StageResult, register_stage
 from app.core.state_machine import StageName
+from workers.stages.build_support import (
+    count_source_lines,
+    generate_task_app_code,
+    normalize_prd_summary_with_plan_seed,
+    prepare_seed_application,
+)
+from workers.stages.runtime_support import (
+    execute_capture_flow,
+    verify_runtime_execution,
+)
+from workers.stages.delivery_support import (
+    generate_code_book_delivery,
+    generate_manual_delivery,
+    load_screenshots_meta,
+    publish_task_exports,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +56,42 @@ def screenshots_dir(task_id: str) -> str:
     return p
 
 
+def reset_screenshots_dir(task_id: str) -> str:
+    p = screenshots_dir(task_id)
+    shutil.rmtree(p, ignore_errors=True)
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
 def exports_dir(task_id: str, build_id: str) -> str:
     p = os.path.join(settings.WORKSPACE_ROOT, "tasks", task_id, "builds", build_id, "exports")
     os.makedirs(p, exist_ok=True)
     return p
 
 
+def _derive_run_ports(task_id: str, build_id: str) -> dict[str, int]:
+    digest = hashlib.md5(f"{task_id}:{build_id}".encode("utf-8")).hexdigest()
+    slot = int(digest[:8], 16) % 10_000
+    frontend_port = 24000 + slot * 2
+    return {"frontend": frontend_port, "backend": frontend_port + 1}
+
+
 def manifests_dir(task_id: str) -> str:
     p = os.path.join(workspace_path(task_id), "manifests")
     os.makedirs(p, exist_ok=True)
     return p
+
+
+def _write_text(path: str, content: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def _write_json(path: str, data: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 async def _create_artifact(
@@ -94,8 +137,40 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     prd_dir = os.path.join(workspace_path(ctx.task_id), "prd")
     os.makedirs(prd_dir, exist_ok=True)
 
-    # Try real LLM first, fall back to template
-    llm_used = "template"
+    llm_used = "deepseek-v4-flash"
+    prd_content = ""
+    work_order_content = ""
+    prd_summary = {}
+    plan_seed = build_plan_seed(task.keyword or task.product_name, task.product_name, task.industry)
+
+    def _fallback_plan_content(current_task: Task) -> tuple[str, str, dict]:
+        kw = current_task.keyword or current_task.product_name
+        ver = current_task.version or "V1.0"
+        module_titles = list(plan_seed["core_modules"])
+        summary = {
+            "app_type": "admin_web",
+            "core_modules": module_titles,
+            "required_pages": list(plan_seed["required_pages"]),
+            "user_roles": list(plan_seed["user_roles"]),
+        }
+        prd_md = (
+            f"# {current_task.product_name}{ver} 产品需求文档\n\n"
+            f"## 1. 背景\n围绕“{kw}”构建面向{plan_seed['industry_scope']}的专属业务管理与交付支撑平台。\n\n"
+            "## 2. 核心模块\n"
+            + "\n".join(f"- {name}" for name in module_titles)
+            + "\n\n## 3. 业务对象\n"
+            + "\n".join(f"- {name}" for name in plan_seed["core_entities"])
+            + "\n\n## 4. 非功能要求\n- 页面稳定可访问\n- 关键操作可留痕\n- 支持文档与材料导出\n"
+        )
+        work_order_md = (
+            f"# {current_task.product_name} 开发工单\n\n"
+            "## 阶段拆分\n"
+            "1. 生成应用骨架与页面\n"
+            "2. 运行健康检查\n"
+            "3. 采集截图并生成说明书/源码文档\n"
+            "4. 导出交付材料\n"
+        )
+        return prd_md, work_order_md, summary
     try:
         from app.services.llm import get_llm_client
         llm = get_llm_client()
@@ -105,36 +180,22 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
             product_name=task.product_name,
             version=task.version,
             industry=task.industry or "",
+            plan_seed=plan_seed,
         )
 
         if resp.success and resp.structured:
-            llm_used = "llm"
             prd_content = resp.structured.get("prd_markdown", "")
             work_order_content = resp.structured.get("work_order_markdown", "")
-            prd_summary = resp.structured.get("prd_summary", {})
+            prd_summary = normalize_prd_summary_with_plan_seed(resp.structured.get("prd_summary", {}), plan_seed)
             logger.info(f"[plan] LLM PRD generated successfully ({len(prd_content)} chars)")
-
-            if not prd_summary.get("app_type"):
-                prd_summary["app_type"] = "admin_web"
-            if not prd_summary.get("core_modules"):
-                prd_summary["core_modules"] = ["首页", "数据管理", "报表统计", "系统设置"]
-            if not prd_summary.get("required_pages"):
-                prd_summary["required_pages"] = ["/login", "/dashboard", "/data-list", "/settings"]
-            if not prd_summary.get("user_roles"):
-                prd_summary["user_roles"] = ["admin"]
         else:
-            logger.warning(f"[plan] LLM failed, using template: {resp.error}")
-            raise ValueError("LLM failed")
-    except Exception:
-        # Fallback to template
-        prd_content = _template_prd(task)
-        work_order_content = _template_work_order(task)
-        prd_summary = {
-            "app_type": "admin_web",
-            "user_roles": ["admin"],
-            "core_modules": ["首页", "数据管理", "报表统计", "系统设置"],
-            "required_pages": ["/login", "/dashboard", "/data-list", "/settings"],
-        }
+            logger.warning("[plan] LLM unavailable, fallback to template: %s", resp.error or "unknown error")
+            prd_content, work_order_content, prd_summary = _fallback_plan_content(task)
+            llm_used = "template_fallback"
+    except Exception as exc:
+        logger.warning("[plan] LLM exception, fallback to template: %s", exc)
+        prd_content, work_order_content, prd_summary = _fallback_plan_content(task)
+        llm_used = "template_fallback"
 
     prd_path = os.path.join(prd_dir, "product_prd.md")
     with open(prd_path, "w", encoding="utf-8") as f:
@@ -162,51 +223,6 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
         artifacts=[],
         metadata={"prd_summary": prd_summary, "llm_used": llm_used},
     )
-
-
-def _template_prd(task) -> str:
-    return f"""# {task.product_name} 产品需求文档
-
-## 产品定位
-{task.product_name} 是一款面向 {task.industry or '通用行业'} 的后台管理型 Web 应用系统。
-
-## 技术栈
-- 前端: React + Vite + TypeScript + Ant Design
-- 后端: FastAPI + Python
-- 数据库: PostgreSQL
-
-## 核心功能模块
-1. 首页/仪表盘
-2. 数据管理
-3. 报表统计
-4. 系统设置
-
-## 用户角色
-- 管理员: 拥有全部权限
-
-## 非功能需求
-- 响应式设计，支持主流浏览器
-- 提供 RESTful API
-"""
-
-
-def _template_work_order(task) -> str:
-    return f"""# {task.product_name} 开发任务书
-
-## 技术栈
-- 前端: React + Vite + TypeScript + Ant Design
-- 后端: FastAPI
-- 数据库: PostgreSQL
-
-## 页面任务
-1. LoginPage: /login
-2. DashboardPage: /dashboard
-3. ListPage: /data-list
-4. DetailPage: /data-detail
-5. SettingsPage: /settings
-"""
-
-
 @register_stage(StageName.BUILD)
 async def run_build_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[build] Generating app and manifests for task {ctx.task_id}")
@@ -217,19 +233,29 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
             return StageResult(success=False, error="Task not found")
 
     mdir = manifests_dir(ctx.task_id)
+    prd_root = os.path.join(workspace_path(ctx.task_id), "prd")
     product_name = task.product_name
     version = task.version
+    prd_summary = _load_prd_summary(ctx.task_id)
+    profile = build_task_profile(
+        keyword=task.keyword or task.product_name,
+        product_name=task.product_name,
+        version=task.version,
+        industry=task.industry,
+        prd_summary=prd_summary,
+    )
 
     app_root = os.path.join(workspace_path(ctx.task_id), "app")
-    frontend_dst = os.path.join(app_root, "frontend")
-    backend_dst = os.path.join(app_root, "backend")
-    repo_root = Path(__file__).resolve().parents[2]
-    frontend_src = repo_root / "examples" / "demo_app" / "frontend"
-    backend_src = repo_root / "examples" / "demo_app" / "backend"
+    prepare_seed_application(app_root, profile)
+    codegen_report_data: dict | None = None
+    try:
+        codegen_report_data, codegen_error = await generate_task_app_code(app_root, prd_root, profile)
+        if codegen_error:
+            return StageResult(success=False, error=codegen_error)
+    except Exception as exc:
+        return StageResult(success=False, error=f"App code generation failed: {exc}")
 
-    os.makedirs(app_root, exist_ok=True)
-    shutil.copytree(frontend_src, frontend_dst, dirs_exist_ok=True)
-    shutil.copytree(backend_src, backend_dst, dirs_exist_ok=True)
+    profile["source_code_line_estimate"] = count_source_lines(app_root)
 
     app_manifest = {
         "product_name": product_name,
@@ -237,42 +263,63 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         "app_type": "admin_web",
         "frontend_framework": "react_vite",
         "backend_framework": "fastapi",
-        "entry_routes": ["/login", "/dashboard"],
+        "entry_routes": ["/login", "/dashboard", *[item["route"] for item in profile.get("modules", [])]],
         "demo_accounts": [
             {"role": "admin", "username": "admin", "password": "admin123"}
         ],
+        "profile": {
+            "scene": profile.get("scene"),
+            "software_category": profile.get("software_category"),
+            "industry_scope": profile.get("industry_scope"),
+        },
     }
 
+    run_ports = _derive_run_ports(ctx.task_id, ctx.build_id)
     run_manifest = {
         "install_commands": [
             "cd app/frontend && npm install && node node_modules/vite/bin/vite.js build",
             "/opt/ipright/backend/.venv/bin/python -m pip install -r app/backend/requirements.txt",
         ],
         "start_commands": [
-            "cd app/frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 23100 --strictPort",
-            "cd app/backend && /opt/ipright/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 23180",
+            f"cd app/frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port {run_ports['frontend']} --strictPort",
+            f"cd app/backend && /opt/ipright/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port {run_ports['backend']}",
         ],
-        "ports": {"frontend": 23100, "backend": 23180},
+        "ports": run_ports,
         "health_checks": [
-            "http://127.0.0.1:23100/",
-            "http://127.0.0.1:23180/health",
+            f"http://127.0.0.1:{run_ports['frontend']}/",
+            f"http://127.0.0.1:{run_ports['backend']}/health",
         ],
     }
 
     capture_manifest = {
-        "scenarios": [
-            {"id": "login-page", "title": "登录页", "route": "/login", "actions": [], "priority": 1},
-            {"id": "dashboard", "title": "系统首页", "route": "/dashboard", "actions": ["login_as_admin"], "requires_auth": True, "priority": 2},
-            {"id": "data-list", "title": "数据列表页", "route": "/data-list", "actions": ["login_as_admin"], "requires_auth": True, "priority": 3},
-            {"id": "settings", "title": "系统设置页", "route": "/settings", "actions": ["login_as_admin"], "requires_auth": True, "priority": 4},
-        ],
+        "scenarios": profile.get("screenshot_scenarios", []),
     }
 
     code_index_manifest = {
         "include_globs": [
+            "app/frontend/package.json",
+            "app/frontend/package-lock.json",
+            "app/frontend/index.html",
+            "app/frontend/src/main.tsx",
+            "app/frontend/src/App.tsx",
             "app/frontend/src/**/*.ts",
             "app/frontend/src/**/*.tsx",
+            "app/frontend/src/**/*.css",
+            "app/frontend/src/font.css",
+            "app/frontend/src/pages/Login.tsx",
+            "app/frontend/src/pages/Dashboard.tsx",
+            "app/frontend/src/pages/*Page.tsx",
+            "app/frontend/tsconfig.json",
+            "app/frontend/vite.config.ts",
+            "app/backend/requirements.txt",
+            "app/backend/tests/**/*.py",
             "app/backend/app/**/*.py",
+            "app/backend/app/app_profile.py",
+            "app/backend/app/main.py",
+            "app/backend/app/routes.py",
+            "app/backend/app/models.py",
+            "app/backend/app/services.py",
+            "manifests/*.json",
         ],
         "exclude_globs": [
             "**/node_modules/**",
@@ -282,10 +329,21 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
             "**/__pycache__/**",
         ],
         "preferred_order": [
+            "app/frontend/package.json",
+            "app/frontend/package-lock.json",
             "app/frontend/src/main.tsx",
             "app/frontend/src/App.tsx",
-            "app/frontend/src/pages/*.tsx",
+            "app/frontend/src/**/*.ts",
+            "app/frontend/src/**/*.tsx",
+            "app/frontend/src/pages/Login.tsx",
+            "app/frontend/src/pages/Dashboard.tsx",
+            "app/frontend/src/pages/*Page.tsx",
+            "app/backend/requirements.txt",
+            "app/backend/app/**/*.py",
+            "app/backend/tests/**/*.py",
+            "app/backend/app/app_profile.py",
             "app/backend/app/main.py",
+            "manifests/*.json",
         ],
         "line_density_target": 55,
     }
@@ -295,7 +353,10 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         "run_manifest.json": run_manifest,
         "capture_manifest.json": capture_manifest,
         "code_index_manifest.json": code_index_manifest,
+        "project_profile.json": profile,
     }
+    if codegen_report_data:
+        manifests["app_codegen_report.json"] = codegen_report_data
 
     for filename, data in manifests.items():
         path = os.path.join(mdir, filename)
@@ -329,7 +390,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     return StageResult(
         success=True,
         artifacts=[{"type": "manifests", "name": "all manifests"}],
-        metadata={"validation": {k: v.valid for k, v in validation.items()}},
+        metadata={"validation": {k: v.valid for k, v in validation.items()}, "codegen_model": "deepseek-v4-pro"},
     )
 
 
@@ -338,62 +399,23 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[verify_run] Running health checks for task {ctx.task_id}")
 
     run_manifest = _load_manifest(ctx.task_id, "run_manifest")
+    app_manifest = _load_manifest(ctx.task_id, "app_manifest")
     if not run_manifest:
         return StageResult(success=False, error="run_manifest not found")
 
-    wsp = workspace_path(ctx.task_id)
-
-    from app.services.runtime import SandboxRuntime
-    runtime = SandboxRuntime(wsp)
-
-    installed = await runtime.install_dependencies(run_manifest)
-    if not installed:
-        logger.warning(f"[verify_run] Some deps failed to install for task {ctx.task_id}")
-
-    await runtime.start_services(run_manifest)
-    await asyncio_sleep(5)
-
-    health_report = await runtime.run_health_checks(run_manifest, timeout=30)
-
-    login_ok = False
-    if run_manifest.get("ports", {}).get("frontend"):
-        port = run_manifest["ports"]["frontend"]
-        login_ok = await runtime.check_login_page(f"http://127.0.0.1:{port}")
-
-    report_path = os.path.join(artifacts_dir(ctx.task_id), "health_report.json")
-    report_data = {
-        "success": health_report.success,
-        "frontend_ok": health_report.frontend_ok,
-        "backend_ok": health_report.backend_ok,
-        "login_ok": login_ok,
-        "checks": health_report.health_checks,
-        "errors": health_report.errors,
-    }
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report_data, f, ensure_ascii=False, indent=2)
-
-    await _create_artifact(
-        ctx.db_factory, ctx.task_id, ctx.build_id,
-        "health_report", "health_report.json", report_path,
+    success, error, runtime_status = await verify_runtime_execution(
+        task_id=ctx.task_id,
+        build_id=ctx.build_id,
+        workspace_root=workspace_path(ctx.task_id),
+        artifacts_root=artifacts_dir(ctx.task_id),
+        run_manifest=run_manifest,
+        app_manifest=app_manifest,
+        create_artifact=_create_artifact,
+        db_factory=ctx.db_factory,
+        sleep_fn=asyncio_sleep,
     )
-
-    runtime_status = {
-        "running": health_report.success,
-        "frontend_port": run_manifest.get("ports", {}).get("frontend"),
-        "backend_port": run_manifest.get("ports", {}).get("backend"),
-        "login_page_ok": login_ok,
-    }
-    status_path = os.path.join(artifacts_dir(ctx.task_id), "runtime_status.json")
-    with open(status_path, "w", encoding="utf-8") as f:
-        json.dump(runtime_status, f, ensure_ascii=False, indent=2)
-
-    await _create_artifact(
-        ctx.db_factory, ctx.task_id, ctx.build_id,
-        "runtime_status", "runtime_status.json", status_path,
-    )
-
-    if not health_report.success:
-        return StageResult(success=False, error=f"Health check failed: {health_report.errors}")
+    if not success:
+        return StageResult(success=False, error=error)
 
     return StageResult(success=True, artifacts=[], metadata={"runtime_status": runtime_status})
 
@@ -409,69 +431,24 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
     if not capture_manifest:
         return StageResult(success=False, error="capture_manifest not found")
 
-    frontend_port = run_manifest.get("ports", {}).get("frontend", 3000) if run_manifest else 3000
-    base_url = f"http://127.0.0.1:{frontend_port}"
-    demo_accounts = app_manifest.get("demo_accounts", []) if app_manifest else []
-
-    output_dir = screenshots_dir(ctx.task_id)
-
-    from app.services.runtime import SandboxRuntime
-    from app.services.capture import PlaywrightCapture
-    runtime = SandboxRuntime(workspace_path(ctx.task_id))
-    await runtime.start_services(run_manifest or {})
-    await asyncio_sleep(8)
-
-    capture = PlaywrightCapture(base_url=base_url, output_dir=output_dir, headless=True)
-    try:
-        results = await capture.capture_scenarios(capture_manifest, demo_accounts)
-    finally:
-        runtime.stop_all()
-
-    screenshot_manifest_data = []
-    for r in results:
-        screenshot_manifest_data.append({
-            "scenario_id": r.scenario_id,
-            "page_title": r.page_title,
-            "route": r.route,
-            "image_file": os.path.basename(r.image_path) if r.image_path else "",
-            "success": r.success,
-            "caption": r.caption,
-            "elements": r.elements,
-            "error": r.error,
-        })
-
-        if r.success and r.image_path:
-            await _create_artifact(
-                ctx.db_factory, ctx.task_id, ctx.build_id,
-                "screenshot_image", os.path.basename(r.image_path), r.image_path,
-            )
-
-        async with ctx.db_factory()() as db:
-            screenshot = Screenshot(
-                task_id=uuid.UUID(ctx.task_id),
-                build_id=uuid.UUID(ctx.build_id),
-                scenario_id=r.scenario_id,
-                page_title=r.page_title,
-                route=r.route,
-                caption=r.caption,
-            )
-            db.add(screenshot)
-            await db.commit()
-
-    manifest_path = os.path.join(artifacts_dir(ctx.task_id), "screenshot_manifest.json")
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(screenshot_manifest_data, f, ensure_ascii=False, indent=2)
-
-    await _create_artifact(
-        ctx.db_factory, ctx.task_id, ctx.build_id,
-        "screenshot_manifest", "screenshot_manifest.json", manifest_path,
+    output_dir = reset_screenshots_dir(ctx.task_id)
+    total_count, success_count = await execute_capture_flow(
+        task_id=ctx.task_id,
+        build_id=ctx.build_id,
+        workspace_root=workspace_path(ctx.task_id),
+        screenshots_root=output_dir,
+        artifacts_root=artifacts_dir(ctx.task_id),
+        capture_manifest=capture_manifest,
+        app_manifest=app_manifest,
+        run_manifest=run_manifest,
+        create_artifact=_create_artifact,
+        db_factory=ctx.db_factory,
+        sleep_fn=asyncio_sleep,
     )
-
-    success_count = sum(1 for r in results if r.success)
     return StageResult(
         success=success_count >= 1,
         error=None if success_count >= 1 else "No screenshots captured successfully",
-        metadata={"screenshots_total": len(results), "screenshots_ok": success_count},
+        metadata={"screenshots_total": total_count, "screenshots_ok": success_count},
     )
 
 
@@ -484,43 +461,37 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
         if not task:
             return StageResult(success=False, error="Task not found")
 
-    screenshot_manifest_path = os.path.join(artifacts_dir(ctx.task_id), "screenshot_manifest.json")
-    screenshots_meta = []
-    if os.path.exists(screenshot_manifest_path):
-        with open(screenshot_manifest_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-            for item in raw:
-                image_file = item.get("image_file", "")
-                screenshots_meta.append({
-                    "page_title": item.get("page_title", ""),
-                    "caption": item.get("caption", ""),
-                    "image_path": os.path.join(screenshots_dir(ctx.task_id), image_file) if image_file else "",
-                    "steps": item.get("steps", []),
-                })
-
-    generator = SoftwareManualGenerator(
-        product_name=task.product_name,
-        version=task.version,
+    screenshots_meta = load_screenshots_meta(
+        ctx.task_id,
+        artifacts_dir,
+        screenshots_dir,
+        lambda manifest_name: _load_manifest(ctx.task_id, manifest_name),
     )
-    export_dir = exports_dir(ctx.task_id, ctx.build_id)
-    arch_diagram_path = os.path.join(export_dir, "system_architecture.png")
-    generate_system_architecture_diagram(arch_diagram_path, task.product_name)
-    generator.generate_full(
-        prd_summary=None,
+    project_profile = _load_manifest(ctx.task_id, "project_profile") or {}
+    prd_summary = _load_prd_summary(ctx.task_id)
+    output_path, application_form_path, screenshot_count, manual_llm_used = await generate_manual_delivery(
+        task=task,
+        task_id=ctx.task_id,
+        build_id=ctx.build_id,
+        project_profile=project_profile,
+        prd_summary=prd_summary,
         screenshots_meta=screenshots_meta,
-        modules=["登录认证", "仪表盘/首页", "用户管理", "设备管理", "报表统计", "告警管理", "系统设置"],
-        arch_diagram_path=arch_diagram_path,
+        exports_dir_fn=exports_dir,
+        create_artifact=_create_artifact,
+        merge_manual_llm_content=_merge_manual_llm_content,
+        db_factory=ctx.db_factory,
     )
 
-    output_path = os.path.join(export_dir, "software_manual.docx")
-    generator.save(output_path)
-
-    await _create_artifact(
-        ctx.db_factory, ctx.task_id, ctx.build_id,
-        "software_manual_docx", "software_manual.docx", output_path,
+    return StageResult(
+        success=True,
+        artifacts=[],
+        metadata={
+            "export_path": output_path,
+            "application_form_path": application_form_path,
+            "screenshot_count": screenshot_count,
+            "llm_used": manual_llm_used,
+        },
     )
-
-    return StageResult(success=True, artifacts=[], metadata={"export_path": output_path})
 
 
 @register_stage(StageName.COMPOSE_CODE_BOOK)
@@ -536,20 +507,15 @@ async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
     if not code_index:
         return StageResult(success=False, error="code_index_manifest not found")
 
-    wsp = workspace_path(ctx.task_id)
-    generator = SourceCodeBookGenerator(
-        product_name=task.product_name,
-        version=task.version,
-    )
-
-    export_dir = exports_dir(ctx.task_id, ctx.build_id)
-    output_path = os.path.join(export_dir, "source_code_book.docx")
-    generator.generate(code_index, wsp)
-    generator.save(output_path)
-
-    await _create_artifact(
-        ctx.db_factory, ctx.task_id, ctx.build_id,
-        "source_code_book_docx", "source_code_book.docx", output_path,
+    output_path = await generate_code_book_delivery(
+        task=task,
+        task_id=ctx.task_id,
+        build_id=ctx.build_id,
+        code_index=code_index,
+        workspace_root=workspace_path(ctx.task_id),
+        exports_dir_fn=exports_dir,
+        create_artifact=_create_artifact,
+        db_factory=ctx.db_factory,
     )
 
     return StageResult(
@@ -570,23 +536,7 @@ async def run_publish_stage(ctx: StageContext) -> StageResult:
         if not task:
             return StageResult(success=False, error="Task not found")
 
-        from app.models.db import Export
-
-        for export_type, filename in [
-            ("manual_docx", "software_manual.docx"),
-            ("source_code_docx", "source_code_book.docx"),
-        ]:
-            export = Export(
-                task_id=uuid.UUID(ctx.task_id),
-                build_id=uuid.UUID(ctx.build_id),
-                export_type=export_type,
-                file_name=filename,
-                download_url=f"/api/v1/exports/{{export_id}}/download",
-                status="ready",
-            )
-            db.add(export)
-
-        await db.commit()
+    await publish_task_exports(ctx.task_id, ctx.build_id, ctx.db_factory)
 
     return StageResult(success=True, artifacts=[], metadata={"published": True})
 
