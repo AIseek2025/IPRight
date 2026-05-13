@@ -2,12 +2,12 @@
 """
 IPRight E2E Pipeline Runner
 ===========================
-Runs the full IPRight pipeline end-to-end:
+Runs a development-only end-to-end verification flow:
   Keyword -> PRD -> App -> Run -> Capture -> Manual Word -> Code Word -> Export
 
-This script uses the example demo_app as the "generated" application,
-bypassing the need for real LLM integration. It runs the pipeline stages
-independently to verify the full chain works.
+This script uses ``examples/demo_app`` as a seed application and bypasses the
+formal worker orchestration path. It is useful for local diagnostics, but it is
+not the production deployment or release entrypoint.
 """
 
 from __future__ import annotations

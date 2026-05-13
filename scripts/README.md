@@ -10,6 +10,7 @@
   - ECS 上线前预检脚本
 - `ipright-release.sh`
   - 基于 Git 提交的标准化发布脚本
+  - 当前更适合作为标准发布拓扑演练入口；若现网 systemd 仍直接指向 `/opt/ipright` 而非 `/opt/ipright/current`，还需额外完成运行时目录切换
 - `ipright-ecs-rerun-doc-fixes.sh`
   - 文档修复后的 ECS 定向复跑脚本
 
