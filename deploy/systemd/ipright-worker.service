@@ -8,6 +8,7 @@ User=admin
 WorkingDirectory=/opt/ipright
 EnvironmentFile=/opt/ipright/backend/.env.production
 Environment=PYTHONPATH=/opt/ipright/backend:/opt/ipright
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright
 ExecStart=/opt/ipright/backend/.venv/bin/celery -A workers.celery_app worker --loglevel=info --concurrency=2
 Restart=always
 RestartSec=5

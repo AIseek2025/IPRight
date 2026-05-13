@@ -7,6 +7,7 @@ Type=simple
 User=admin
 WorkingDirectory=/opt/ipright/backend
 EnvironmentFile=/opt/ipright/backend/.env.production
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright
 ExecStart=/opt/ipright/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18000
 Restart=always
 RestartSec=5

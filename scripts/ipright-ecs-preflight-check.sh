@@ -4,6 +4,7 @@ set -euo pipefail
 APP_ROOT="${APP_ROOT:-/opt/ipright}"
 BACKEND_DIR="${BACKEND_DIR:-$APP_ROOT/backend}"
 FRONTEND_DIR="${FRONTEND_DIR:-$APP_ROOT/frontend}"
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_ROOT/shared/ms-playwright}"
 
 pass() {
   printf '[PASS] %s\n' "$1"
@@ -77,6 +78,11 @@ fi
 
 if [ -x "$BACKEND_DIR/.venv/bin/python" ] && "$BACKEND_DIR/.venv/bin/python" -c "import playwright" >/dev/null 2>&1; then
   pass "python playwright module available"
+  if find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 3 -type f \( -name 'headless_shell' -o -name 'chrome-headless-shell' -o -name 'chrome' \) 2>/dev/null | grep -q .; then
+    pass "playwright browser executable available: $PLAYWRIGHT_BROWSERS_PATH"
+  else
+    fail "playwright browser executable missing: $PLAYWRIGHT_BROWSERS_PATH"
+  fi
 else
   warn "python playwright module missing"
 fi
