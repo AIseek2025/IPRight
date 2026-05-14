@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -44,17 +44,38 @@ def _task_root(task_id: uuid.UUID) -> Path:
     return Path(settings.WORKSPACE_ROOT) / "tasks" / str(task_id)
 
 
+async def _resolve_effective_build_id(
+    db: AsyncSession,
+    task: Task,
+    requested_build_id: Optional[uuid.UUID] = None,
+) -> Optional[uuid.UUID]:
+    if requested_build_id:
+        return requested_build_id
+    if task.active_build_id:
+        return task.active_build_id
+
+    latest_build_q = await db.execute(
+        select(Build.id).where(Build.task_id == task.id).order_by(Build.started_at.desc()).limit(1)
+    )
+    return latest_build_q.scalar_one_or_none()
+
+
 def _slugify_name(value: str) -> str:
     normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", value.strip())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     return normalized or "ipright"
 
 
-def _build_bundle(task: Task) -> tuple[Path, str]:
-    task_root = _task_root(task.id)
-    if not task_root.exists():
-        raise HTTPException(status_code=404, detail={"code": "TASK_WORKSPACE_NOT_FOUND", "message": "task workspace not found"})
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
 
+
+def _bundle_target(task: Task) -> tuple[Path, str, Path]:
+    task_root = _task_root(task.id)
     downloads_dir = task_root / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,24 +83,84 @@ def _build_bundle(task: Task) -> tuple[Path, str]:
     version = _slugify_name(task.version or "V1.0")
     bundle_name = f"{slug}_{version}_{str(task.id)[:8]}_full_delivery.zip"
     bundle_path = downloads_dir / bundle_name
-
     root_prefix = Path(bundle_name.replace(".zip", ""))
+    return bundle_path, bundle_name, root_prefix
+
+
+def _build_bundle(task: Task) -> tuple[Path, str]:
+    task_root = _task_root(task.id)
+    task_root_resolved = task_root.resolve()
+    bundle_path, bundle_name, root_prefix = _bundle_target(task)
+    added_files = 0
+
+    def _safe_add(zf: zipfile.ZipFile, file_path: Path) -> None:
+        nonlocal added_files
+        # Reject symlinks to avoid escaping the task workspace into other
+        # users' data or sensitive host files.
+        if file_path.is_symlink():
+            logger.warning("Skipping symlink in bundle: %s", file_path)
+            return
+        try:
+            relative = file_path.resolve().relative_to(task_root_resolved)
+        except ValueError:
+            logger.warning("Skipping path outside task workspace: %s", file_path)
+            return
+        arcname = root_prefix / relative
+        zf.write(file_path, arcname.as_posix())
+        added_files += 1
 
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for child in sorted(task_root.iterdir(), key=lambda p: p.name):
-            if child.name == "downloads":
-                continue
-            if child.is_dir():
-                for file_path in sorted(child.rglob("*")):
-                    if file_path.is_dir():
-                        continue
-                    arcname = root_prefix / file_path.relative_to(task_root)
-                    zf.write(file_path, arcname.as_posix())
-            elif child.is_file():
-                arcname = root_prefix / child.relative_to(task_root)
-                zf.write(child, arcname.as_posix())
+        if task_root.exists():
+            for child in sorted(task_root.iterdir(), key=lambda p: p.name):
+                if child.name == "downloads":
+                    continue
+                if child.is_symlink():
+                    logger.warning("Skipping symlink at task root: %s", child)
+                    continue
+                if child.is_dir():
+                    for file_path in sorted(child.rglob("*")):
+                        if file_path.is_dir():
+                            continue
+                        _safe_add(zf, file_path)
+                elif child.is_file():
+                    _safe_add(zf, child)
 
-    return bundle_path, bundle_name
+    return bundle_path, bundle_name, root_prefix, added_files
+
+
+async def _hydrate_bundle_from_artifacts(
+    db: AsyncSession,
+    task: Task,
+    *,
+    bundle_path: Path,
+    root_prefix: Path,
+    effective_build_id: Optional[uuid.UUID],
+) -> int:
+    artifacts_stmt = select(Artifact).where(Artifact.task_id == task.id)
+    if effective_build_id:
+        artifacts_stmt = artifacts_stmt.where(
+            or_(Artifact.build_id == effective_build_id, Artifact.build_id.is_(None))
+        )
+    artifacts_q = await db.execute(
+        artifacts_stmt.order_by(Artifact.created_at.asc(), Artifact.artifact_name.asc())
+    )
+    artifacts = artifacts_q.scalars().all()
+
+    added_files = 0
+    seen_paths: set[Path] = set()
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for artifact in artifacts:
+            if not artifact.local_path:
+                continue
+            file_path = Path(artifact.local_path).expanduser().resolve(strict=False)
+            if not file_path.is_file() or file_path.is_symlink() or file_path in seen_paths:
+                continue
+            seen_paths.add(file_path)
+            safe_name = artifact.artifact_name or f"{artifact.artifact_type}.bin"
+            arcname = root_prefix / "recovered" / artifact.artifact_type / safe_name
+            zf.write(file_path, arcname.as_posix())
+            added_files += 1
+    return added_files
 
 
 @router.post("/tasks", status_code=status.HTTP_201_CREATED)
@@ -177,6 +258,8 @@ async def get_task_dashboard(task_id: uuid.UUID, db: AsyncSession = Depends(get_
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
+    effective_build_id = await _resolve_effective_build_id(db, task)
+
     events_q = await db.execute(
         select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.created_at.desc()).limit(20)
     )
@@ -185,9 +268,12 @@ async def get_task_dashboard(task_id: uuid.UUID, db: AsyncSession = Depends(get_
     exports_q = await db.execute(select(Export).where(Export.task_id == task_id))
     exports = exports_q.scalars().all()
 
-    screenshots_q = await db.execute(
-        select(Screenshot).where(Screenshot.task_id == task_id).limit(6)
-    )
+    screenshots_stmt = select(Screenshot).where(Screenshot.task_id == task_id)
+    if effective_build_id:
+        screenshots_stmt = screenshots_stmt.where(
+            or_(Screenshot.build_id == effective_build_id, Screenshot.build_id.is_(None))
+        )
+    screenshots_q = await db.execute(screenshots_stmt.order_by(Screenshot.created_at.desc()).limit(6))
     screenshots = screenshots_q.scalars().all()
 
     dashboard = TaskDashboardResponse(
@@ -211,9 +297,24 @@ async def get_task_timeline(task_id: uuid.UUID, db: AsyncSession = Depends(get_d
 
 
 @router.get("/tasks/{task_id}/artifacts")
-async def get_task_artifacts(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
+async def get_task_artifacts(
+    task_id: uuid.UUID,
+    build_id: Optional[uuid.UUID] = Query(default=None),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+
+    effective_build_id = await _resolve_effective_build_id(db, task, build_id)
+    artifacts_stmt = select(Artifact).where(Artifact.task_id == task_id)
+    if effective_build_id:
+        artifacts_stmt = artifacts_stmt.where(
+            or_(Artifact.build_id == effective_build_id, Artifact.build_id.is_(None))
+        )
     artifacts_q = await db.execute(
-        select(Artifact).where(Artifact.task_id == task_id).order_by(Artifact.created_at.desc())
+        artifacts_stmt.order_by(Artifact.created_at.desc(), Artifact.artifact_name.desc()).limit(limit)
     )
     artifacts = artifacts_q.scalars().all()
     items = [ArtifactItem.model_validate(a) for a in artifacts]
@@ -234,9 +335,29 @@ async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(ge
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
-    bundle_path, bundle_name = _build_bundle(task)
-    if not bundle_path.exists():
-        raise HTTPException(status_code=404, detail={"code": "TASK_BUNDLE_NOT_FOUND", "message": "bundle generation failed"})
+    effective_build_id = await _resolve_effective_build_id(db, task)
+    bundle_path, bundle_name, root_prefix = _bundle_target(task)
+    if bundle_path.is_file() and bundle_path.stat().st_size > 0:
+        return FileResponse(
+            path=bundle_path,
+            filename=bundle_name,
+            media_type="application/zip",
+        )
+
+    bundle_path, bundle_name, root_prefix, added_files = _build_bundle(task)
+    if added_files == 0:
+        added_files = await _hydrate_bundle_from_artifacts(
+            db,
+            task,
+            bundle_path=bundle_path,
+            root_prefix=root_prefix,
+            effective_build_id=effective_build_id,
+        )
+    if not bundle_path.exists() or added_files == 0:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "TASK_BUNDLE_NOT_FOUND", "message": "bundle generation failed"},
+        )
 
     return FileResponse(
         path=bundle_path,
@@ -246,11 +367,26 @@ async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(ge
 
 
 @router.get("/tasks/{task_id}/screenshots")
-async def get_task_screenshots(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
+async def get_task_screenshots(
+    task_id: uuid.UUID,
+    build_id: Optional[uuid.UUID] = Query(default=None),
+    limit: int = Query(24, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+
+    effective_build_id = await _resolve_effective_build_id(db, task, build_id)
+    screenshots_stmt = select(Screenshot).where(Screenshot.task_id == task_id)
+    if effective_build_id:
+        screenshots_stmt = screenshots_stmt.where(
+            or_(Screenshot.build_id == effective_build_id, Screenshot.build_id.is_(None))
+        )
     screenshots_q = await db.execute(
-        select(Screenshot).where(Screenshot.task_id == task_id).order_by(Screenshot.created_at.asc())
+        screenshots_stmt.order_by(Screenshot.created_at.desc(), Screenshot.scenario_id.desc()).limit(limit)
     )
-    screenshots = screenshots_q.scalars().all()
+    screenshots = list(reversed(screenshots_q.scalars().all()))
     items = [ScreenshotItem.model_validate(s) for s in screenshots]
     return {"code": "OK", "message": "success", "data": ScreenshotListResponse(items=items).model_dump()}
 
@@ -314,23 +450,46 @@ async def cancel_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.get("/tasks/{task_id}/stream")
-async def stream_task_status(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def stream_task_status(task_id: uuid.UUID):
     """SSE endpoint for real-time task status updates."""
+    import json
+
+    from app.core.database import get_session_factory
+
     async def event_stream():
         last_status = None
+        last_stage = None
+        factory = get_session_factory()
         for _ in range(300):
-            task = await db.get(Task, task_id)
-            if task and task.status != last_status:
-                import json
-                last_status = task.status
-                data = json.dumps({
-                    "task_id": str(task.id),
-                    "status": task.status,
-                    "current_stage": task.current_stage,
-                }, ensure_ascii=False)
+            # Use an independent short-lived session per poll so we never read
+            # from a stale identity-mapped cache, which would prevent the SSE
+            # client from observing real-time status transitions.
+            async with factory() as session:
+                task = await session.get(Task, task_id)
+                if task is None:
+                    data = json.dumps(
+                        {"task_id": str(task_id), "error": "TASK_NOT_FOUND"},
+                        ensure_ascii=False,
+                    )
+                    yield f"event: error\ndata: {data}\n\n"
+                    return
+                current_status = task.status
+                current_stage = task.current_stage
+
+            if current_status != last_status or current_stage != last_stage:
+                last_status = current_status
+                last_stage = current_stage
+                data = json.dumps(
+                    {
+                        "task_id": str(task_id),
+                        "status": current_status,
+                        "current_stage": current_stage,
+                    },
+                    ensure_ascii=False,
+                )
                 yield f"data: {data}\n\n"
 
-            if task and task.status in ("completed", "failed", "cancelled"):
+            if current_status in ("completed", "failed", "cancelled"):
                 break
 
             await asyncio.sleep(2)

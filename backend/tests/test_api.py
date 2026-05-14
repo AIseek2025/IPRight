@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,7 @@ os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine, get_session_factory
+from app.models.db import Artifact, Build, Export, Task
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -90,6 +92,54 @@ class TestExportAPI:
         resp = await async_client.get("/api/v1/exports/00000000-0000-0000-0000-000000000000/download")
         assert resp.status_code == 404
 
+    async def test_download_export_falls_back_to_artifact_local_path(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path / "workspace_root"))
+
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "导出回退测试", "product_name": "导出回退系统"})
+        assert create_resp.status_code == 201
+        task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
+
+        artifact_file = tmp_path / "legacy_exports" / "software_manual.docx"
+        artifact_file.parent.mkdir(parents=True, exist_ok=True)
+        artifact_file.write_bytes(b"docx-data")
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            build = Build(task_id=task.id, build_no=2, status="completed", trigger_type="retry")
+            session.add(build)
+            await session.flush()
+            task.active_build_id = build.id
+
+            artifact = Artifact(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_type="software_manual_docx",
+                artifact_name="software_manual.docx",
+                local_path=str(artifact_file),
+            )
+            session.add(artifact)
+            await session.flush()
+
+            export = Export(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_id=artifact.id,
+                export_type="manual_docx",
+                file_name="software_manual.docx",
+                status="ready",
+                download_url=f"/api/v1/exports/{uuid.uuid4()}/download",
+            )
+            session.add(export)
+            await session.commit()
+            export_id = export.id
+
+        resp = await async_client.get(f"/api/v1/exports/{export_id}/download")
+        assert resp.status_code == 200
+        assert resp.content == b"docx-data"
+
 
 @pytest.mark.asyncio
 class TestTaskBundleAPI:
@@ -125,3 +175,70 @@ class TestTaskBundleAPI:
             assert any(name.endswith("/workspace/prd/product_prd.md") for name in names)
             assert any(name.endswith("/artifacts/screenshots/home.png") for name in names)
             assert any(name.endswith("/builds/build_001/exports/software_manual.docx") for name in names)
+
+    async def test_task_bundle_falls_back_to_artifact_local_paths(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        workspace_root = tmp_path / "workspace_root"
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(workspace_root))
+
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle回退测试", "product_name": "bundle回退系统"})
+        assert create_resp.status_code == 201
+        task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
+
+        recovered_file = tmp_path / "legacy_task_files" / "software_manual.docx"
+        recovered_file.parent.mkdir(parents=True, exist_ok=True)
+        recovered_file.write_bytes(b"legacy-docx")
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            build = Build(task_id=task.id, build_no=2, status="completed", trigger_type="retry")
+            session.add(build)
+            await session.flush()
+            task.active_build_id = build.id
+
+            artifact = Artifact(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_type="software_manual_docx",
+                artifact_name="software_manual.docx",
+                local_path=str(recovered_file),
+            )
+            session.add(artifact)
+            await session.commit()
+
+        resp = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/zip"
+
+        bundle_path = tmp_path / "recovered_bundle.zip"
+        bundle_path.write_bytes(resp.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert any(name.endswith("/recovered/software_manual_docx/software_manual.docx") for name in names)
+
+    async def test_task_bundle_reuses_existing_download(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle缓存测试", "product_name": "缓存下载系统"})
+        assert resp.status_code == 201
+        task_id = resp.json()["data"]["task_id"]
+
+        task_root = tmp_path / "tasks" / task_id
+        downloads_dir = task_root / "downloads"
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        existing_bundle = downloads_dir / f"缓存下载系统_V1_0_{task_id[:8]}_full_delivery.zip"
+        with zipfile.ZipFile(existing_bundle, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("cached/readme.txt", "cached bundle")
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp2.status_code == 200
+        assert resp2.headers["content-type"] == "application/zip"
+
+        bundle_path = tmp_path / "cached_bundle.zip"
+        bundle_path.write_bytes(resp2.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            assert zf.read("cached/readme.txt") == b"cached bundle"
