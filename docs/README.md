@@ -13,25 +13,28 @@
 3. `IPRIGHT_TECH_ARCHITECTURE.md`
    - 技术选型、系统分层、核心服务、数据模型、可观测性
 
-4. `IPRIGHT_DOCUMENT_PIPELINE_DESIGN.md`
+4. `IPRIGHT_ARCHITECTURE_CHANGE_RECORD_2026-05.md`
+   - 2026-05 这一轮系统级修复与重构的正式架构变更记录
+
+5. `IPRIGHT_DOCUMENT_PIPELINE_DESIGN.md`
    - 说明书、源码文档、自动运行、自动截图的总设计
 
-5. `IPRIGHT_DOCUMENT_GENERATION_RULES.md`
+6. `IPRIGHT_DOCUMENT_GENERATION_RULES.md`
    - 说明书和源码文档的长期制作规范与禁止项
 
-6. `IPRIGHT_APP_CONTRACT.md`
+7. `IPRIGHT_APP_CONTRACT.md`
    - 生成应用的运行、截图、源码导出契约与 manifest 约束
 
-7. `IPRIGHT_API_AND_DATA_SCHEMA.md`
+8. `IPRIGHT_API_AND_DATA_SCHEMA.md`
    - API、数据表、导出与工件模型
 
-8. `IPRIGHT_WORKFLOW_STATE_MACHINE.md`
+9. `IPRIGHT_WORKFLOW_STATE_MACHINE.md`
    - 任务状态机、阶段转移、失败与重试收口
 
-9. `IPRIGHT_PROMPT_AND_AGENT_CONTRACTS.md`
+10. `IPRIGHT_PROMPT_AND_AGENT_CONTRACTS.md`
    - LLM 与 Agent 的职责边界、结构化输出契约
 
-10. `IPRIGHT_ACCEPTANCE_AND_TEST_PLAN.md`
+11. `IPRIGHT_ACCEPTANCE_AND_TEST_PLAN.md`
    - 验收标准、测试矩阵、自动化与人工抽检建议
 
 ## 运维与治理
