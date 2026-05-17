@@ -177,8 +177,9 @@ async def execute_capture_flow(
             }
         )
 
+        image_artifact = None
         if result.success and result.image_path:
-            await create_artifact(
+            image_artifact = await create_artifact(
                 db_factory,
                 task_id,
                 build_id,
@@ -187,17 +188,19 @@ async def execute_capture_flow(
                 result.image_path,
             )
 
-        async with db_factory()() as db:
-            screenshot = Screenshot(
-                task_id=uuid.UUID(task_id),
-                build_id=uuid.UUID(build_id),
-                scenario_id=result.scenario_id,
-                page_title=result.page_title,
-                route=result.route,
-                caption=result.caption,
-            )
-            db.add(screenshot)
-            await db.commit()
+        if image_artifact is not None:
+            async with db_factory()() as db:
+                screenshot = Screenshot(
+                    task_id=uuid.UUID(task_id),
+                    build_id=uuid.UUID(build_id),
+                    scenario_id=result.scenario_id,
+                    page_title=result.page_title,
+                    route=result.route,
+                    image_artifact_id=image_artifact.id,
+                    caption=result.caption,
+                )
+                db.add(screenshot)
+                await db.commit()
 
     _write_json(manifest_path, screenshot_manifest_data)
     await create_artifact(
