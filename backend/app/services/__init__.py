@@ -34,6 +34,19 @@ class TaskService:
         await self.db.flush()
 
     async def start_build(self, task: Task, trigger_type: str = "create") -> Build:
+        stale_builds_q = await self.db.execute(
+            select(Build).where(
+                Build.task_id == task.id,
+                Build.status.in_([StageStatus.QUEUED.value, StageStatus.RUNNING.value]),
+            )
+        )
+        stale_builds = stale_builds_q.scalars().all()
+        for stale_build in stale_builds:
+            stale_build.status = "aborted"
+            stale_build.current_stage = "aborted"
+            stale_build.failure_reason = "Superseded by a newer build retry"
+            stale_build.finished_at = datetime.utcnow()
+
         last_build_q = await self.db.execute(
             select(Build).where(Build.task_id == task.id).order_by(Build.build_no.desc()).limit(1)
         )
@@ -51,6 +64,8 @@ class TaskService:
         )
         self.db.add(build)
         task.active_build_id = build_id
+        task.status = TopLevelStatus.QUEUED.value
+        task.current_stage = TopLevelStatus.QUEUED.value
         task.updated_at = datetime.utcnow()
         await self.db.flush()
         return build

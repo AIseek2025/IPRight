@@ -145,6 +145,68 @@ def _supply_chain_preset() -> DomainPreset:
     )
 
 
+def _logistics_preset() -> DomainPreset:
+    return DomainPreset(
+        key="logistics",
+        name="物流调度",
+        scene="运单受理、车队调度、线路跟踪、仓配联动与签收回单",
+        short_name="物流调度",
+        software_category="物流管理软件",
+        core_entities=["运单", "车辆", "司机", "配送线路", "签收回单"],
+        user_roles=["管理员", "调度主管", "车队专员", "仓配协同员", "客服专员"],
+        dashboard_metrics=[
+            {"title": "在途运单", "value": "38", "color": "#1677ff"},
+            {"title": "待调度车辆", "value": "12", "color": "#13c2c2"},
+            {"title": "异常节点", "value": "4", "color": "#f5222d"},
+            {"title": "回单待复核", "value": "9", "color": "#722ed1"},
+        ],
+        modules=[
+            _build_module("运单调度中心", "/dispatch", "🚚"),
+            _build_module("车辆与司机协同", "/fleet", "🚛"),
+            _build_module("线路监控台", "/routes", "🛰️"),
+            _build_module("仓配协同台", "/warehousing", "📦"),
+            _build_module("签收回单中心", "/signoffs", "🧾"),
+            _build_module("时效预警台", "/alerts", "🚨"),
+            _build_module("结算对账", "/settlements", "💰"),
+            _build_module("系统设置", "/settings", "⚙️"),
+        ],
+        industry_scope="物流调度、车队管理、运输跟踪、仓配协同、签收回单",
+        dev_tools="Python 3.11、FastAPI、React、TypeScript、Vite、python-docx、PostgreSQL",
+        support_env="主流 Chromium 内核浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite",
+    )
+
+
+def _supply_chain_finance_preset() -> DomainPreset:
+    return DomainPreset(
+        key="supply_chain_finance",
+        name="供应链金融",
+        scene="核心企业授信分析、融资申请监控、贸易背景核验与资金敞口预警",
+        short_name="供应链金融",
+        software_category="金融分析软件",
+        core_entities=["授信主体", "融资申请", "贸易背景", "资金敞口", "风险事件"],
+        user_roles=["管理员", "风控经理", "授信分析师", "资金运营专员", "核心企业协同员"],
+        dashboard_metrics=[
+            {"title": "授信主体", "value": "24", "color": "#1677ff"},
+            {"title": "融资申请", "value": "16", "color": "#13c2c2"},
+            {"title": "风险预警", "value": "6", "color": "#f5222d"},
+            {"title": "待复核事项", "value": "11", "color": "#722ed1"},
+        ],
+        modules=[
+            _build_module("授信主体管理", "/credit-subjects", "🏦"),
+            _build_module("融资申请分析", "/financing", "💹"),
+            _build_module("资金敞口监控", "/exposure", "📉"),
+            _build_module("贸易背景核验", "/trade-verification", "🔎"),
+            _build_module("预警处置中心", "/alerts", "🚨"),
+            _build_module("核心企业看板", "/anchor-enterprises", "🏢"),
+            _build_module("报表中心", "/reports", "📋"),
+            _build_module("系统设置", "/settings", "⚙️"),
+        ],
+        industry_scope="供应链金融、核心企业授信、融资监控、贸易背景核验、资金风险预警",
+        dev_tools="Python 3.11、FastAPI、React、TypeScript、Vite、python-docx、PostgreSQL",
+        support_env="主流 Chromium 内核浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite",
+    )
+
+
 def _finance_preset() -> DomainPreset:
     return DomainPreset(
         key="finance",
@@ -367,28 +429,46 @@ def _generic_preset() -> DomainPreset:
 
 
 def _select_preset(keyword: str, product_name: str, industry: str | None) -> DomainPreset:
-    source = " ".join(
-        filter(
-            None,
-            [
-                _clean_phrase(str(keyword or "")),
-                _clean_phrase(str(product_name or "")),
-                _clean_phrase(str(industry or "")),
-            ],
-        )
-    ).lower()
+    keyword_text = _clean_phrase(str(keyword or "")).lower()
+    product_text = _clean_phrase(str(product_name or "")).lower()
+    industry_text = _clean_phrase(str(industry or "")).lower()
+    source = " ".join(filter(None, [keyword_text, product_text, industry_text]))
     preset_tokens: list[tuple[DomainPreset, list[str]]] = [
         (_media_preset(), ["短剧", "剧集", "演员", "影视", "片单", "内容平台", "评论", "番剧", "节目"]),
         (_marketing_preset(), ["广告", "投放", "kol", "达人", "小红书", "营销", "种草", "流量", "品牌"]),
-        (_supply_chain_preset(), ["供应链", "采购", "仓储", "库存", "物流", "履约", "供应商", "订单", "对账"]),
+        (_logistics_preset(), ["物流", "调度", "运单", "车队", "司机", "配送", "线路", "签收", "仓配", "在途"]),
+        (_supply_chain_finance_preset(), ["供应链金融", "融资", "授信", "保理", "应收", "敞口", "核心企业", "资金", "贸易背景", "金融"]),
+        (_supply_chain_preset(), ["供应链", "采购", "仓储", "库存", "履约", "供应商", "订单", "对账"]),
         (_finance_preset(), ["股票", "证券", "基金", "量化", "交易", "投研", "风控", "合规", "因子"]),
         (_energy_preset(), ["能耗", "园区", "设备", "巡检", "工单", "告警", "电力", "能源", "运维"]),
         (_manufacturing_preset(), ["制造", "生产", "工厂", "工序", "排程", "质检", "车间", "批次"]),
         (_healthcare_preset(), ["医疗", "医院", "门诊", "病案", "随访", "质控", "护理", "科室"]),
     ]
+
+    best_match: DomainPreset | None = None
+    best_score = 0
     for preset, tokens in preset_tokens:
-        if any(token in source for token in tokens):
-            return preset
+        score = 0
+        for token in tokens:
+            if token in keyword_text or token in product_text:
+                score += 3
+            elif token in industry_text:
+                score += 2
+            elif token in source:
+                score += 1
+        if preset.key == "supply_chain_finance":
+            if any(token in source for token in ["供应链", "核心企业", "订单", "应收"]):
+                score += 2
+            if any(token in source for token in ["金融", "融资", "授信", "敞口", "资金", "分析", "监控"]):
+                score += 4
+        if preset.key == "logistics":
+            if any(token in source for token in ["调度", "车队", "司机", "运单", "线路", "签收"]):
+                score += 3
+        if score > best_score:
+            best_score = score
+            best_match = preset
+    if best_match and best_score > 0:
+        return best_match
     return _generic_preset()
 
 
@@ -466,7 +546,8 @@ def _pick_experience_blueprint(product_code: str, preset_key: str) -> dict:
             "login_variant": "spotlight",
             "dashboard_variant": "command",
             "module_variants": ["operations", "workspace", "insight"],
-            "navigation_variant": "sidebar",
+            "navigation_variant": "top_tabs",
+            "shell_layout_hint": "顶部主导航 + 指挥条 + 多区块工作台，避免默认左侧深色竖栏后台",
             "tone": "强调执行节奏、状态看板与统一调度",
         },
         {
@@ -475,6 +556,7 @@ def _pick_experience_blueprint(product_code: str, preset_key: str) -> dict:
             "dashboard_variant": "insight",
             "module_variants": ["insight", "records", "workspace"],
             "navigation_variant": "indexed",
+            "shell_layout_hint": "顶部索引导航 + 过滤工具带 + 双列或三列分析画布，避免统一侧栏壳层",
             "tone": "强调分析结论、关键洞察与对比视图",
         },
         {
@@ -483,13 +565,293 @@ def _pick_experience_blueprint(product_code: str, preset_key: str) -> dict:
             "dashboard_variant": "workspace",
             "module_variants": ["workspace", "operations", "records"],
             "navigation_variant": "sectioned",
+            "shell_layout_hint": "顶部标题区 + 分段导航 + 协同工作区，可按模块使用二级面板，不要默认整站左侧固定竖栏",
             "tone": "强调岗位协同、分区工作台与任务闭环",
         },
     ]
     return blueprints[_seed_index(f"{product_code}|{preset_key}", len(blueprints))]
 
 
+def _normalize_app_type(value: str | None) -> str | None:
+    token = _clean_phrase(value or "").lower()
+    mapping = {
+        "admin_web": "admin_web",
+        "web": "admin_web",
+        "web_app": "admin_web",
+        "webapp": "admin_web",
+        "browser_app": "admin_web",
+        "desktop_client": "desktop_client",
+        "desktop_app": "desktop_client",
+        "client_app": "desktop_client",
+        "client": "desktop_client",
+    }
+    return mapping.get(token)
+
+
+def _infer_app_type(keyword: str, product_name: str, industry: str | None, prd_summary: dict | None = None) -> str:
+    explicit = _normalize_app_type((prd_summary or {}).get("app_type"))
+    if not explicit:
+        explicit = _normalize_app_type((prd_summary or {}).get("product_type"))
+    if explicit:
+        return explicit
+
+    source = " ".join([keyword, product_name, industry or ""]).lower()
+    desktop_tokens = [
+        "客户端",
+        "桌面",
+        "桌面端",
+        "工作站",
+        "终端",
+        "本地端",
+        "值守端",
+        "控制端",
+        "分析终端",
+        "监控终端",
+        "采集端",
+    ]
+    web_tokens = [
+        "平台",
+        "系统",
+        "门户",
+        "网站",
+        "网页",
+        "web",
+        "管理平台",
+        "管理系统",
+        "云平台",
+        "中心",
+    ]
+    if any(token in source for token in desktop_tokens) and not any(token in source for token in web_tokens):
+        return "desktop_client"
+    return "admin_web"
+
+
+def _runtime_platform_by_app_type(app_type: str) -> str:
+    if app_type == "desktop_client":
+        return "Windows 终端、macOS 终端或 Linux 桌面终端中的桌面客户端环境"
+    return "Linux 服务器、Windows 终端或 macOS 终端中的主流浏览器环境"
+
+
+def _support_env_by_app_type(base_support_env: str, app_type: str) -> str:
+    if app_type == "desktop_client":
+        return "Windows 10/11、macOS 或 Linux 桌面环境，Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite"
+    return base_support_env
+
+
+def _build_visual_profile(
+    product_code: str,
+    preset_key: str,
+    app_type: str,
+    experience_blueprint: dict | None = None,
+) -> dict:
+    blueprint = experience_blueprint or {}
+    navigation_variant = str(blueprint.get("navigation_variant") or "").strip()
+    shell_layout_hint = str(blueprint.get("shell_layout_hint") or "").strip()
+    top_tabs_profiles = [
+        {
+            "name": "midnight_command_deck",
+            "shell_background": "#f5f7fb",
+            "nav_background": "#0f172a",
+            "nav_text": "#e2e8f0",
+            "panel_background": "#ffffff",
+            "panel_border": "#dbe3ef",
+            "accent": "#2563eb",
+            "soft": "#eff6ff",
+            "strong": "#1d4ed8",
+            "layout_signal": "顶部标签导航 + 横向指挥卡片 + 宽屏工作台，避免默认左侧栏",
+            "chrome_treatment": "top_tabs",
+        },
+        {
+            "name": "sandstone_signal_ribbon",
+            "shell_background": "#f6f4ef",
+            "nav_background": "#43302b",
+            "nav_text": "#f8efe4",
+            "panel_background": "#fffdf8",
+            "panel_border": "#e8dcc7",
+            "accent": "#b7791f",
+            "soft": "#fff7e6",
+            "strong": "#9a6700",
+            "layout_signal": "顶部主导航 + 信号条 + 横向运营区，避免默认左侧栏",
+            "chrome_treatment": "top_tabs",
+        },
+        {
+            "name": "emerald_command_tabs",
+            "shell_background": "#f3faf7",
+            "nav_background": "#0f3d3f",
+            "nav_text": "#d5f5f6",
+            "panel_background": "#ffffff",
+            "panel_border": "#d6ebe5",
+            "accent": "#0f766e",
+            "soft": "#ecfeff",
+            "strong": "#115e59",
+            "layout_signal": "顶部标签栏 + 指挥区 + 多列工作台，避免侧边栏壳层",
+            "chrome_treatment": "top_tabs",
+        },
+    ]
+    indexed_profiles = [
+        {
+            "name": "slate_analysis_canvas",
+            "shell_background": "#f4f6fb",
+            "nav_background": "#1f2937",
+            "nav_text": "#e5edf7",
+            "panel_background": "#ffffff",
+            "panel_border": "#d8e0eb",
+            "accent": "#4f46e5",
+            "soft": "#eef2ff",
+            "strong": "#4338ca",
+            "layout_signal": "顶部索引导航 + 过滤工具带 + 双列分析画布，避免默认左侧栏",
+            "chrome_treatment": "indexed_topbar",
+        },
+        {
+            "name": "linen_insight_grid",
+            "shell_background": "#f8f5ef",
+            "nav_background": "#5b4636",
+            "nav_text": "#f7efe2",
+            "panel_background": "#fffdf9",
+            "panel_border": "#eadfce",
+            "accent": "#c2410c",
+            "soft": "#fff7ed",
+            "strong": "#9a3412",
+            "layout_signal": "顶部索引导航 + 洞察画布 + 并列信息区，避免统一侧栏",
+            "chrome_treatment": "indexed_topbar",
+        },
+        {
+            "name": "cobalt_insight_radar",
+            "shell_background": "#f3f6fb",
+            "nav_background": "#1e3a8a",
+            "nav_text": "#dbeafe",
+            "panel_background": "#ffffff",
+            "panel_border": "#dbe6f5",
+            "accent": "#2563eb",
+            "soft": "#eff6ff",
+            "strong": "#1d4ed8",
+            "layout_signal": "顶部索引标签 + 过滤带 + 宽屏分析区，避免左侧竖栏后台",
+            "chrome_treatment": "indexed_topbar",
+        },
+    ]
+    sectioned_profiles = [
+        {
+            "name": "graphite_collaboration_strip",
+            "shell_background": "#f4f6fb",
+            "nav_background": "#111827",
+            "nav_text": "#e5edf7",
+            "panel_background": "#ffffff",
+            "panel_border": "#d8e0eb",
+            "accent": "#334155",
+            "soft": "#f1f5f9",
+            "strong": "#1f2937",
+            "layout_signal": "顶部标题区 + 分段导航 + 协同工作区，不使用整站左侧栏",
+            "chrome_treatment": "sectioned_header",
+        },
+        {
+            "name": "amber_team_panels",
+            "shell_background": "#faf7f1",
+            "nav_background": "#713f12",
+            "nav_text": "#fef3c7",
+            "panel_background": "#fffdf8",
+            "panel_border": "#f1dfb5",
+            "accent": "#d97706",
+            "soft": "#fffbeb",
+            "strong": "#b45309",
+            "layout_signal": "顶部标题栏 + 分段导航 + 多面板协作台，避免默认左侧栏",
+            "chrome_treatment": "sectioned_header",
+        },
+        {
+            "name": "teal_team_workspace",
+            "shell_background": "#f2fbfa",
+            "nav_background": "#134e4a",
+            "nav_text": "#ccfbf1",
+            "panel_background": "#ffffff",
+            "panel_border": "#d2f1ec",
+            "accent": "#0f766e",
+            "soft": "#f0fdfa",
+            "strong": "#115e59",
+            "layout_signal": "顶部标题区 + 分段标签 + 协同工作台，避免左侧竖栏后台",
+            "chrome_treatment": "sectioned_header",
+        },
+    ]
+    default_web_profiles = [
+        *top_tabs_profiles,
+        *indexed_profiles,
+        *sectioned_profiles,
+    ]
+    client_profiles = [
+        {
+            "name": "graphite_client",
+            "shell_background": "#eef2f7",
+            "nav_background": "#1f2937",
+            "nav_text": "#e5edf7",
+            "panel_background": "#f8fafc",
+            "panel_border": "#cfd8e3",
+            "accent": "#2563eb",
+            "soft": "#e8f0ff",
+            "strong": "#1e40af",
+        },
+        {
+            "name": "slate_operator",
+            "shell_background": "#f2f4f8",
+            "nav_background": "#111827",
+            "nav_text": "#dbe6f4",
+            "panel_background": "#f9fbfd",
+            "panel_border": "#d3dce7",
+            "accent": "#475569",
+            "soft": "#f1f5f9",
+            "strong": "#334155",
+        },
+    ]
+    if app_type == "desktop_client":
+        candidates = client_profiles
+    elif navigation_variant == "top_tabs":
+        candidates = top_tabs_profiles
+    elif navigation_variant == "indexed":
+        candidates = indexed_profiles
+    elif navigation_variant == "sectioned":
+        candidates = sectioned_profiles
+    else:
+        candidates = default_web_profiles
+    profile = dict(candidates[_seed_index(f"{product_code}|{preset_key}|{app_type}|{navigation_variant}", len(candidates))])
+    if shell_layout_hint:
+        profile.setdefault("layout_signal", shell_layout_hint)
+    return profile
+
+
 def _module_kind(title: str) -> str:
+    if any(token in title for token in ["授信", "主体"]):
+        return "credit_subjects"
+    if any(token in title for token in ["融资", "放款", "保理"]):
+        return "financing"
+    if any(token in title for token in ["敞口", "资金", "头寸"]):
+        return "exposure"
+    if any(token in title for token in ["贸易背景", "核验", "单据核查", "凭证"]):
+        return "trade_verification"
+    if any(token in title for token in ["运单", "调度", "派车"]):
+        return "dispatch"
+    if any(token in title for token in ["车辆", "司机", "车队", "运力"]):
+        return "fleet"
+    if any(token in title for token in ["线路", "轨迹", "路径"]):
+        return "routes"
+    if any(token in title for token in ["仓配", "分拨", "仓库协同", "回单"]):
+        return "warehousing"
+    if any(token in title for token in ["签收", "回单", "妥投"]):
+        return "signoffs"
+    if any(token in title for token in ["采购", "请购", "寻源"]):
+        return "purchases"
+    if any(token in title for token in ["销售", "客户订单", "发货"]):
+        return "sales"
+    if any(token in title for token in ["库存", "仓储", "批次", "库位"]):
+        return "inventory"
+    if any(token in title for token in ["供应商", "供方", "厂商"]):
+        return "suppliers"
+    if any(token in title for token in ["履约", "订单", "交付", "执行中心"]):
+        return "fulfillment"
+    if any(token in title for token in ["结算", "对账", "付款"]):
+        return "settlements"
+    if any(token in title for token in ["达人", "创作者", "博主"]):
+        return "talents"
+    if any(token in title for token in ["品牌", "客户"]):
+        return "clients"
+    if any(token in title for token in ["投放", "活动", "campaign"]):
+        return "campaigns"
     if any(token in title for token in ["报表", "分析", "复盘", "统计", "看板", "指标"]):
         return "analytics"
     if any(token in title for token in ["设置", "配置", "参数", "权限"]):
@@ -505,6 +867,15 @@ def _module_kind(title: str) -> str:
 
 def _module_route_hint(title: str) -> str | None:
     mapping = [
+        (["授信", "主体"], "/credit-subjects"),
+        (["融资", "放款", "保理"], "/financing"),
+        (["敞口", "资金", "头寸"], "/exposure"),
+        (["贸易背景", "核验", "单据核查"], "/trade-verification"),
+        (["运单", "调度", "派车"], "/dispatch"),
+        (["车辆", "司机", "车队", "运力"], "/fleet"),
+        (["线路", "轨迹", "路径"], "/routes"),
+        (["仓配", "分拨"], "/warehousing"),
+        (["签收", "回单", "妥投"], "/signoffs"),
         (["剧集", "片单", "内容库"], "/series"),
         (["创作者", "演员", "艺人"], "/actors"),
         (["广告投放", "投放计划", "投放", "campaign"], "/campaigns"),
@@ -555,6 +926,42 @@ def _module_route(title: str, index: int, fallback_route: str, page_routes: list
 
 
 def _module_headers(kind: str) -> list[str]:
+    if kind == "credit_subjects":
+        return ["主体编号", "核心企业/主体", "授信额度", "评级状态", "预警级别", "更新时间"]
+    if kind == "financing":
+        return ["申请编号", "融资产品", "申请企业", "审批阶段", "放款状态", "更新时间"]
+    if kind == "exposure":
+        return ["监控编号", "资金池/项目", "当前敞口", "阈值状态", "责任人", "更新时间"]
+    if kind == "trade_verification":
+        return ["核验编号", "订单/合同", "背景真实性", "单据完备度", "复核结论", "更新时间"]
+    if kind == "dispatch":
+        return ["运单编号", "起讫区域", "调度责任人", "运输状态", "承运时效", "更新时间"]
+    if kind == "fleet":
+        return ["车辆编号", "司机姓名", "车辆状态", "当前任务", "在途位置", "更新时间"]
+    if kind == "routes":
+        return ["线路编号", "线路名称", "途经节点", "拥堵等级", "异常状态", "更新时间"]
+    if kind == "warehousing":
+        return ["协同单号", "仓库/分拨点", "节点状态", "异常原因", "责任角色", "更新时间"]
+    if kind == "signoffs":
+        return ["回单编号", "客户/站点", "签收状态", "回单完整度", "复核结果", "更新时间"]
+    if kind == "purchases":
+        return ["采购单号", "物料名称", "申请部门", "供应状态", "到货日期", "更新时间"]
+    if kind == "sales":
+        return ["销售单号", "客户名称", "交付经理", "履约状态", "回款状态", "更新时间"]
+    if kind == "inventory":
+        return ["批次编号", "物料名称", "仓位", "可用库存", "预警状态", "更新时间"]
+    if kind == "suppliers":
+        return ["供应商编号", "供应商名称", "品类范围", "协同状态", "资质状态", "更新时间"]
+    if kind == "fulfillment":
+        return ["履约单号", "任务主题", "责任人", "当前阶段", "结果摘要", "更新时间"]
+    if kind == "settlements":
+        return ["结算单号", "业务对象", "应付金额", "审核状态", "付款状态", "更新时间"]
+    if kind == "talents":
+        return ["达人编号", "达人昵称", "平台", "合作状态", "报价区间", "更新时间"]
+    if kind == "clients":
+        return ["客户编号", "客户名称", "所属行业", "合作阶段", "负责人", "更新时间"]
+    if kind == "campaigns":
+        return ["计划编号", "计划名称", "投放渠道", "执行阶段", "预算", "更新时间"]
     if kind == "analytics":
         return ["分析编号", "分析主题", "统计维度", "负责人", "核心结论", "更新时间"]
     if kind == "settings":
@@ -569,6 +976,42 @@ def _module_headers(kind: str) -> list[str]:
 
 
 def _module_primary_action(title: str) -> str:
+    if any(token in title for token in ["授信", "主体"]):
+        return "新建授信主体"
+    if any(token in title for token in ["融资", "放款", "保理"]):
+        return "发起融资申请"
+    if any(token in title for token in ["敞口", "资金", "头寸"]):
+        return "新增敞口监控项"
+    if any(token in title for token in ["贸易背景", "核验", "单据核查"]):
+        return "提交背景核验"
+    if any(token in title for token in ["运单", "调度", "派车"]):
+        return "创建调度任务"
+    if any(token in title for token in ["车辆", "司机", "车队", "运力"]):
+        return "新增车辆档案"
+    if any(token in title for token in ["线路", "轨迹", "路径"]):
+        return "配置监控线路"
+    if any(token in title for token in ["仓配", "分拨"]):
+        return "发起仓配协同"
+    if any(token in title for token in ["签收", "回单", "妥投"]):
+        return "复核签收回单"
+    if any(token in title for token in ["采购", "请购", "寻源"]):
+        return "发起采购申请"
+    if any(token in title for token in ["销售", "客户订单", "发货"]):
+        return "新建销售订单"
+    if any(token in title for token in ["库存", "仓储", "批次", "库位"]):
+        return "发起库存盘点"
+    if any(token in title for token in ["供应商", "供方", "厂商"]):
+        return "新增供应商档案"
+    if any(token in title for token in ["履约", "订单", "交付"]):
+        return "创建履约任务"
+    if any(token in title for token in ["结算", "对账", "付款"]):
+        return "发起结算复核"
+    if any(token in title for token in ["达人", "创作者", "博主"]):
+        return "新增达人档案"
+    if any(token in title for token in ["品牌", "客户"]):
+        return "新增客户线索"
+    if any(token in title for token in ["投放", "活动", "campaign"]):
+        return "新建投放计划"
     if any(token in title for token in ["报表", "分析", "复盘", "统计"]):
         return f"生成{title}"
     if any(token in title for token in ["设置", "配置", "权限"]):
@@ -590,6 +1033,34 @@ def _module_primary_action(title: str) -> str:
 
 def _module_filter(title: str, focus_terms: list[str]) -> str:
     focus = "/".join(focus_terms[:2]) or "关键字/负责人/状态"
+    if any(token in title for token in ["授信", "主体"]):
+        return "搜索主体编号 / 企业名称 / 评级状态"
+    if any(token in title for token in ["融资", "放款", "保理"]):
+        return "搜索申请编号 / 企业名称 / 审批阶段"
+    if any(token in title for token in ["敞口", "资金", "头寸"]):
+        return "搜索资金池 / 敞口状态 / 责任人"
+    if any(token in title for token in ["贸易背景", "核验", "单据核查"]):
+        return "搜索合同编号 / 订单号 / 核验结论"
+    if any(token in title for token in ["运单", "调度", "派车"]):
+        return "搜索运单编号 / 起讫区域 / 调度责任人"
+    if any(token in title for token in ["车辆", "司机", "车队", "运力"]):
+        return "搜索车辆编号 / 司机姓名 / 任务状态"
+    if any(token in title for token in ["线路", "轨迹", "路径"]):
+        return "搜索线路编号 / 线路名称 / 异常状态"
+    if any(token in title for token in ["仓配", "分拨"]):
+        return "搜索仓库 / 分拨点 / 节点状态"
+    if any(token in title for token in ["签收", "回单", "妥投"]):
+        return "搜索回单编号 / 客户名称 / 签收状态"
+    if any(token in title for token in ["采购", "请购", "寻源"]):
+        return "搜索采购单号 / 物料名称 / 申请部门"
+    if any(token in title for token in ["销售", "客户订单", "发货"]):
+        return "搜索销售单号 / 客户名称 / 履约状态"
+    if any(token in title for token in ["库存", "仓储", "批次", "库位"]):
+        return "搜索批次编号 / 物料名称 / 仓位"
+    if any(token in title for token in ["供应商", "供方", "厂商"]):
+        return "搜索供应商名称 / 资质状态 / 品类"
+    if any(token in title for token in ["履约", "订单", "交付"]):
+        return "搜索履约单号 / 责任人 / 当前阶段"
     return f"搜索{title}相关的{focus}"
 
 
@@ -609,6 +1080,114 @@ def _module_rows(
     role_a = roles[0] if roles else "管理员"
     role_b = roles[1] if len(roles) > 1 else role_a
     role_c = roles[2] if len(roles) > 2 else role_b
+    if kind == "credit_subjects":
+        return [
+            [f"{base_code}-111", f"{focus_a}核心企业", "8,000万", "A 级", "关注", "2026-05-02"],
+            [f"{base_code}-112", f"{focus_b}链主企业", "5,500万", "B+级", "正常", "2026-05-01"],
+            [f"{base_code}-113", f"{product_code}白名单主体", "3,200万", "A-级", "待复核", "2026-04-30"],
+        ]
+    if kind == "financing":
+        return [
+            [f"{base_code}-121", "订单质押融资", f"{focus_a}供应商", "尽调中", "待放款", "2026-05-02"],
+            [f"{base_code}-122", "应收账款保理", f"{focus_b}服务商", "授信复核", "审批中", "2026-05-01"],
+            [f"{base_code}-123", "仓单融资", f"{product_code}合作方", "已通过", "已放款", "2026-04-30"],
+        ]
+    if kind == "exposure":
+        return [
+            [f"{base_code}-131", f"{focus_a}资金池", "2,450万", "接近阈值", role_a, "2026-05-02"],
+            [f"{base_code}-132", f"{focus_b}项目组", "1,820万", "状态正常", role_b, "2026-05-01"],
+            [f"{base_code}-133", f"{product_code}专项计划", "3,080万", "超限待处置", role_c, "2026-04-30"],
+        ]
+    if kind == "trade_verification":
+        return [
+            [f"{base_code}-141", "PO-202605-001", "已核验", "单据齐全", "通过", "2026-05-02"],
+            [f"{base_code}-142", "SO-202605-012", "待补充", "发票缺失", "退回补件", "2026-05-01"],
+            [f"{base_code}-143", "AR-202604-027", "复核中", "影像待校验", "人工核对", "2026-04-30"],
+        ]
+    if kind == "dispatch":
+        return [
+            [f"{base_code}-211", "沪宁专线", names[0], "待派车", "4h 30m", "2026-05-02"],
+            [f"{base_code}-212", "华东集配", names[1], "在途", "6h 10m", "2026-05-01"],
+            [f"{base_code}-213", "冷链次晨达", names[2], "已签收", "2h 50m", "2026-04-30"],
+        ]
+    if kind == "fleet":
+        return [
+            [f"{base_code}-221", "沪A-3278D", names[0], "待发车", "华东仓配", "嘉定分拨场", "2026-05-02"],
+            [f"{base_code}-222", "苏B-9182K", names[1], "运输中", "冷链专线", "无锡中转站", "2026-05-01"],
+            [f"{base_code}-223", "浙C-7731P", names[2], "待回场", "城配末端", "杭州东站点", "2026-04-30"],
+        ]
+    if kind == "routes":
+        return [
+            [f"{base_code}-231", "沪宁当日达", "上海-苏州-南京", "轻度拥堵", "需关注", "2026-05-02"],
+            [f"{base_code}-232", "华南快配", "广州-东莞-深圳", "通畅", "正常", "2026-05-01"],
+            [f"{base_code}-233", "冷链回仓线", "嘉兴-苏州-上海", "中度拥堵", "待调线", "2026-04-30"],
+        ]
+    if kind == "warehousing":
+        return [
+            [f"{base_code}-241", "上海主仓", "待出库", "波次待锁定", role_a, "2026-05-02"],
+            [f"{base_code}-242", "苏州分拨", "在分拨", "月台拥堵", role_b, "2026-05-01"],
+            [f"{base_code}-243", "杭州前置仓", "已回传", "签收回单待归档", role_c, "2026-04-30"],
+        ]
+    if kind == "signoffs":
+        return [
+            [f"{base_code}-251", "华东门店群", "待签收", "影像待上传", "待复核", "2026-05-02"],
+            [f"{base_code}-252", "医药冷链站点", "已签收", "影像齐全", "通过", "2026-05-01"],
+            [f"{base_code}-253", "商超仓配节点", "异常签收", "签章不完整", "退回补传", "2026-04-30"],
+        ]
+    if kind == "purchases":
+        return [
+            [f"{base_code}-101", f"{focus_a}核心原料", role_a, "待下单", "2026-05-08", "2026-05-02"],
+            [f"{base_code}-102", f"{focus_b}备件采购", role_b, "供应确认中", "2026-05-10", "2026-05-01"],
+            [f"{base_code}-103", f"{product_code}加急补货", role_c, "已到货", "2026-05-04", "2026-04-30"],
+        ]
+    if kind == "sales":
+        return [
+            [f"{base_code}-201", f"{focus_a}重点订单", "远峰客户", role_a, "待发运", "回款审核中", "2026-05-02"],
+            [f"{base_code}-202", f"{focus_b}渠道订单", "晨屿商贸", role_b, "履约中", "已回款", "2026-05-01"],
+            [f"{base_code}-203", f"{product_code}复核订单", "星曜客户", role_c, "已完成", "待开票", "2026-04-30"],
+        ]
+    if kind == "inventory":
+        return [
+            [f"{base_code}-301", f"{focus_a}主仓批次", "A-01-03", "1260", "低库存预警", "2026-05-02"],
+            [f"{base_code}-302", f"{focus_b}周转批次", "B-02-01", "2480", "库存正常", "2026-05-01"],
+            [f"{base_code}-303", f"{product_code}锁定批次", "C-03-07", "320", "冻结待复核", "2026-04-30"],
+        ]
+    if kind == "suppliers":
+        return [
+            [f"{base_code}-401", "华辰材料有限公司", "金属件", "月度协同", "资质有效", "2026-05-02"],
+            [f"{base_code}-402", "远望仓储服务商", "仓配服务", "待续签", "证照待更新", "2026-05-01"],
+            [f"{base_code}-403", "衡拓设备厂商", "包装设备", "已归档", "资质有效", "2026-04-30"],
+        ]
+    if kind == "fulfillment":
+        return [
+            [f"{base_code}-501", f"{focus_a}履约任务", names[0], "备货排程", "待仓配确认", "2026-05-02"],
+            [f"{base_code}-502", f"{focus_b}交付任务", names[1], "发运执行", "运输节点同步中", "2026-05-01"],
+            [f"{base_code}-503", f"{product_code}闭环复核", names[2], "已签收", "结果归档完成", "2026-04-30"],
+        ]
+    if kind == "settlements":
+        return [
+            [f"{base_code}-601", "华辰材料有限公司", "86,000", "待复核", "待付款", "2026-05-02"],
+            [f"{base_code}-602", "远望仓储服务商", "42,500", "已通过", "付款中", "2026-05-01"],
+            [f"{base_code}-603", "衡拓设备厂商", "18,600", "已完成", "已付款", "2026-04-30"],
+        ]
+    if kind == "talents":
+        return [
+            [f"{base_code}-701", "晓鹿种草社", "小红书", "合作中", "12k-18k", "2026-05-02"],
+            [f"{base_code}-702", "阿木评测", "抖音", "待签约", "20k-30k", "2026-05-01"],
+            [f"{base_code}-703", "Melody生活志", "小红书", "已归档", "8k-12k", "2026-04-30"],
+        ]
+    if kind == "clients":
+        return [
+            [f"{base_code}-801", "星曜美妆", "美妆个护", "方案沟通", role_a, "2026-05-02"],
+            [f"{base_code}-802", "晨屿食品", "消费食品", "执行中", role_b, "2026-05-01"],
+            [f"{base_code}-803", "远峰家居", "家居生活", "复盘中", role_c, "2026-04-30"],
+        ]
+    if kind == "campaigns":
+        return [
+            [f"{base_code}-901", "夏季新品种草", "小红书", "执行中", "80,000", "2026-05-02"],
+            [f"{base_code}-902", "母亲节礼盒预热", "抖音", "待上线", "35,000", "2026-05-01"],
+            [f"{base_code}-903", "618蓄水首轮", "双平台", "待审核", "200,000", "2026-04-30"],
+        ]
     if kind == "analytics":
         return [
             [f"{base_code}-301", f"{title}周报", focus_a, names[0], f"{focus_a}趋势稳定", "2026-05-02"],
@@ -648,6 +1227,36 @@ def _module_rows(
 
 def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> str:
     focus = "、".join(focus_terms[:3]) or keyword or title
+    if _module_kind(title) == "credit_subjects":
+        return "授信主体、评级结论与授信额度"
+    if _module_kind(title) == "financing":
+        return "融资申请、审批阶段与放款状态"
+    if _module_kind(title) == "exposure":
+        return "资金敞口、阈值状态与责任归属"
+    if _module_kind(title) == "trade_verification":
+        return "贸易背景、单据完备度与核验结论"
+    if _module_kind(title) == "dispatch":
+        return "运单任务、调度责任人与在途时效"
+    if _module_kind(title) == "fleet":
+        return "车辆状态、司机协同与运力位置"
+    if _module_kind(title) == "routes":
+        return "线路节点、拥堵等级与异常告警"
+    if _module_kind(title) == "warehousing":
+        return "仓配节点、分拨状态与协同异常"
+    if _module_kind(title) == "signoffs":
+        return "签收状态、回单完整度与复核结果"
+    if _module_kind(title) == "purchases":
+        return "采购申请、到货排期与供应状态"
+    if _module_kind(title) == "sales":
+        return "客户订单、交付承诺与回款状态"
+    if _module_kind(title) == "inventory":
+        return "库存批次、库位余量与预警阈值"
+    if _module_kind(title) == "suppliers":
+        return "供应资质、协同进度与供方分类"
+    if _module_kind(title) == "fulfillment":
+        return "履约阶段、责任分工与交付结果"
+    if _module_kind(title) == "settlements":
+        return "应付金额、审核流转与付款状态"
     if "剧集" in title:
         return "剧集条目、题材标签与上架节奏"
     if "演员" in title:
@@ -673,6 +1282,96 @@ def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> st
 def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_phrase: str) -> list[str]:
     focus = _module_domain_focus(title, keyword, focus_terms)
     kind = _module_kind(title)
+    if kind == "credit_subjects":
+        return [
+            "支持围绕核心企业、供应商与渠道主体维护授信额度和评级结果",
+            "支持按授信状态、预警等级和额度占用快速筛查重点主体",
+            f"支持{role_phrase}共享授信结论、评级依据和后续复核记录",
+        ]
+    if kind == "financing":
+        return [
+            "支持围绕融资申请、审批阶段和放款状态跟踪项目进展",
+            "支持按融资产品、申请企业和复核状态定位重点申请",
+            f"支持{role_phrase}同步尽调意见、放款条件和资金安排",
+        ]
+    if kind == "exposure":
+        return [
+            "支持围绕资金池、项目和责任角色监控敞口变化与超限风险",
+            "支持按阈值状态、监控对象和责任人快速定位高风险敞口",
+            f"支持{role_phrase}共享敞口处置建议、预警结果和跟踪记录",
+        ]
+    if kind == "trade_verification":
+        return [
+            "支持围绕合同、订单、发票和影像资料开展贸易背景核验",
+            "支持按真实性结论、单据完备度和复核状态筛查异常材料",
+            f"支持{role_phrase}共享核验结论、补件意见和复核证据",
+        ]
+    if kind == "dispatch":
+        return [
+            "支持围绕运单、起讫区域和调度责任人推进派车与节点跟踪",
+            "支持按运输状态、线路时效和在途异常快速定位重点任务",
+            f"支持{role_phrase}同步调度计划、节点反馈和客户通知结果",
+        ]
+    if kind == "fleet":
+        return [
+            "支持围绕车辆、司机和当前任务统一查看运力分布与状态",
+            "支持按车辆状态、任务优先级和在途位置调度车队资源",
+            f"支持{role_phrase}共享司机反馈、运力安排和回场结果",
+        ]
+    if kind == "routes":
+        return [
+            "支持围绕线路节点、拥堵等级和异常事件监控运输路径健康度",
+            "支持按线路名称、拥堵等级和异常状态筛查需调线任务",
+            f"支持{role_phrase}共享线路调整建议、绕行方案和到达预测",
+        ]
+    if kind == "warehousing":
+        return [
+            "支持围绕出库、分拨、到仓和回传节点查看仓配协同进度",
+            "支持按仓库、分拨点和异常原因快速定位仓配堵点",
+            f"支持{role_phrase}共享波次安排、异常说明和协同留痕",
+        ]
+    if kind == "signoffs":
+        return [
+            "支持围绕签收状态、回单影像和复核结论统一整理回单材料",
+            "支持按客户、站点和签收异常快速筛查待补件记录",
+            f"支持{role_phrase}共享回单复核结果、影像附件和归档状态",
+        ]
+    if kind == "purchases":
+        return [
+            "支持按采购单、物料和申请部门追踪请购进度与到货排期",
+            "支持围绕供应确认、加急补货和到货节点组织采购协同处理",
+            f"支持{role_phrase}共享采购结果、补货原因与供应风险留痕",
+        ]
+    if kind == "sales":
+        return [
+            "支持围绕客户订单、交付节点和回款状态开展销售履约跟踪",
+            "支持按客户、订单阶段和交付经理快速定位重点订单",
+            f"支持{role_phrase}同步交付结果、客户反馈与回款进度",
+        ]
+    if kind == "inventory":
+        return [
+            "支持围绕库存批次、库位余量和冻结数量识别库存波动",
+            "支持按仓位、物料和预警等级查看库存健康状态",
+            f"支持{role_phrase}对低库存、锁定库存和补货建议形成闭环处理",
+        ]
+    if kind == "suppliers":
+        return [
+            "支持统一维护供应商资质、合作范围和协同状态",
+            "支持按品类、资质状态和续签节点快速筛查供方风险",
+            f"支持{role_phrase}共享供方协同记录、资质变更和履约反馈",
+        ]
+    if kind == "fulfillment":
+        return [
+            "支持围绕履约阶段、责任人和交付结果跟踪执行闭环",
+            "支持查看备货、发运、签收等关键节点的同步状态",
+            f"支持{role_phrase}共享履约过程记录、异常说明与结果回写",
+        ]
+    if kind == "settlements":
+        return [
+            "支持集中维护结算单、审核意见和付款状态",
+            "支持按业务对象、结算阶段和付款进度快速定位账务事项",
+            f"支持{role_phrase}共享复核结果、凭证状态与付款留痕",
+        ]
     if "剧集" in title:
         return [
             "支持围绕剧集名称、题材、上架状态和更新进度进行统一检索与维护",
@@ -737,6 +1436,82 @@ def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_ph
 
 def _module_description(title: str, keyword: str, scene: str, focus_terms: list[str]) -> str:
     focus = _module_domain_focus(title, keyword, focus_terms)
+    kind = _module_kind(title)
+    if kind == "credit_subjects":
+        return (
+            f"{title}模块用于维护核心企业、上下游主体与授信状态，重点服务于{scene}中的评级复核、额度配置和主体准入。"
+            f"页面重点展示{focus}，便于授信分析师快速确认白名单主体、授信策略和额度使用情况。"
+        )
+    if kind == "financing":
+        return (
+            f"{title}模块围绕融资产品、申请企业和审批节点组织页面信息，用于支撑{scene}中的尽调、审批和放款跟踪。"
+            f"页面重点展示{focus}，方便统一查看融资进展、复核意见和待办事项。"
+        )
+    if kind == "exposure":
+        return (
+            f"{title}模块聚焦资金池、项目敞口和阈值监测，用于在{scene}过程中及时识别额度占用、超限风险和责任归属。"
+            f"页面重点展示{focus}，便于风控角色快速完成预警复核和处置追踪。"
+        )
+    if kind == "trade_verification":
+        return (
+            f"{title}模块用于核验订单、合同、影像和票据等贸易背景材料，帮助团队在{scene}中快速识别真实性风险和补件事项。"
+            f"页面重点展示{focus}，便于完成单据核验、结论记录和复核留痕。"
+        )
+    if kind == "dispatch":
+        return (
+            f"{title}模块面向运单编排、派车执行和节点同步场景，用于协调起运、在途跟踪和异常处置。"
+            f"页面重点展示{focus}，方便调度主管按时效、区域和责任人查看任务进度。"
+        )
+    if kind == "fleet":
+        return (
+            f"{title}模块用于统一维护车辆、司机和运力状态，帮助团队在{scene}中快速判断可调度资源和在途位置。"
+            f"页面重点展示{focus}，便于完成车队协同、任务分配和资源复核。"
+        )
+    if kind == "routes":
+        return (
+            f"{title}模块用于监控线路节点、拥堵等级和异常事件，帮助团队在{scene}中快速识别延迟风险并调整运输方案。"
+            f"页面重点展示{focus}，便于统一查看绕行建议、节点耗时和异常分布。"
+        )
+    if kind == "warehousing":
+        return (
+            f"{title}模块聚焦主仓、分拨点和末端站点之间的仓配协同，用于在{scene}过程中跟踪出库、分拨和回传节点。"
+            f"页面重点展示{focus}，便于仓配角色快速完成异常复核、节点交接和结果留痕。"
+        )
+    if kind == "signoffs":
+        return (
+            f"{title}模块围绕签收状态、回单影像和复核结果组织页面信息，用于支撑{scene}中的签收确认、补件处理和正式归档。"
+            f"页面重点展示{focus}，方便统一查看客户签收结果、回单完整度和待办事项。"
+        )
+    if kind == "purchases":
+        return (
+            f"{title}模块用于汇总采购申请、物料需求和到货排期，重点支撑{scene}中的请购审批、供应确认与补货跟踪。"
+            f"页面核心内容围绕{focus}展开，便于快速判断是否需要加急下单、调整到货日期或联动供应商。"
+        )
+    if kind == "sales":
+        return (
+            f"{title}模块围绕客户订单、交付承诺和回款状态组织页面信息，用于支撑{scene}中的订单推进、发运协调与结果回写。"
+            f"页面重点展示{focus}，方便统一查看客户需求、履约状态与回款进度。"
+        )
+    if kind == "inventory":
+        return (
+            f"{title}模块聚焦库存批次、库位余量和安全阈值管理，用于在{scene}过程中及时识别低库存、冻结库存和补货需求。"
+            f"页面重点展示{focus}，便于仓储角色快速完成盘点、预警复核和批次追踪。"
+        )
+    if kind == "suppliers":
+        return (
+            f"{title}模块用于统一维护供方资质、合作范围和协同进度，帮助团队在{scene}中快速识别关键供方和续签风险。"
+            f"页面重点展示{focus}，便于完成供方筛选、资质核验和协同记录沉淀。"
+        )
+    if kind == "fulfillment":
+        return (
+            f"{title}模块面向订单执行、节点推进和结果回写场景，用于协调备货、发运、签收和异常反馈。"
+            f"页面重点展示{focus}，方便按阶段查看责任人、执行结果和待处理事项。"
+        )
+    if kind == "settlements":
+        return (
+            f"{title}模块用于归集应付金额、审核意见和付款状态，帮助团队在{scene}中形成从账单复核到付款完成的闭环。"
+            f"页面重点展示{focus}，便于财务与业务角色同步核验结算结果。"
+        )
     if "剧集" in title:
         return (
             f"{title}模块聚焦短剧内容台账、题材标签与上架节奏的统一管理，主要服务于{scene}中的内容编排与进度跟踪。"
@@ -762,7 +1537,6 @@ def _module_description(title: str, keyword: str, scene: str, focus_terms: list[
             f"{title}模块用于统一维护账号资料、岗位角色与负责范围，使{scene}中的多角色协作边界更加清晰。"
             f"页面重点展示{focus}，便于完成账号启停、角色调整与权限核对。"
         )
-    kind = _module_kind(title)
     if kind == "analytics":
         return (
             f"{title}模块面向{scene}中的复盘分析与结论输出，重点汇总{focus}，用于快速形成统计视图和阶段判断。"
@@ -783,6 +1557,105 @@ def _module_description(title: str, keyword: str, scene: str, focus_terms: list[
 
 def _module_steps(title: str, primary_action: str, focus_terms: list[str]) -> list[str]:
     focus = _module_domain_focus(title, title, focus_terms)
+    kind = _module_kind(title)
+    if kind == "credit_subjects":
+        return [
+            "进入授信主体页面后先查看主体编号、授信额度、评级状态和预警级别。",
+            "通过主体名称、评级状态或额度区间筛选重点企业，确认是否存在待复核主体。",
+            f"执行“{primary_action}”或详情维护操作，补充额度信息、评级依据和授信策略。",
+            "处理完成后复核授信额度、评级状态和更新时间，确保主体信息可追踪、可复核、可导出。",
+        ]
+    if kind == "financing":
+        return [
+            "进入融资申请分析页面后先查看申请编号、融资产品、审批阶段和放款状态。",
+            "通过申请企业、融资产品或审批阶段筛选重点申请，确认是否存在待尽调或待放款事项。",
+            f"根据业务需要执行“{primary_action}”，补充尽调意见、审批结果和资金安排。",
+            "处理完成后复核审批阶段、放款状态和更新时间，确保融资进展与复核意见保持一致。",
+        ]
+    if kind == "exposure":
+        return [
+            "进入资金敞口监控页面后优先查看资金池、当前敞口、阈值状态和责任人。",
+            "通过项目、阈值等级或责任人筛选重点敞口，确认是否存在超限或临界状态。",
+            f"执行“{primary_action}”或详情处理动作，更新处置建议、跟踪状态和责任分工。",
+            "处理后复核敞口数值、阈值状态和更新时间，确保风险变化能够被持续跟踪。",
+        ]
+    if kind == "trade_verification":
+        return [
+            "进入贸易背景核验页面后先查看订单/合同编号、单据完备度和复核结论。",
+            "通过合同编号、核验结论或补件状态筛选重点材料，确认是否存在真实性风险。",
+            f"执行“{primary_action}”或详情核验操作，补充核验说明、补件要求和复核依据。",
+            "处理完成后复核背景真实性、复核结论和更新时间，确保材料链路完整可审计。",
+        ]
+    if kind == "dispatch":
+        return [
+            "进入运单调度中心后先查看运单编号、起讫区域、运输状态和承运时效。",
+            "通过运单编号、区域或责任人筛选重点任务，确认是否需要派车、改派或催办。",
+            f"根据业务需要执行“{primary_action}”，同步调度计划、节点进展和异常说明。",
+            "处理完成后复核运输状态、承运时效和更新时间，确保调度任务闭环可追踪。",
+        ]
+    if kind == "fleet":
+        return [
+            "进入车辆与司机协同页面后先查看车辆编号、司机姓名、当前任务和在途位置。",
+            "通过车辆状态、司机姓名或任务类型筛选重点运力，确认可调度车辆和异常资源。",
+            f"执行“{primary_action}”或详情维护动作，补充车辆信息、司机安排和任务归属。",
+            "处理完成后复核运力状态、在途位置和更新时间，确保车队协同结果一致可见。",
+        ]
+    if kind == "routes":
+        return [
+            "进入线路监控台后先查看线路名称、途经节点、拥堵等级和异常状态。",
+            "通过线路编号、拥堵等级或异常状态筛选重点线路，确认是否需要绕行或调线。",
+            f"根据业务需要执行“{primary_action}”，补充线路策略、异常说明和到达预测。",
+            "处理完成后复核线路状态、异常等级和更新时间，确保路径调整可追踪。",
+        ]
+    if kind == "warehousing":
+        return [
+            "进入仓配协同台后先查看仓库/分拨点、节点状态、异常原因和责任角色。",
+            "通过仓库、节点状态或异常原因筛选重点协同单，确认是否存在出库、分拨或回传堵点。",
+            f"执行“{primary_action}”或详情处理动作，更新节点进展、协同说明和责任归属。",
+            "处理后复核节点状态、异常说明和更新时间，确保仓配协同链路完整可追溯。",
+        ]
+    if kind == "signoffs":
+        return [
+            "进入签收回单中心后先查看回单编号、签收状态、回单完整度和复核结果。",
+            "通过客户名称、签收状态或回单完整度筛选重点记录，确认是否存在补传或异常签收。",
+            f"根据业务需要执行“{primary_action}”，补充回单影像、签收说明和复核结论。",
+            "处理完成后复核签收状态、回单完整度和更新时间，确保正式归档材料准确可用。",
+        ]
+    if kind == "purchases":
+        return [
+            "进入采购管理页面后先查看采购单号、物料名称、申请部门和到货日期等关键信息。",
+            "通过物料名称、申请部门或供应状态筛选待处理采购单，确认是否存在加急补货或排期冲突。",
+            f"执行“{primary_action}”或详情复核操作，补充采购原因、到货计划和供应确认结果。",
+            "处理完成后复核到货日期、供应状态和更新时间，确保采购进度可追溯、可同步、可导出。",
+        ]
+    if kind == "sales":
+        return [
+            "进入销售管理页面后先查看客户名称、履约状态、回款状态和最近更新时间。",
+            "通过客户名称或订单阶段筛选重点订单，确认交付承诺与回款计划是否一致。",
+            f"根据业务需要执行“{primary_action}”，补充订单信息、更新履约状态并回写客户反馈。",
+            "处理完成后复核订单状态、回款结果和更新时间，确保销售与交付信息保持一致。",
+        ]
+    if kind == "inventory":
+        return [
+            "进入库存管理页面后优先查看批次编号、库位、可用库存和预警状态。",
+            "通过物料名称、仓位或预警等级筛选重点批次，确认是否需要盘点或触发补货。",
+            f"执行“{primary_action}”或详情处理动作，更新盘点结果、冻结状态和安全库存阈值。",
+            "处理后复核库存数量、预警状态和更新时间，确保批次信息准确并可用于后续履约。",
+        ]
+    if kind == "suppliers":
+        return [
+            "进入供应商管理页面后先查看供应商名称、品类范围、协同状态和资质状态。",
+            "通过品类、资质状态或续签节点筛选关键供方，确认当前需要补齐的资料或风险项。",
+            f"执行“{primary_action}”或详情维护操作，补充资质文件、合作范围和协同记录。",
+            "处理后复核资质状态、协同节点和更新时间，确保供方档案后续可检索、可复盘、可验收。",
+        ]
+    if kind == "fulfillment":
+        return [
+            "进入订单履约中心后先查看履约单号、当前阶段、责任人和结果摘要。",
+            "通过责任人、当前阶段或履约单号筛选重点任务，确认备货、发运或签收节点状态。",
+            f"根据业务需要执行“{primary_action}”，同步执行进度、异常说明和交付反馈。",
+            "处理完成后复核当前阶段、结果摘要与更新时间，确保履约闭环记录完整可追踪。",
+        ]
     if "剧集" in title:
         return [
             "进入剧集管理页面后先核对剧集名称、题材标签、上架状态和更新时间等核心信息。",
@@ -813,6 +1686,35 @@ def _module_steps(title: str, primary_action: str, focus_terms: list[str]) -> li
 
 
 def _module_business_value(title: str, keyword: str, scene: str) -> str:
+    kind = _module_kind(title)
+    if kind == "credit_subjects":
+        return "授信主体管理把核心企业、授信额度和评级结果集中维护，便于风控与授信角色统一判断主体准入和额度策略。"
+    if kind == "financing":
+        return "融资申请分析将尽调、审批与放款状态串成统一链路，能够降低授信、资金和业务团队之间的信息割裂。"
+    if kind == "exposure":
+        return "资金敞口监控通过统一展示敞口数值、阈值状态和责任归属，帮助团队更快识别高风险项目和超限事项。"
+    if kind == "trade_verification":
+        return "贸易背景核验将合同、订单、票据和影像的复核动作汇聚到同一页面，有助于提高材料真实性核验效率并强化审计留痕。"
+    if kind == "dispatch":
+        return "运单调度中心把派车、在途跟踪和异常反馈整合到统一驾驶舱，便于调度岗位快速协调区域任务和时效承诺。"
+    if kind == "fleet":
+        return "车辆与司机协同通过统一展示运力状态、司机安排和当前位置，帮助团队更高效地完成运力分配与回场统筹。"
+    if kind == "routes":
+        return "线路监控台将路径节点、拥堵状态和异常事件集中呈现，有助于及时调整绕行策略并降低运输延误风险。"
+    if kind == "warehousing":
+        return "仓配协同台把主仓、分拨和末端节点串成完整协同链路，便于责任角色快速定位堵点并同步处理结果。"
+    if kind == "signoffs":
+        return "签收回单中心将签收结果、回单影像和复核结论集中整理，有助于正式归档、客户对账和后续异常追踪。"
+    if kind == "purchases":
+        return "采购管理将请购单、到货排期与供应确认整合在同一工作台，便于采购与仓储角色同步判断补货优先级和到货风险。"
+    if kind == "sales":
+        return "销售管理把客户订单、履约状态和回款反馈纳入同一页面，能够降低销售、交付与财务之间的信息割裂。"
+    if kind == "inventory":
+        return "库存管理通过统一展示批次余量、库位分布和预警状态，帮助团队更快识别补货需求和冻结风险。"
+    if kind == "suppliers":
+        return "供应商管理将供方资质、合作范围和续签节点集中维护，有助于降低供方协同中的资料遗漏和履约风险。"
+    if kind == "fulfillment":
+        return "订单履约中心把备货、发运、签收和异常说明串成完整执行链路，便于责任人快速定位堵点并同步结果。"
     if "剧集" in title:
         return "剧集管理将内容资料、题材标签、上架进度和处理记录集中到统一页面，有助于提升内容运营效率并降低跨表沟通成本。"
     if "演员" in title:
@@ -884,6 +1786,10 @@ def _topic_label(keyword: str, product_name: str) -> str:
 
 def _infer_scene(keyword: str, industry: str | None, module_titles: list[str], preset: DomainPreset) -> str:
     source = " ".join([keyword, industry or "", *module_titles])
+    if any(token in source for token in ["物流", "调度", "运单", "车队", "线路", "签收", "仓配"]):
+        return "运单编排、车队调度、线路跟踪与签收回单协同"
+    if any(token in source for token in ["金融", "融资", "授信", "敞口", "保理", "资金", "贸易背景", "核心企业"]):
+        return "授信分析、融资监控、贸易背景核验与资金风险处置"
     if any(token in source for token in ["股票", "量化", "策略", "回测", "交易", "因子"]):
         return "量化策略研究、市场数据管理、回测分析与交易执行协同"
     if any(token in source for token in ["能耗", "园区", "设备", "巡检", "告警"]):
@@ -1108,6 +2014,44 @@ def _build_design_focus(
     )
 
 
+def _architecture_style(preset_key: str, app_type: str, scene: str) -> str:
+    if preset_key == "logistics":
+        return "dispatch_flow"
+    if preset_key == "supply_chain_finance":
+        return "risk_grid"
+    if app_type == "desktop_client":
+        return "desktop_console"
+    if "分析" in scene or "监控" in scene:
+        return "analysis_grid"
+    return "layered_stack"
+
+
+def _build_project_dna(
+    *,
+    keyword: str,
+    product_name: str,
+    preset: DomainPreset,
+    scene: str,
+    focus_terms: list[str],
+    modules: list[dict],
+    experience_blueprint: dict,
+    visual_profile: dict,
+    app_type: str,
+) -> dict:
+    return {
+        "preset_key": preset.key,
+        "product_anchor": _topic_label(keyword, product_name),
+        "scene": scene,
+        "app_type": app_type,
+        "focus_terms": list(focus_terms[:5]),
+        "module_signature": [module.get("title", "") for module in modules[:6]],
+        "interaction_tone": experience_blueprint.get("tone", ""),
+        "visual_anchor": visual_profile.get("name", ""),
+        "architecture_style": _architecture_style(preset.key, app_type, scene),
+        "domain_entities": list(preset.core_entities[:5]),
+    }
+
+
 def _build_distinguishing_features(
     product_name: str,
     keyword: str,
@@ -1149,6 +2093,7 @@ def build_task_profile(
     preset = _select_preset(keyword, product_name, industry)
     version = version or DEFAULT_VERSION
     prd_summary = prd_summary or {}
+    app_type = _infer_app_type(keyword, product_name, industry, prd_summary)
     product_code = _product_code(keyword, product_name)
     preset_modules = _preset_modules_for_product(preset, product_code)
     module_titles = list(prd_summary.get("core_modules") or [])
@@ -1161,6 +2106,7 @@ def build_task_profile(
     scene = _compose_scene(keyword or product_name, product_name, industry, module_titles, preset)
     industry_scope = _compose_industry_scope(keyword, industry, preset, focus_terms)
     experience_blueprint = _pick_experience_blueprint(product_code, preset.key)
+    visual_profile = _build_visual_profile(product_code, preset.key, app_type, experience_blueprint)
 
     profile_modules = []
     for idx, title in enumerate(module_titles):
@@ -1202,6 +2148,17 @@ def build_task_profile(
         focus_terms,
         minimum=10,
     )
+    project_dna = _build_project_dna(
+        keyword=keyword,
+        product_name=product_name,
+        preset=preset,
+        scene=scene,
+        focus_terms=focus_terms,
+        modules=profile_modules,
+        experience_blueprint=experience_blueprint,
+        visual_profile=visual_profile,
+        app_type=app_type,
+    )
 
     created_date = datetime.now().strftime("%Y年%m月%d日")
     profile = {
@@ -1209,6 +2166,7 @@ def build_task_profile(
         "product_name": product_name,
         "topic_label": topic_label,
         "preset_key": preset.key,
+        "app_type": app_type,
         "version": version,
         "short_name": _short_name(product_name, preset.short_name),
         "product_code": product_code,
@@ -1219,8 +2177,8 @@ def build_task_profile(
         "hardware_environment": "Intel/AMD x86_64 处理器、8GB 及以上内存、100GB 以上可用磁盘空间、千兆网络环境",
         "runtime_hardware_environment": "Intel/AMD x86_64 处理器、4GB 及以上内存、50GB 以上可用磁盘空间、稳定网络环境",
         "development_os": "Linux / macOS / Windows",
-        "runtime_platform": "Linux 服务器、Windows 终端或 macOS 终端中的主流浏览器环境",
-        "support_environment": preset.support_env,
+        "runtime_platform": _runtime_platform_by_app_type(app_type),
+        "support_environment": _support_env_by_app_type(preset.support_env, app_type),
         "development_tools": preset.dev_tools,
         "programming_language": "Python、TypeScript、JavaScript、SQL",
         "source_code_line_estimate": 0,
@@ -1237,6 +2195,12 @@ def build_task_profile(
         "modules": profile_modules,
         "screenshot_scenarios": screenshot_scenarios,
         "experience_blueprint": experience_blueprint,
+        "visual_profile": visual_profile,
+        "project_dna": project_dna,
+        "differentiation_hint": (
+            f"当前任务优先体现{preset.name}领域特征，页面、截图与说明书围绕"
+            f"{'、'.join(focus_terms[:3]) or product_name}展开，不复用通用综合运营骨架。"
+        ),
         "nav_items": [
             {"path": "/dashboard", "label": "首页", "icon": "📊", "code": _nav_code("/dashboard", "首页", 1)},
             *[
@@ -1260,13 +2224,27 @@ def build_plan_seed(keyword: str, product_name: str, industry: str | None = None
     product_name = _clean_phrase(str(product_name or ""))
     industry = _clean_phrase(str(industry or "")) or None
     preset = _select_preset(keyword, product_name, industry)
+    app_type = _infer_app_type(keyword, product_name, industry)
     product_code = _product_code(keyword, product_name)
     preset_modules = _preset_modules_for_product(preset, product_code)
     module_titles = [module["title"] for module in preset_modules[:5]]
     scene = _compose_scene(keyword or product_name, product_name, industry, module_titles, preset)
     focus_terms = _split_terms(keyword, product_name, industry or "", *module_titles)[:5]
     blueprint = _pick_experience_blueprint(product_code, preset.key)
+    visual_profile = _build_visual_profile(product_code, preset.key, app_type, blueprint)
+    seed_dna = _build_project_dna(
+        keyword=keyword,
+        product_name=product_name,
+        preset=preset,
+        scene=scene,
+        focus_terms=focus_terms,
+        modules=preset_modules[:6],
+        experience_blueprint=blueprint,
+        visual_profile=visual_profile,
+        app_type=app_type,
+    )
     return {
+        "app_type": app_type,
         "preset_key": preset.key,
         "preset_name": preset.name,
         "scene": scene,
@@ -1277,6 +2255,8 @@ def build_plan_seed(keyword: str, product_name: str, industry: str | None = None
         "required_pages": ["/login", "/dashboard", *[module["route"] for module in preset_modules[:5]]],
         "focus_terms": focus_terms,
         "experience_blueprint": blueprint,
+        "visual_profile": visual_profile,
+        "project_dna": seed_dna,
         "differentiation_hint": (
             f"当前任务优先体现{preset.name}领域特征，页面与模块命名围绕"
             f"{'、'.join(focus_terms[:3]) or product_name}展开，不使用通用综合运营套板。"
@@ -1302,6 +2282,9 @@ def build_frontend_profile_source(profile: dict) -> str:
         "export type AppProfile = {\n"
         "  keyword: string;\n"
         "  product_name: string;\n"
+        "  topic_label?: string;\n"
+        "  preset_key?: string;\n"
+        "  app_type: string;\n"
         "  version: string;\n"
         "  short_name: string;\n"
         "  product_code: string;\n"
@@ -1312,6 +2295,9 @@ def build_frontend_profile_source(profile: dict) -> str:
         "  dashboard_metrics: { title: string; value: string; color: string }[];\n"
         "  nav_items: { path: string; label: string; icon: string; code: string }[];\n"
         "  modules: ModuleProfile[];\n"
+        "  visual_profile?: Record<string, string>;\n"
+        "  project_dna?: Record<string, unknown>;\n"
+        "  differentiation_hint?: string;\n"
         "};\n\n"
         f"export const APP_PROFILE: AppProfile = {payload} as AppProfile;\n"
     )

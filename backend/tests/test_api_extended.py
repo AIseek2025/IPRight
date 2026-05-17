@@ -19,7 +19,7 @@ os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine
-from app.models.db import Build, Task
+from app.models.db import Artifact, Build, Screenshot, Task
 from app.services import TaskService
 
 
@@ -93,23 +93,36 @@ class TestTaskLifecycle:
         task_id = resp.json()["data"]["task_id"]
 
         resp2 = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={})
-        assert resp2.status_code == 200
+        assert resp2.status_code == 409
 
         resp3 = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={"from_stage": "capturing"})
-        assert resp3.status_code == 200
+        assert resp3.status_code == 409
 
     async def test_retry_creates_new_build_and_switches_active_build(self, async_client):
         create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "二次构建测试"})
         assert create_resp.status_code == 201
         task_id = create_resp.json()["data"]["task_id"]
 
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            first_build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert first_build is not None
+            first_build.status = "completed"
+            first_build.current_stage = "completed"
+            await session.commit()
+
         retry_resp = await async_client.post(
             f"/api/v1/tasks/{task_id}/retry",
             json={"from_stage": "capturing"},
         )
         assert retry_resp.status_code == 200
-
-        from app.core.database import get_session_factory
 
         async with get_session_factory()() as session:
             task = await session.get(Task, uuid.UUID(task_id))
@@ -126,6 +139,44 @@ class TestTaskLifecycle:
             assert [build.build_no for build in builds] == [1, 2]
             assert [build.trigger_type for build in builds] == ["create", "retry"]
             assert str(builds[-1].id) == str(task.active_build_id)
+
+    async def test_retry_rejects_when_active_build_is_running(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "重试抢占测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            first_build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert first_build is not None
+            first_build.status = "running"
+            first_build.current_stage = "compose_code_book"
+            await session.commit()
+
+        retry_resp = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={})
+        assert retry_resp.status_code == 409
+        payload = retry_resp.json()
+        detail = payload["detail"] if "detail" in payload else payload
+        assert detail["code"] == "BUILD_ALREADY_RUNNING"
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+            assert len(builds) == 1
+            assert builds[0].status == "running"
+            assert builds[0].current_stage == "compose_code_book"
+            assert str(builds[0].id) == str(task.active_build_id)
 
     async def test_task_service_marks_build_completed(self, async_client):
         create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "构建完成态测试"})
@@ -202,6 +253,119 @@ class TestTaskLifecycle:
         resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/screenshots")
         assert resp2.status_code == 200
         assert resp2.json()["data"]["items"] == []
+
+    async def test_get_artifacts_respects_limit(self, async_client):
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "artifact_limit测试"})
+        task_id = resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            for idx in range(5):
+                session.add(
+                    Artifact(
+                        task_id=task.id,
+                        artifact_type="test",
+                        artifact_name=f"artifact_{idx}",
+                    )
+                )
+            await session.commit()
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/artifacts?limit=3")
+        assert resp2.status_code == 200
+        items = resp2.json()["data"]["items"]
+        assert len(items) == 3
+        assert items[0]["artifact_name"] == "artifact_4"
+
+    async def test_get_artifacts_defaults_to_active_build(self, async_client):
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "artifact_build_filter测试"})
+        task_id = resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            old_build = Build(task_id=task.id, build_no=2, status="completed")
+            new_build = Build(task_id=task.id, build_no=3, status="running")
+            session.add_all([old_build, new_build])
+            await session.flush()
+            task.active_build_id = new_build.id
+            session.add_all(
+                [
+                    Artifact(task_id=task.id, build_id=old_build.id, artifact_type="test", artifact_name="old_artifact"),
+                    Artifact(task_id=task.id, build_id=new_build.id, artifact_type="test", artifact_name="new_artifact"),
+                ]
+            )
+            await session.commit()
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/artifacts")
+        assert resp2.status_code == 200
+        items = resp2.json()["data"]["items"]
+        assert [item["artifact_name"] for item in items] == ["new_artifact"]
+
+        resp3 = await async_client.get(f"/api/v1/tasks/{task_id}/artifacts?build_id={old_build.id}")
+        assert resp3.status_code == 200
+        assert [item["artifact_name"] for item in resp3.json()["data"]["items"]] == ["old_artifact"]
+
+    async def test_get_screenshots_respects_limit_and_keeps_oldest_first(self, async_client):
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "screenshot_limit测试"})
+        task_id = resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            for idx in range(5):
+                session.add(
+                    Screenshot(
+                        task_id=task.id,
+                        scenario_id=f"scene_{idx}",
+                        page_title=f"页面{idx}",
+                        route=f"/route/{idx}",
+                    )
+                )
+            await session.commit()
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/screenshots?limit=3")
+        assert resp2.status_code == 200
+        items = resp2.json()["data"]["items"]
+        assert len(items) == 3
+        assert [item["scenario_id"] for item in items] == ["scene_2", "scene_3", "scene_4"]
+
+    async def test_get_screenshots_defaults_to_active_build(self, async_client):
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "screenshot_build_filter测试"})
+        task_id = resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            old_build = Build(task_id=task.id, build_no=2, status="completed")
+            new_build = Build(task_id=task.id, build_no=3, status="running")
+            session.add_all([old_build, new_build])
+            await session.flush()
+            task.active_build_id = new_build.id
+            session.add_all(
+                [
+                    Screenshot(task_id=task.id, build_id=old_build.id, scenario_id="old_scene", page_title="旧页面", route="/old"),
+                    Screenshot(task_id=task.id, build_id=new_build.id, scenario_id="new_scene", page_title="新页面", route="/new"),
+                ]
+            )
+            await session.commit()
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/screenshots")
+        assert resp2.status_code == 200
+        items = resp2.json()["data"]["items"]
+        assert [item["scenario_id"] for item in items] == ["new_scene"]
+
+        resp3 = await async_client.get(f"/api/v1/tasks/{task_id}/screenshots?build_id={old_build.id}")
+        assert resp3.status_code == 200
+        assert [item["scenario_id"] for item in resp3.json()["data"]["items"]] == ["old_scene"]
 
     async def test_pagination(self, async_client):
         for i in range(5):

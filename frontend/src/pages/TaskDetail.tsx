@@ -1,7 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Card,
   Typography,
   Descriptions,
   Tag,
@@ -60,37 +59,89 @@ export default function TaskDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [artifactsError, setArtifactsError] = useState<string | null>(null);
+  const [screenshotsError, setScreenshotsError] = useState<string | null>(null);
+  const dashboardRequestSeq = useRef(0);
+  const supportingRequestSeq = useRef(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchSupportingData = useCallback(async () => {
     if (!taskId) return;
+    const seq = ++supportingRequestSeq.current;
+    setArtifactsLoading(true);
+    setScreenshotsLoading(true);
     try {
-      const [d, a, s] = await Promise.all([
-        getTaskDashboard(taskId),
-        getTaskArtifacts(taskId),
-        getTaskScreenshots(taskId),
+      const [artifactsResult, screenshotsResult] = await Promise.allSettled([
+        getTaskArtifacts(taskId, { limit: 80 }),
+        getTaskScreenshots(taskId, { limit: 24 }),
       ]);
-      setDashboard(d);
-      setArtifacts(a.items);
-      setScreenshots(s.items);
-      setError(null);
-    } catch {
-      setError('加载任务详情失败，请检查后端服务是否运行');
+
+      if (seq !== supportingRequestSeq.current) return;
+
+      if (artifactsResult.status === 'fulfilled') {
+        setArtifacts(artifactsResult.value.items);
+        setArtifactsError(null);
+      } else {
+        setArtifactsError('工件列表加载失败，已保留上一次结果');
+      }
+
+      if (screenshotsResult.status === 'fulfilled') {
+        setScreenshots(screenshotsResult.value.items);
+        setScreenshotsError(null);
+      } else {
+        setScreenshotsError('页面截图加载失败，已保留上一次结果');
+      }
     } finally {
-      setLoading(false);
+      if (seq === supportingRequestSeq.current) {
+        setArtifactsLoading(false);
+        setScreenshotsLoading(false);
+      }
     }
   }, [taskId]);
 
-  useEffect(() => {
-    fetchData();
-    const isActive = dashboard?.task.status !== 'completed'
-      && dashboard?.task.status !== 'failed'
-      && dashboard?.task.status !== 'cancelled';
-
-    if (isActive || !dashboard) {
-      const interval = setInterval(fetchData, 3000);
-      return () => clearInterval(interval);
+  const fetchDashboardData = useCallback(async (background = false) => {
+    if (!taskId) return;
+    const seq = ++dashboardRequestSeq.current;
+    if (!background) {
+      setLoading(true);
     }
-  }, [fetchData, dashboard?.task.status]);
+
+    try {
+      const data = await getTaskDashboard(taskId);
+      if (seq !== dashboardRequestSeq.current) return;
+      setDashboard(data);
+      setError(null);
+    } catch {
+      if (seq !== dashboardRequestSeq.current) return;
+      setError('加载任务详情失败，请检查后端服务是否运行');
+    } finally {
+      if (!background && seq === dashboardRequestSeq.current) {
+        setLoading(false);
+      }
+    }
+  }, [taskId]);
+
+  const refreshAll = useCallback(async () => {
+    await fetchDashboardData();
+    await fetchSupportingData();
+  }, [fetchDashboardData, fetchSupportingData]);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  useEffect(() => {
+    const status = dashboard?.task.status;
+    const isTerminalStatus = status === 'completed' || status === 'failed' || status === 'cancelled';
+    if (isTerminalStatus) {
+      return;
+    }
+    const interval = setInterval(() => {
+      void fetchDashboardData(true);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchDashboardData, dashboard?.task.status]);
 
   const handleRetry = async (fromStage?: string) => {
     if (!taskId) return;
@@ -98,7 +149,7 @@ export default function TaskDetail() {
     try {
       await retryTask(taskId, fromStage);
       message.success('重试已触发');
-      fetchData();
+      void refreshAll();
     } catch {
       message.error('重试失败');
     } finally {
@@ -112,7 +163,7 @@ export default function TaskDetail() {
     try {
       await cancelTask(taskId);
       message.success('任务已取消');
-      fetchData();
+      void refreshAll();
     } catch {
       message.error('取消失败');
     } finally {
@@ -137,7 +188,7 @@ export default function TaskDetail() {
           status="error"
           title="加载失败"
           subTitle={error}
-          extra={<Button type="primary" onClick={fetchData}>重试</Button>}
+          extra={<Button type="primary" onClick={() => void refreshAll()}>重试</Button>}
         />
       </div>
     );
@@ -157,6 +208,20 @@ export default function TaskDetail() {
   const readyExports = exports.filter((exp) => exp.status === 'ready');
   const manualExport = readyExports.find((exp) => exp.file_name === 'software_manual.docx');
   const codeBookExport = readyExports.find((exp) => exp.file_name === 'source_code_book.docx');
+  const applicationFormExport = readyExports.find((exp) => exp.file_name === 'application_form.docx');
+  const getExportHref = (exportId: string, exportType: string) => {
+    if (exportType === 'bundle_zip') {
+      return getTaskBundleDownload(task.id);
+    }
+    return getExportDownload(exportId);
+  };
+  const getExportLabel = (fileName: string, exportType: string) => {
+    if (exportType === 'bundle_zip') return '整套交付 ZIP';
+    if (fileName === 'software_manual.docx') return '软件说明书 / 操作手册';
+    if (fileName === 'source_code_book.docx') return '软件源代码';
+    if (fileName === 'application_form.docx') return '申请表';
+    return fileName;
+  };
 
   return (
     <div>
@@ -207,7 +272,7 @@ export default function TaskDetail() {
         </Descriptions>
 
         <Space style={{ marginTop: 16 }}>
-          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={() => void refreshAll()} loading={loading}>
             刷新
           </Button>
           <Button
@@ -254,12 +319,21 @@ export default function TaskDetail() {
         )}
       </div>
 
-      {screenshots.length > 0 && (
-        <div className="page-container">
-          <Title level={5}>
-            <PictureOutlined /> 页面截图 ({screenshots.length})
-          </Title>
+      <div className="page-container">
+        <Title level={5}>
+          <PictureOutlined /> 页面截图 ({screenshots.length})
+        </Title>
+        {screenshotsError && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={screenshotsError}
+          />
+        )}
+        {screenshots.length > 0 ? (
           <List
+            loading={screenshotsLoading}
             dataSource={screenshots}
             renderItem={(s: ScreenshotItem) => (
               <List.Item>
@@ -275,13 +349,24 @@ export default function TaskDetail() {
               </List.Item>
             )}
           />
-        </div>
-      )}
+        ) : (
+          <Empty description={screenshotsLoading ? '页面截图加载中' : '暂无页面截图'} />
+        )}
+      </div>
 
       <div className="page-container">
         <Title level={5}>工件列表 ({artifacts.length})</Title>
+        {artifactsError && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={artifactsError}
+          />
+        )}
         {artifacts.length > 0 ? (
           <List
+            loading={artifactsLoading}
             dataSource={artifacts}
             renderItem={(a: ArtifactItem) => (
               <List.Item>
@@ -298,7 +383,7 @@ export default function TaskDetail() {
             )}
           />
         ) : (
-          <Empty description="暂无工件" />
+          <Empty description={artifactsLoading ? '工件列表加载中' : '暂无工件'} />
         )}
       </div>
 
@@ -330,12 +415,20 @@ export default function TaskDetail() {
           >
             下载源码文档
           </Button>
+          <Button
+            icon={<DownloadOutlined />}
+            href={applicationFormExport ? getExportDownload(applicationFormExport.id) : undefined}
+            target="_blank"
+            disabled={!applicationFormExport}
+          >
+            下载申请表
+          </Button>
         </Space>
         <Alert
           style={{ marginBottom: 16 }}
           type="info"
           showIcon
-          message="整套 ZIP 包含当前任务目录下的软件源码、运行工作区、PRD/清单、截图工件、构建产物与导出文档。"
+          message="整套 ZIP 包含当前任务目录下的软件源码、运行工作区、PRD/清单、截图工件、构建产物、软件说明书、源码文档和申请表。"
         />
         {exports.length === 0 ? (
           <Empty
@@ -351,7 +444,7 @@ export default function TaskDetail() {
                     <Button
                       type="primary"
                       icon={<DownloadOutlined />}
-                      href={getExportDownload(exp.id)}
+                      href={getExportHref(exp.id, exp.export_type)}
                       target="_blank"
                     >
                       下载
@@ -362,7 +455,7 @@ export default function TaskDetail() {
                 ]}
               >
                 <List.Item.Meta
-                  title={exp.file_name}
+                  title={getExportLabel(exp.file_name, exp.export_type)}
                   description={<Tag>{exp.export_type}</Tag>}
                 />
               </List.Item>

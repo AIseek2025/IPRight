@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+TEXT_MODEL = "deepseek-v4-flash"
+REASONING_MODEL = "deepseek-v4-pro"
 
 
 @dataclass
@@ -36,7 +38,6 @@ class LLMClient:
         self._client = None
 
     def _load_config(self) -> LLMConfig:
-        # DeepSeek takes priority, then OpenAI, then generic
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY", "")
         api_base = os.environ.get("DEEPSEEK_API_BASE") or os.environ.get("OPENAI_API_BASE") or "https://api.deepseek.com"
         model = os.environ.get("LLM_MODEL") or "deepseek-v4-pro"
@@ -48,14 +49,83 @@ class LLMClient:
             fallback_model=fallback,
         )
 
+    @staticmethod
+    def _coerce_message_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    chunks.append(str(item.get("text", "")))
+                else:
+                    chunks.append(str(item))
+            return "\n".join(chunk for chunk in chunks if chunk)
+        if content is None:
+            return ""
+        return str(content)
+
+    @staticmethod
+    def _parse_json_object_content(content: str) -> tuple[dict, str]:
+        text = (content or "").strip()
+        if not text:
+            return {}, "empty response body"
+
+        candidates = [text]
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 3 and lines[0].startswith("```") and lines[-1].strip() == "```":
+                candidates.append("\n".join(lines[1:-1]).strip())
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidates.append(text[start:end + 1].strip())
+
+        last_error = "JSON object not found"
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                last_error = str(exc)
+                continue
+            if isinstance(parsed, dict):
+                return parsed, ""
+            last_error = f"expected JSON object but got {type(parsed).__name__}"
+
+        return {}, last_error
+
     async def chat(self, messages: list, response_format: str = "text") -> LLMResponse:
         """Send a chat completion request with model fallback."""
+        return await self.chat_with_models(
+            messages,
+            response_format=response_format,
+            primary_model=self.config.model,
+            fallback_model=self.config.fallback_model,
+        )
+
+    async def chat_with_models(
+        self,
+        messages: list,
+        response_format: str = "text",
+        *,
+        primary_model: str,
+        fallback_model: str = "",
+        parse_json_response: bool = False,
+        max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
+    ) -> LLMResponse:
+        """Send a chat completion request with explicit model routing."""
         if not self.config.api_key:
             return LLMResponse(success=False, error="No LLM API key configured")
 
-        models_to_try = [self.config.model]
-        if self.config.fallback_model and self.config.fallback_model != self.config.model:
-            models_to_try.append(self.config.fallback_model)
+        models_to_try = [primary_model]
+        if fallback_model and fallback_model != primary_model:
+            models_to_try.append(fallback_model)
 
         last_error = ""
         for model in models_to_try:
@@ -71,8 +141,8 @@ class LLMClient:
                 body = {
                     "model": model,
                     "messages": messages,
-                    "temperature": self.config.temperature,
-                    "max_tokens": self.config.max_tokens,
+                    "temperature": self.config.temperature if temperature_override is None else temperature_override,
+                    "max_tokens": self.config.max_tokens if max_tokens_override is None else max_tokens_override,
                 }
 
                 if response_format == "json_object":
@@ -86,14 +156,28 @@ class LLMClient:
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        content = data["choices"][0]["message"]["content"]
+                        choice = data["choices"][0]
+                        message = choice.get("message", {})
+                        content = self._coerce_message_text(message.get("content"))
 
                         structured = {}
-                        if response_format == "json_object":
-                            try:
-                                structured = json.loads(content)
-                            except json.JSONDecodeError:
-                                pass
+                        if response_format == "json_object" or parse_json_response:
+                            structured, parse_error = self._parse_json_object_content(content)
+                            if parse_error:
+                                logger.warning(
+                                    "LLM parse failure metadata: model=%s finish_reason=%s message_keys=%s "
+                                    "content_len=%s reasoning_len=%s usage=%s raw_head=%s",
+                                    model,
+                                    choice.get("finish_reason"),
+                                    sorted(message.keys()),
+                                    len(content or ""),
+                                    len(self._coerce_message_text(message.get("reasoning_content")) or ""),
+                                    data.get("usage"),
+                                    resp.text[:800],
+                                )
+                                last_error = f"LLM JSON parse error ({model}): {parse_error}; content={content[:300]}"
+                                logger.warning(f"Model {model} failed, trying fallback: {last_error}")
+                                continue
 
                         return LLMResponse(success=True, text=content, structured=structured)
                     elif resp.status_code == 401 or resp.status_code == 403:
@@ -108,15 +192,25 @@ class LLMClient:
 
         return LLMResponse(success=False, error=last_error or "All models failed")
 
-    async def generate_prd(self, keyword: str, product_name: str, version: str, industry: str = "") -> LLMResponse:
+    async def generate_prd(
+        self,
+        keyword: str,
+        product_name: str,
+        version: str,
+        industry: str = "",
+        plan_seed: dict | None = None,
+    ) -> LLMResponse:
         """Generate a product PRD using LLM."""
-        system_prompt = """你是一个产品经理。根据用户提供的关键词，生成一个后台管理型 Web 应用的 PRD。
-限制该产品为后台管理型（admin dashboard）应用。
+        system_prompt = """你是一个产品经理。根据用户提供的关键词，生成一个软件产品 PRD。
+产品形态只能在 `admin_web` 与 `desktop_client` 中二选一，必须根据当前产品标题、关键词和产品类型判断，不得默认所有任务都是后台管理型 Web 应用。
+无论选择哪种形态，都必须体现当前行业对象、角色分工、业务流程和页面信息架构的专属特征。
+除登录、首页、系统设置等硬性页面外，不得把不同项目都写成“数据管理 / 流程管理 / 报表中心 / 系统设置”这一类通用套板。
+PRD 中的核心模块、业务对象、角色职责、页面路由、功能命名、页面重点必须围绕当前任务主题重构，不能只是替换标题变量。
 输出必须是 JSON 格式，包含:
 {
   "prd_markdown": "完整的PRD Markdown内容",
   "prd_summary": {
-    "app_type": "admin_web",
+    "app_type": "admin_web 或 desktop_client",
     "user_roles": ["管理员角色列表"],
     "core_modules": ["核心功能模块列表"],
     "required_pages": ["需要的页面路由列表"]
@@ -125,18 +219,24 @@ class LLMClient:
 }
 """
 
+        plan_seed_text = json.dumps(plan_seed or {}, ensure_ascii=False, indent=2)
         user_prompt = f"""请为以下产品生成 PRD 和开发任务书：
 - 关键词: {keyword}
 - 软件名称: {product_name}
 - 版本号: {version}
 - 行业: {industry or '通用'}
+- 任务专属规划种子: {plan_seed_text}
 
 要求:
-1. 必须是后台管理型 Web 应用
-2. 提供至少 4 个核心功能模块
-3. 提供至少 3 个页面路由
+1. 必须先判断当前产品应做成 `admin_web` 还是 `desktop_client`，并写入 `prd_summary.app_type`
+2. 提供至少 4 个核心功能模块，且模块名必须体现当前业务领域，不得使用空泛套板命名
+3. 提供至少 3 个页面路由，且路由应与当前业务模块对应，不得大量复用 /data-list、/workflow 之类的通用路径
 4. 提供 demo 账号 (admin/admin123)
 5. 所有输出必须是中文
+6. 优先吸收“任务专属规划种子”里的核心模块、角色、业务对象和场景线索
+7. 必须让当前产品与既有任务明显区分，除硬性规范外不要复用统一模版表达
+8. 如果标题或关键词显式包含“客户端、桌面端、工作站、终端”等形态词，应优先考虑 `desktop_client`
+9. 必须显式吸收 `project_dna`/`differentiation_hint` 中的业务主线、模块签名和风格线索，重新命名模块、角色职责、页面结构和图文表达
 """
 
         messages = [
@@ -144,41 +244,79 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        return await self.chat(messages, response_format="json_object")
+        return await self.chat_with_models(
+            messages,
+            response_format="json_object",
+            primary_model=TEXT_MODEL,
+        )
 
     async def generate_app_code(
         self, prd: str, work_order: str, app_requirements: dict
     ) -> LLMResponse:
         """Generate application code using LLM."""
-        system_prompt = """你是一个全栈软件工程师。根据 PRD 和开发任务书生成可运行的后台管理型 Web 应用。
-你必须输出符合 IPRight App Contract 的完整应用，包含:
-- app_manifest.json
-- run_manifest.json
-- capture_manifest.json
-- code_index_manifest.json
+        system_prompt = """你是一个资深前端工程师，负责补全软件产品的前端页面源码。
+要求：
+1. 仅输出 JSON。
+2. 技术栈固定：
+   - 前端：React + Vite + TypeScript
+   - 后端：FastAPI + Python
+3. 代码必须可读、结构清晰、注释尽量少。
+4. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
+5. 前端允许引用 `./generated/appProfile` 中的 `APP_PROFILE`。
+6. 后端骨架、健康检查和基础接口已经预置；除非 `required_files` 明确要求，否则不要输出任何 `backend/` 文件。
+7. 不要输出 Markdown 代码块，不要输出解释文字。
+8. 请控制思考长度，务必把最终 JSON 写入 `content`。
+9. 如果 token 紧张，优先保证 `required_files` 中每个文件都给出最小可运行实现，减少注释和重复样板。
+10. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
+11. `frontend/src/main.tsx` 已经预置并负责挂载唯一的 `BrowserRouter`；生成 `frontend/src/App.tsx` 时不要再次渲染 `BrowserRouter`，只输出 `Routes/Route` 或普通页面组件。
+12. 登录态需兼容自动验收：如果前端使用 `localStorage`，应优先读取 `ipright_demo_auth`，并兼容 `token`/`user` 这类键。
+13. 页面路由必须与功能页面一一对应，不要只做单页内切换后再把未实现路由重定向到同一页面。
+14. 页面布局按桌面截图场景优化，默认面向 1440px 以上宽度；不要把侧栏、标题或按钮文字挤成逐字竖排。
+15. 中文界面必须使用稳定的中文字体回退链，不要强制指定缺少中文 glyph 的字体；截图中不能出现方框字。
+16. 表格、卡片、筛选区应优先横向排布并保持适中的宽高比例，避免生成过窄侧栏或过高空白页面。
+17. 除登录页、首页、系统设置等硬性页面外，不要把不同项目都做成同一套通用后台模板；必须根据当前 `scene`、`industry_scope`、`core_entities`、`focus_terms`、`module_pages`、`experience_blueprint`、`visual_profile` 生成专属布局与文案。
+18. 若 `module_pages` 中提供了 `page_variant`，生成页面时必须体现该变体的版面特征和信息组织方式，而不是统一复用同一块页面骨架。
+19. 不得把多个模块都写成仅更换标题的“数据管理/流程管理/报表中心”套板页面；按钮、卡片标题、表格结构、说明板块必须与当前模块主题一致。
+20. 如果 `app_type` 为 `desktop_client`，界面应体现桌面客户端工作台特征，例如标题栏、工具区、分栏工作区、较高的信息密度，而不是普通网页后台。
+21. 不同产品的 UI 视觉风格必须重新设计，禁止所有项目都使用同一组导航色、同一组卡片层级和同一块内容骨架。
+22. 模块内容区不要使用“上边界一条高饱和蓝色粗边框”的效果，应采用常规完整边框或轻阴影边框。
+23. 必须吸收 `project_dna`、`preset_key`、`topic_label`、`differentiation_hint` 中提供的项目专属线索；即便同属一个行业，也要重构模块布局、卡片语义、分析区块、表格字段和首页叙事。
+24. 第三方前端依赖只允许使用当前基础环境已覆盖的包：`react`、`react-dom`、`react-router-dom`、`antd`、`@ant-design/icons`、`@ant-design/pro-components`、`axios`、`dayjs`、`echarts`、`echarts-for-react`；不要引入其他 npm 包或需要额外安装的新依赖。
+25. 不要默认输出“左侧深色竖向导航 + 右侧内容区”的通用后台框架，除非当前产品的场景和信息架构明确要求这种布局；必须根据当前产品重新设计整体壳层。
+26. 当前输入中的规则与画像就是唯一设计约束来源；不要假设存在隐藏的固定 UI 套板、固定页面骨架或历史项目可复用壳层，需为本次任务完整生成 `App.tsx`、登录页、首页和模块页。
+27. 必须落实 `experience_blueprint.navigation_variant` 与 `experience_blueprint.shell_layout_hint` 指定的壳层方向；若画像提示顶部导航、指挥条、分析画布、分段导航或协同工作区，则不得退回统一左侧竖栏后台。
+28. 如果 `validation_hints` 或 `invalid_core_previews` 出现在输入约束中，说明上一版核心页未通过校验；这次必须逐条修正这些问题，并优先重写 `required_files` 中列出的核心页。
 
-技术栈限制为:
-- 前端: React + Vite + TypeScript
-- 后端: FastAPI + Python
-- UI: 简单 HTML/CSS，不依赖额外UI库
-
-所有输出必须是 JSON 格式。
+输出 JSON 结构：
+{
+  "files": {
+    "frontend/src/App.tsx": "文件内容",
+    "frontend/src/pages/Login.tsx": "文件内容",
+    "frontend/src/pages/Dashboard.tsx": "文件内容",
+    "frontend/src/pages/SomePage.tsx": "文件内容"
+  }
+}
 """
 
-        user_prompt = f"""PRD:\n{prd}\n\n开发任务书:\n{work_order}\n
-生成一个完整的后台管理型 Web 应用。要求:
-1. 包含所有 Manifest
-2. 前端页面能正常渲染
-3. 后端有 /health 端点
-4. 提供 demo 账号
-"""
+        user_prompt = (
+            f"PRD:\n{prd}\n\n"
+            f"开发任务书:\n{work_order}\n\n"
+            f"应用约束:\n{json.dumps(app_requirements, ensure_ascii=False, indent=2)}\n\n"
+            "请基于这些信息生成完整源码文件。"
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
-        return await self.chat(messages)
+        return await self.chat_with_models(
+            messages,
+            response_format="json_object",
+            primary_model=REASONING_MODEL,
+            max_tokens_override=12000,
+            temperature_override=0.2,
+        )
 
     async def generate_page_description(self, page_title: str, route: str, elements: list[str], model: str = "") -> LLMResponse:
         """Generate a page description for the software manual.
@@ -197,16 +335,11 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        if model:
-            saved_model = self.config.model
-            self.config.model = model
-            try:
-                result = await self.chat(messages, response_format="json_object")
-            finally:
-                self.config.model = saved_model
-            return result
-
-        return await self.chat(messages, response_format="json_object")
+        return await self.chat_with_models(
+            messages,
+            response_format="json_object",
+            primary_model=model or TEXT_MODEL,
+        )
 
     async def review_manual_descriptions(self, descriptions_json: str) -> LLMResponse:
         """Use deepseek-v4-pro to review all page descriptions for consistency and quality."""
@@ -223,71 +356,120 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请审核以下软件说明书的页面描述:\n\n{descriptions_json}"},
         ]
-        return await self.chat(messages, response_format="json_object")
+        return await self.chat_with_models(
+            messages,
+            response_format="json_object",
+            primary_model=TEXT_MODEL,
+        )
 
     async def review_manual_content(self, descriptions_json: str) -> LLMResponse:
         """Alias for review_manual_descriptions."""
         return await self.review_manual_descriptions(descriptions_json)
 
+    async def generate_manual_content(
+        self,
+        *,
+        product_name: str,
+        version: str,
+        profile: dict,
+        prd_summary: dict,
+        screenshots_meta: list[dict],
+    ) -> LLMResponse:
+        """Generate manual body content using the text model."""
+        module_titles = [module.get("title", "") for module in profile.get("modules", []) if module.get("title")]
+        module_profiles = [
+            {
+                "title": module.get("title", ""),
+                "route": module.get("route", ""),
+                "primary_action": module.get("primary_action", ""),
+                "description": module.get("description", ""),
+                "highlights": list(module.get("highlights", [])[:3]),
+                "table_headers": list(module.get("table_headers", [])[:6]),
+            }
+            for module in profile.get("modules", [])[:8]
+        ]
+        screenshot_briefs = [
+            {
+                "page_title": item.get("page_title", ""),
+                "route": item.get("route", ""),
+                "elements": list(item.get("elements", [])[:12]),
+            }
+            for item in screenshots_meta[:12]
+        ]
+        system_prompt = """你是一位中文软件说明书撰写专家。请基于给定产品信息，输出软件说明书正文所需 JSON。
+要求：
+1. 全部使用中文撰写，技术名保留英文原名，如 FastAPI、React、TypeScript、PostgreSQL。
+2. 不得出现任何模型、供应商或大模型产品名称。
+3. 文风自然、专业，避免标题与关键词机械重复。
+4. 页面说明、图注、步骤必须结合页面标题、路由和元素生成，不能写成空泛模板。
+5. 不要在多个模块里重复使用同一句骨架，例如“集中在同一页面内”“完成查询、录入、审核或跟踪操作”等；每个模块都要写出自己的业务对象、处理动作和输出结果。
+6. 优先复用输入中的 module_profiles、screenshots、user_roles 信息，写出与当前产品强绑定的正文。
+7. 仅输出 JSON，不要输出 Markdown。
+8. 必须吸收 `project_dna` 中的模块签名、业务主线和架构风格，不得把不同项目的说明书写成同一套模板章节句式。
 
-class TemplateLLMClient:
-    """Template-based LLM client that works without API keys.
-    Generates structured data based on templates - used as fallback."""
-
-    async def generate_prd(self, keyword: str, product_name: str, version: str, industry: str = "") -> LLMResponse:
-        modules = ["首页/仪表盘", "数据管理", "报表统计", "系统设置"]
-        pages = ["/login", "/dashboard", "/data-list", "/settings"]
-
-        prd = f"""# {product_name} 产品需求文档
-
-## 产品定位
-{product_name} 是一款面向 {industry or '通用行业'} 的后台管理型 Web 应用系统。
-
-## 核心功能模块
-{chr(10).join(f'{i+1}. {m}' for i, m in enumerate(modules))}
-
-## 页面结构
-{chr(10).join(f'- {p}:' for p in pages)}
-
-## 技术栈
-- 前端: React + Vite + TypeScript
-- 后端: FastAPI
-- 数据库: PostgreSQL
-
-## Demo 账号
-- admin / admin123
+输出 JSON 结构：
+{
+  "development_background": "",
+  "development_purpose": "",
+  "industry_scope": "",
+  "hardware_environment": "",
+  "runtime_hardware_environment": "",
+  "development_os": "",
+  "runtime_platform": "",
+  "support_environment": "",
+  "development_tools": "",
+  "overview_product_intro": "",
+  "overview_version_summary": "",
+  "system_architecture_summary": "",
+  "system_pipeline_summary": "",
+  "development_tech_overview": "",
+  "development_language_frontend": "",
+  "development_language_backend": "",
+  "tech_selection_frontend": "",
+  "tech_selection_backend": "",
+  "tech_selection_data": "",
+  "main_functions": "",
+  "function_elements_summary": "",
+  "business_flow_basic": "",
+  "business_flow_materials": "",
+  "business_flow_module_collaboration": "",
+  "usage_overview": "",
+  "technical_features": "",
+  "technical_feature_bullets": ["", "", "", ""],
+  "role_permissions": {"角色名": "权限说明"},
+  "module_overrides": [
+    {"title": "", "description": "", "highlights": ["", ""], "primary_action": ""}
+  ],
+  "page_overrides": [
+    {"page_title": "", "caption": "", "description": "", "steps": ["", "", ""]}
+  ]
+}
 """
-
-        work_order = f"""# {product_name} 开发任务书
-
-## 页面任务
-{chr(10).join(f'{i+1}. {p}' for i, p in enumerate(pages))}
-
-## Demo 账号
-- admin / admin123
-"""
-
-        return LLMResponse(
-            success=True,
-            text=prd,
-            structured={
-                "prd_markdown": prd,
-                "prd_summary": {
-                    "app_type": "admin_web",
-                    "user_roles": ["admin"],
-                    "core_modules": modules,
-                    "required_pages": pages,
-                },
-                "work_order_markdown": work_order,
-            },
+        user_payload = {
+            "product_name": product_name,
+            "version": version,
+            "keyword": profile.get("keyword", product_name),
+            "topic_label": profile.get("topic_label", product_name),
+            "scene": profile.get("scene", ""),
+            "industry_scope": profile.get("industry_scope", ""),
+            "software_category": profile.get("software_category", ""),
+            "project_dna": profile.get("project_dna", {}),
+            "user_roles": profile.get("user_roles", []),
+            "core_modules": module_titles or prd_summary.get("core_modules", []),
+            "module_profiles": module_profiles,
+            "required_pages": prd_summary.get("required_pages", []),
+            "screenshots": screenshot_briefs,
+        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, indent=2)},
+        ]
+        return await self.chat_with_models(
+            messages,
+            response_format="json_object",
+            primary_model=TEXT_MODEL,
         )
 
-    async def generate_app_code(self, prd: str, work_order: str, app_requirements: dict) -> LLMResponse:
-        return LLMResponse(success=False, error="Template LLM does not generate code. Use the demo_app template.")
 
-
-def get_llm_client() -> LLMClient | TemplateLLMClient:
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY", "")
-    if api_key:
-        return LLMClient()
-    return TemplateLLMClient()
+def get_llm_client() -> LLMClient:
+    return LLMClient()

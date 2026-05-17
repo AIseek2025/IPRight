@@ -15,6 +15,7 @@ from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.state_machine import StageStatus
 from app.core.database import get_db
 from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
 from app.services import TaskService
@@ -396,6 +397,18 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
     task = await db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+
+    active_build = await _resolve_effective_build_id(db, task, task.active_build_id)
+    if active_build:
+        active_build_obj = await db.get(Build, active_build)
+        if active_build_obj and active_build_obj.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "BUILD_ALREADY_RUNNING",
+                    "message": "当前已有运行中的构建，请等待完成后再重试",
+                },
+            )
 
     service = TaskService(db)
     build = await service.start_build(task, trigger_type="retry")

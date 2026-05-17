@@ -38,7 +38,7 @@ export default function App() {
     navigate('/login');
   };
 
-  if (!loggedIn && location.pathname !== '/login') {
+  if (!loggedIn) {
     return <Login onLogin={handleLogin} />;
   }
 

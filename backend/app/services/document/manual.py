@@ -5,7 +5,6 @@ import re
 import unicodedata
 
 from docx import Document
-from docx.shared import Pt
 
 from app.services.document.base import WordTemplateBase
 
@@ -15,11 +14,13 @@ class SoftwareManualGenerator(WordTemplateBase):
         self,
         product_name: str,
         version: str,
+        profile: dict | None = None,
         doc: Document | None = None,
     ):
         super().__init__(doc)
         self.product_name = product_name
         self.version = version
+        self.profile = profile or {}
 
     def _strip_unsupported_symbols(self, text: str) -> str:
         chars: list[str] = []
@@ -55,6 +56,72 @@ class SoftwareManualGenerator(WordTemplateBase):
             cleaned.append(normalized)
         return cleaned
 
+    def _module_profiles(self) -> list[dict]:
+        return list(self.profile.get("modules") or [])
+
+    def _module_titles(self) -> list[str]:
+        return [module.get("title", "") for module in self._module_profiles() if module.get("title")]
+
+    def _profile_text(self, key: str, fallback: str) -> str:
+        return self._sanitize_doc_text(self.profile.get(key, fallback))
+
+    def _profile_list(self, key: str, fallback: list[str]) -> list[str]:
+        values = self.profile.get(key)
+        if isinstance(values, list):
+            return [self._sanitize_doc_text(str(item)) for item in values if str(item).strip()]
+        return fallback
+
+    def _module_steps(self, module: dict) -> list[str]:
+        if module.get("steps"):
+            return [self._sanitize_doc_text(str(step)) for step in module["steps"] if str(step).strip()]
+        title = module.get("title", "当前模块")
+        action = module.get("primary_action", f"处理{title}")
+        return [
+            f"进入{title}页面后先确认标题区、筛选区和主操作按钮，核对当前处理对象与业务范围。",
+            f"通过搜索条件、列表记录和状态标签定位目标事项，并按需执行“{action}”等主操作。",
+            f"完成处理后复核页面反馈、更新时间和相关记录，确保结果可追踪、可导出、可沉淀。",
+        ]
+
+    def _module_field_summary(self, module: dict) -> str:
+        headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
+        filter_placeholder = self._sanitize_doc_text(str(module.get("filter_placeholder", "")).strip())
+        if not headers:
+            return "页面通常包含标题区、筛选区、结果列表、状态标签与操作反馈区域。"
+        header_text = "页面重点字段包括：" + "、".join(headers[:8]) + "。"
+        if filter_placeholder:
+            header_text += f" 检索区通常支持按“{filter_placeholder}”快速定位目标记录。"
+        return self._sanitize_doc_text(header_text)
+
+    def _module_business_value(self, module: dict) -> str:
+        title = module.get("title", "当前模块")
+        description = module.get("description", "")
+        if description:
+            return self._sanitize_doc_text(
+                f"{description}该模块将信息采集、处理推进、结果复核与留痕沉淀集中在同一页面内，便于形成清晰稳定的业务闭环。"
+            )
+        return self._sanitize_doc_text(
+            f"{title}模块用于承接当前任务中的关键业务步骤，能够把分散信息统一到标准页面中展示，并支持过程留痕与结果输出。"
+        )
+
+    def _role_work_scope(self, role: str, modules: list[str]) -> str:
+        module_phrase = "、".join(modules[:4]) if modules else "首页概览、业务处理、结果查询、材料导出"
+        return self._sanitize_doc_text(
+            f"{role}在日常工作中主要围绕{module_phrase}开展查询、录入、复核、统计或配置操作，并根据权限查看相应的业务结果与过程记录。"
+        )
+
+    def _profile_focus_list(self, key: str, fallback: list[str]) -> list[str]:
+        values = self.profile.get(key)
+        if isinstance(values, list):
+            return [self._sanitize_doc_text(str(item)) for item in values if str(item).strip()]
+        return [self._sanitize_doc_text(item) for item in fallback]
+
+    def _role_profiles(self, prd_summary: dict | None = None) -> list[str]:
+        return (
+            list(self.profile.get("user_roles") or [])
+            or list((prd_summary or {}).get("user_roles") or [])
+            or ["管理员", "业务主管", "运营专员"]
+        )
+
     def generate_cover(self) -> None:
         for _ in range(4):
             self.doc.add_paragraph()
@@ -69,183 +136,392 @@ class SoftwareManualGenerator(WordTemplateBase):
         self._apply_run_font(run2, font_name="宋体", font_size=14)
         self.doc.add_page_break()
 
-    def generate_document_info(self) -> None:
+    def generate_document_info(self, screenshots_meta: list[dict]) -> None:
         self.add_title("文档说明", level=1)
-        self.add_paragraph(f"本文档为 {self.product_name} {self.version} 的软件说明书/操作手册。")
-        self.add_paragraph("文档内容涵盖引言、系统设计、运行环境、功能结构、软件使用说明、技术特点及常见问题。")
-        self.add_paragraph("文档用于帮助使用人员、管理人员与实施人员快速理解软件功能结构、运行方式和实际操作路径。")
+        self.add_paragraph(f"本文档为{self.product_name}{self.version}的软件说明书/操作手册。")
+        self.add_paragraph(
+            self._profile_text(
+                "overview_version_summary",
+                "文档内容覆盖引言、开发设计/系统设计、开发运行环境、功能结构说明、软件使用说明和技术特点说明。",
+            )
+        )
 
     def generate_introduction(self) -> None:
         self.add_title("引言", level=1)
         self.add_title("开发背景", level=2)
-        self.add_paragraph(f"{self.product_name} 面向企事业单位的信息化管理场景，用于解决日常业务数据分散、设备状态难以统一掌握、管理流程缺乏集中入口等问题。")
+        self.add_paragraph(
+            self._profile_text(
+                "development_background",
+                f"{self.product_name}面向企事业单位的信息化管理场景，用于解决业务资料分散、流程执行依赖人工协调以及统计结果回收不及时等问题。",
+            )
+        )
         self.add_title("开发目的", level=2)
-        self.add_paragraph("本软件通过统一的业务首页、数据管理、报表统计、告警查看与系统设置模块，为使用单位提供集中、清晰、易于维护的业务管理入口，提升信息查询效率与日常管理规范性。")
+        self.add_paragraph(
+            self._profile_text(
+                "development_purpose",
+                "本软件通过统一入口、结构化页面和标准化模块，帮助使用单位建立清晰、稳定且可追踪的业务管理流程，提升数据可见性和协同效率。",
+            )
+        )
         self.add_title("适用领域", level=2)
-        self.add_paragraph("本软件适用于园区管理、设备管理、后台信息维护、通用业务数据管理等需要统一管理平台的场景，也适用于具有登录、首页、列表、报表、告警、设置等典型后台系统需求的项目。")
+        self.add_paragraph(self.profile.get("industry_scope", "通用业务管理、行业信息化管理和后台协同场景。"))
         self.add_title("适用对象", level=2)
-        self.add_paragraph("本文档适用于系统使用人员、系统管理人员、项目实施人员和日常维护人员，用于指导软件理解、部署准备、功能认知和实际操作。")
+        self.add_paragraph(
+            f"本文档适用于{'、'.join(self._role_profiles())}等角色，用于指导页面使用、业务处理和材料整理。"
+        )
 
     def generate_overview(self, prd_summary: dict | None = None, modules: list[str] | None = None) -> None:
         self.add_title("软件概述", level=1)
         self.add_title("产品简介", level=2)
-        self.add_paragraph(f"{self.product_name} 是一套面向业务管理的 Web 软件系统，支持登录认证、首页展示、数据管理、统计分析、告警查看及系统设置等主要功能。")
-        self.add_paragraph(f"当前软件版本为 {self.version}。系统强调页面清晰、操作明确、功能分区稳定，便于用户快速上手和持续使用。")
+        module_items = modules or self._module_titles() or (prd_summary or {}).get("core_modules") or []
+        self.add_paragraph(
+            self._profile_text(
+                "overview_product_intro",
+                f"{self.product_name} 是一套围绕{self.profile.get('scene', '业务管理与流程协同')}构建的 Web 软件系统，主要覆盖{'、'.join(module_items[:6]) if module_items else '统一登录、首页概览和业务处理'}等业务能力。",
+            )
+        )
+        self.add_paragraph(
+            self._profile_text(
+                "product_positioning",
+                f"{self.product_name}围绕{self.profile.get('topic_label', self.product_name)}这一主题构建，强调任务专属页面结构、行业化模块命名和与业务场景相匹配的操作重点，确保不同产品形成清晰可辨的内容侧重点。",
+            )
+        )
+        self.add_paragraph(
+            self._profile_text(
+                "overview_version_summary",
+                f"当前软件版本为{self.version}。系统强调页面分区明确、信息展示直观和操作路径稳定，并根据当前任务标题、关键词、行业和模块结构生成对应的页面内容与说明书正文。",
+            )
+        )
+        self.add_paragraph(
+            self._profile_text(
+                "design_focus",
+                f"本软件在内容组织上重点突出{self.profile.get('scene', '业务协同')}场景中的关键模块、核心数据视图、角色分工和结果输出要求，使说明书能够准确体现当前软件产品的业务特征。",
+            )
+        )
         self.add_title("软件主要功能", level=2)
-        module_items = modules or (prd_summary or {}).get("core_modules") or ["登录认证", "系统首页", "用户管理", "设备管理", "报表统计", "告警中心", "系统设置"]
         for mod in module_items:
             self.add_paragraph(f"- {mod}")
-        if prd_summary and prd_summary.get("user_roles"):
-            self.add_title("使用角色", level=2)
-            for role in prd_summary["user_roles"]:
-                self.add_paragraph(f"- {role}")
+        self.add_title("使用角色", level=2)
+        for role in self._role_profiles(prd_summary):
+            self.add_paragraph(f"- {role}")
 
     def generate_runtime_environment(self) -> None:
         self.add_title("开发运行环境 / 软件适配环境", level=1)
-        self.add_title("硬件环境", level=2)
-        self.add_paragraph("CPU: 2 核及以上")
-        self.add_paragraph("内存: 2GB 及以上")
-        self.add_paragraph("磁盘: 10GB 及以上可用空间")
+        self.add_title("开发硬件环境", level=2)
+        self.add_paragraph(self.profile.get("hardware_environment", "CPU: 2核及以上；内存: 8GB及以上；磁盘: 100GB及以上。"))
+        self.add_title("运行硬件环境", level=2)
+        self.add_paragraph(self.profile.get("runtime_hardware_environment", "CPU: 2核及以上；内存: 4GB及以上；磁盘: 50GB及以上。"))
         self.add_title("软件环境", level=2)
-        self.add_paragraph("操作系统: Linux / Windows / macOS")
-        self.add_paragraph("浏览器: Chrome 90+, Edge 90+, Firefox 88+")
-        self.add_paragraph("服务端: Python 3.11+, Node.js 18+")
+        self.add_paragraph(f"开发操作系统: {self.profile.get('development_os', 'Linux / Windows / macOS')}")
+        self.add_paragraph(f"运行平台/操作系统: {self.profile.get('runtime_platform', 'Linux 服务器 + 主流浏览器环境')}")
+        self.add_paragraph(f"运行支撑环境/支持软件: {self.profile.get('support_environment', 'Chrome/Edge 浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite')}")
+        self.add_paragraph(f"开发工具: {self.profile.get('development_tools', 'Python 3.11、FastAPI、React、TypeScript、Vite、python-docx')}")
         self.add_title("适配说明", level=2)
-        self.add_paragraph("软件采用浏览器访问方式，建议在主流桌面浏览器环境中使用。系统页面面向常见办公显示分辨率设计，在常规后台管理场景下具备良好的适配性和可读性。")
+        self.add_paragraph(
+            f"{self.product_name}采用浏览器访问的软件架构，可在常见桌面浏览器环境中稳定运行，并适配日常办公场景下的常用分辨率。"
+        )
+
+    def generate_system_design(self, arch_diagram_path: str = "") -> None:
+        self.add_title("开发设计 / 系统设计", level=1)
+        self.add_title("系统总体架构", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "system_architecture_summary",
+                f"{self.product_name} 采用前后端分层的软件结构，由页面展示层、业务处理层、任务编排层和数据存储层组成。"
+            )
+        )
+        self.add_paragraph(
+            self._profile_text(
+                "system_pipeline_summary",
+                f"系统在设计上将页面、截图采集、说明书编排和导出发布串联为统一流水线，从而保证生成的软件内容、截图内容和导出材料保持一致。"
+            )
+        )
+        self.add_title("开发技术说明", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "development_tech_overview",
+                "软件采用前后端分层与模块化设计方式，前端负责页面展示、状态反馈和下载入口，后端负责任务管理、运行检查、文档生成和导出发布，运行时通过标准清单控制应用启动、截图与导出行为。",
+            )
+        )
+        self.add_title("开发语言说明", level=2)
+        self.add_paragraph(self._profile_text("development_language_frontend", "前端页面主要采用 TypeScript / JavaScript 实现页面布局、交互逻辑与浏览器端渲染。"))
+        self.add_paragraph(self._profile_text("development_language_backend", "后端服务主要采用 Python 实现任务流转、接口输出、文档生成、截图管理和导出逻辑。"))
+        self.add_title("技术选型说明", level=2)
+        self.add_paragraph(self._profile_text("tech_selection_frontend", "页面展示层采用 React 组件化方式构建，以保证页面结构清晰、模块职责明确并便于后续扩展。"))
+        self.add_paragraph(self._profile_text("tech_selection_backend", "后端服务层采用 FastAPI 构建接口服务，以支持任务管理、下载分发和工件查询。"))
+        self.add_paragraph(self._profile_text("tech_selection_data", "数据层支持 PostgreSQL 与 SQLite，用于适配生产环境和轻量测试环境。"))
+        self.add_title("产品特性与设计侧重点", level=2)
+        for item in self._profile_focus_list(
+            "distinguishing_features",
+            [
+                f"围绕{self.profile.get('topic_label', self.product_name)}主题组织模块内容，突出当前软件产品的核心业务链路。",
+                "模块命名、页面字段和说明书正文根据当前任务重新生成，避免不同产品之间出现大段重复描述。",
+                "截图、页面说明、功能结构和技术特点保持同一业务主线，便于交付、培训与正式材料整理。",
+            ],
+        ):
+            self.add_paragraph(f"- {item}")
+        self.add_title("系统架构图", level=2)
+        if arch_diagram_path and os.path.exists(arch_diagram_path):
+            if arch_diagram_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
+                self.add_image(arch_diagram_path, width_inches=6.0)
+                self.add_caption(f"图1：{self.product_name}系统架构图")
+            else:
+                self.add_paragraph("系统架构图生成失败，请检查图片生成链路。")
+        else:
+            self.add_paragraph("系统架构图生成失败，请检查中文字体与图片生成链路。")
+        self.add_title("软件核心功能 / 功能元素", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "main_functions",
+                "软件核心功能包括登录访问、首页概览、业务对象管理、流程推进、资料管理、分析报表、预警提醒与系统配置。",
+            )
+        )
+        self.add_paragraph(self._profile_text("function_elements_summary", "功能元素主要由导航菜单、统计卡片、筛选输入框、列表表格、操作按钮、状态标签、导出入口和配置项组成。"))
 
     def generate_function_structure(self, modules: list[str] | None = None) -> None:
         self.add_title("功能结构说明", level=1)
-        modules = modules or ["登录认证", "仪表盘/首页", "用户管理", "设备管理", "报表统计", "告警管理", "系统设置"]
-        descriptions = {
-            "登录认证": "负责用户身份校验和系统入口控制，确保不同角色在授权范围内使用系统。",
-            "仪表盘/首页": "集中展示系统关键指标、近期状态和重要数据摘要，便于用户快速掌握整体运行情况。",
-            "用户管理": "提供用户信息查看、维护、状态管理等功能，用于支撑基础账号管理。",
-            "设备管理": "用于维护设备基础信息、运行状态和位置等内容，便于设备台账统一管理。",
-            "报表统计": "用于集中展示统计结果、业务分析数据和导出相关信息，满足管理分析需求。",
-            "告警管理": "用于查看异常告警、状态变化和待处理事项，便于及时响应问题。",
-            "系统设置": "用于维护系统基础参数、通知策略和通用配置。",
-        }
-        for mod in modules:
-            self.add_title(mod, level=2)
-            self.add_paragraph(descriptions.get(mod, f"{mod}模块提供完整的业务管理和操作支持能力。"))
+        if self._module_profiles():
+            for module in self._module_profiles():
+                self.add_title(module["title"], level=2)
+                self.add_title("功能定位", level=3)
+                self.add_paragraph(module.get("description", f"{module['title']}模块用于承载该业务主题的主要操作。"))
+                self.add_title("页面构成", level=3)
+                self.add_paragraph(self._module_field_summary(module))
+                primary_action = module.get("primary_action") or f"处理{module['title']}"
+                summary_parts = [f"本模块常用主操作为“{primary_action}”。"]
+                if module.get("filter_placeholder"):
+                    summary_parts.append(f"检索区会优先围绕“{module['filter_placeholder']}”组织筛选入口。")
+                if module.get("page_variant"):
+                    summary_parts.append(f"当前页面采用 {module['page_variant']} 版式组织标题区、信息区和结果区。")
+                self.add_paragraph(self._sanitize_doc_text(" ".join(summary_parts)))
+                self.add_title("功能要点", level=3)
+                for highlight in module.get("highlights", []):
+                    self.add_paragraph(f"- {highlight}")
+                self.add_title("典型操作说明", level=3)
+                for index, step in enumerate(self._module_steps(module), 1):
+                    self.add_paragraph(f"{index}. {step}")
+                self.add_title("业务价值", level=3)
+                self.add_paragraph(self._module_business_value(module))
+        else:
+            modules = modules or ["登录认证", "仪表盘/首页", "数据管理", "报表统计", "告警管理", "系统设置"]
+            for mod in modules:
+                self.add_title(mod, level=2)
+                self.add_paragraph(f"{mod}模块提供完整的业务管理和操作支持能力。")
 
-    def _guess_usage_steps(self, title: str) -> list[str]:
-        defaults = {
-            "登录页": ["输入系统提供的用户名和密码。", "点击“登录”按钮进入系统。", "登录成功后跳转至系统首页。"],
-            "系统首页": ["进入系统首页后查看顶部和主体区域的概览信息。", "根据首页导航或菜单进入对应功能模块。", "结合首页摘要信息快速定位待处理内容。"],
-            "用户管理": ["进入用户管理页面查看用户列表。", "通过新增、编辑、删除等操作维护用户信息。", "结合状态、角色和联系方式等字段完成日常管理。"],
-            "设备管理": ["进入设备管理页面查看设备清单。", "根据编号、名称、类型和位置查询设备信息。", "根据设备状态开展维护、更新或核查工作。"],
-            "报表统计": ["进入报表统计页面查看业务分析结果。", "根据报表类别和完成状态识别重点数据。", "结合统计结果辅助日常管理和决策分析。"],
-            "设备告警": ["进入告警页面查看当前异常或历史告警记录。", "根据告警级别和处理状态判断优先级。", "结合告警内容安排后续处理工作。"],
-            "系统设置": ["进入系统设置页面查看基础配置。", "根据实际需要调整系统名称、通知和通用参数。", "保存设置后确认页面反馈信息。"],
-        }
-        return defaults.get(title, ["进入页面后查看主要信息区域。", "按页面中的按钮、输入项和列表完成操作。", "根据结果反馈确认操作是否成功。"])
+    def generate_role_permissions(self, prd_summary: dict | None = None) -> None:
+        self.add_title("角色权限说明", level=1)
+        module_titles = self._module_titles()
+        for role in self._role_profiles(prd_summary):
+            self.add_title(role, level=2)
+            self.add_paragraph(
+                self._sanitize_doc_text(
+                    (self.profile.get("role_permissions") or {}).get(
+                        role,
+                        f"{role}可在授权范围内访问与其职责相关的页面、列表和统计数据，并对负责模块执行查询、维护、导出或审核等操作。",
+                    )
+                )
+            )
+            self.add_paragraph(self._role_work_scope(role, module_titles))
 
-    def _guess_usage_description(self, title: str, elements: list[str]) -> list[str]:
-        visible = "、".join(self._sanitize_ui_elements(elements)[:8])
-        base = [
-            self._sanitize_doc_text(f"{title}用于承载与该业务主题相关的主要操作和信息展示，是用户完成日常业务处理的重要页面。"),
-            self._sanitize_doc_text(f"页面中通常可以看到{visible or '标题、按钮、输入项、列表和状态信息'}等关键元素，用户可围绕这些元素完成查看、维护、查询或配置操作。"),
+    def generate_business_flows(self) -> None:
+        self.add_title("常见业务流程说明", level=1)
+        self.add_title("基础使用流程", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "business_flow_basic",
+                "使用人员首先通过登录页完成身份验证，进入系统首页后查看统计信息与待办摘要，再根据左侧导航进入具体功能模块完成录入、维护、查询、统计或配置等操作。",
+            )
+        )
+        self.add_title("材料生成流程", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "business_flow_materials",
+                "系统在任务创建后依次执行需求整理、应用构建、运行校验、页面截图、说明书生成、源码文档生成和导出发布等阶段，确保最终下载文件与页面展示保持一致。",
+            )
+        )
+        if self._module_profiles():
+            self.add_title("模块协同流程", level=2)
+            self.add_paragraph(
+                self._profile_text(
+                    "business_flow_module_collaboration",
+                    f"针对“{self.profile.get('keyword', self.product_name)}”任务，用户可沿着当前任务模块顺序完成信息录入、过程推进、结果复核和材料沉淀。",
+                )
+            )
+        self.add_title("典型应用场景", level=2)
+        for item in self._profile_focus_list(
+            "typical_scenarios",
+            [
+                f"面向{self.profile.get('industry_scope', '当前行业')}场景中的日常业务受理、状态跟踪与结果复核。",
+                "面向需要统一入口、统一字段口径和统一导出材料的业务协同环境。",
+                "面向多角色协作、需要保留过程记录和阶段状态的正式交付场景。",
+            ],
+        ):
+            self.add_paragraph(f"- {item}")
+
+    def generate_data_and_output(self) -> None:
+        self.add_title("数据组织与结果输出说明", level=1)
+        self.add_title("数据组织说明", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "data_organization",
+                f"{self.product_name}围绕{self.profile.get('topic_label', self.product_name)}主题组织业务数据，页面中的列表字段、状态标签、筛选项和操作按钮保持统一命名方式，便于不同角色在同一数据口径下开展协同处理。",
+            )
+        )
+        self.add_title("结果输出说明", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "result_output",
+                "系统支持围绕当前任务输出页面截图、说明书正文、源码文档、申请表与相关工件，使业务结果、页面表现和交付材料可以形成对应关系，便于正式归档与提交。",
+            )
+        )
+        self.add_title("材料整理说明", level=2)
+        self.add_paragraph(
+            self._profile_text(
+                "material_arrangement",
+                "在材料整理过程中，应优先核对模块标题、页面图注、关键字段、角色权限说明和导出文件名称，确保说明书内容与当前软件产品的业务主题、功能结构和截图顺序保持一致。",
+            )
+        )
+
+    def _guess_usage_steps(self, title: str, meta: dict | None = None) -> list[str]:
+        if meta and meta.get("steps"):
+            return list(meta["steps"])
+        return [
+            "进入该页面后查看顶部标题区和主体操作区，确认当前业务主题。",
+            "根据页面中的搜索框、筛选项或主按钮进入目标业务记录。",
+            "结合列表内容、状态标签和结果反馈完成录入、查询、维护或审核操作。",
         ]
-        detail_map = {
-            "登录页": "用户首先在该页面完成身份验证，输入正确账号和密码后即可进入系统，是整个软件的统一访问入口。",
-            "系统首页": "该页面汇总展示系统核心数据、近期动态或常用入口，适合作为用户进入系统后的第一观察界面。",
-            "用户管理": "该页面重点用于用户资料的集中维护和状态管理，便于统一管理账号、角色与联系方式等信息。",
-            "设备管理": "该页面重点展示设备台账信息，帮助管理人员从设备编号、名称、类型、位置和状态等维度进行核查。",
-            "报表统计": "该页面用于集中展示统计结果和分析信息，帮助用户从整体上掌握业务运行情况。",
-            "设备告警": "该页面用于识别异常信息和待处理事项，帮助用户快速发现高优先级问题并进行处置。",
-            "系统设置": "该页面用于维护系统基础参数和通用配置，确保软件运行方式符合实际管理要求。",
-        }
-        base.append(self._sanitize_doc_text(detail_map.get(title, "该页面用于承载对应功能模块的主要操作流程，帮助用户在统一界面内完成具体业务处理。")))
+
+    def _guess_usage_description(self, title: str, elements: list[str], meta: dict | None = None) -> list[str]:
+        visible = "、".join(self._sanitize_ui_elements(elements)[:10])
+        description = meta.get("description") if meta else None
+        primary_action = meta.get("primary_action") if meta else ""
+        base = [
+            self._sanitize_doc_text(
+                description
+                or f"{title}页面围绕当前业务主题的核心对象、处理动作和结果反馈组织信息，是用户完成日常处理与复核的重要入口。"
+            ),
+            self._sanitize_doc_text(
+                f"页面中通常可以看到{visible or '标题、按钮、筛选项、表格和状态信息'}等关键元素，用户可围绕这些元素开展查询、录入、审核或配置操作。"
+            ),
+        ]
+        if primary_action:
+            base.append(self._sanitize_doc_text(f"该页面的常用主操作为“{primary_action}”，通常位于页面主体区域或列表工具栏位置。"))
         return base
+
+    def _is_compact_variant_page(self, meta: dict, seen_routes: set[str]) -> bool:
+        title = meta.get("page_title", "")
+        route = meta.get("route", "")
+        scenario_id = meta.get("scenario_id", "")
+        if "筛选结果" in title:
+            return True
+        if scenario_id.endswith("-filtered"):
+            return True
+        return bool(route and route in seen_routes)
+
+    def _add_variant_page_instruction(self, title: str, caption: str, image_path: str, elements: list[str], page_profile: dict) -> None:
+        self.add_title(title, level=3)
+        if image_path and os.path.exists(image_path):
+            self.add_image(image_path, width_inches=6.1, max_height_inches=5.8)
+            self.add_caption(caption)
+        self.add_paragraph(
+            self._sanitize_doc_text(
+                page_profile.get(
+                    "variant_instruction",
+                    f"该截图展示了“{title}”在筛选、聚焦或结果定位后的页面状态，用于补充说明同一模块在具体业务条件下的展示效果与处理入口。",
+                )
+            )
+        )
+        if elements:
+            self.add_paragraph(self._sanitize_doc_text("截图中重点可见元素包括：" + "、".join(elements[:10]) + "。"))
+        else:
+            self.add_paragraph("该变体页应重点关注筛选条件、结果列表、状态标签和主操作入口。")
 
     def generate_page_instructions(self, screenshots_meta: list[dict]) -> None:
         self.add_title("软件使用说明", level=1)
         self.add_title("使用说明总述", level=2)
-        self.add_paragraph("用户进入系统后，可按照“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计或设置操作”的基本路径开展使用。以下内容按照页面顺序给出截图、功能讲解和详细操作说明。")
-
+        self.add_paragraph(
+            self._profile_text(
+                "usage_overview",
+                "用户进入系统后，可按照“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径开展使用。后续章节将按页面顺序给出截图、功能讲解和详细操作说明。",
+            )
+        )
         self.add_title("主要页面操作说明", level=2)
         if not screenshots_meta:
             self.add_paragraph("（待截图完成后自动生成页面操作说明）")
             return
 
+        module_meta = {module["title"]: module for module in self._module_profiles()}
+        seen_routes: set[str] = set()
         for i, meta in enumerate(screenshots_meta):
-            title = meta.get("page_title", f"页面 {i+1}")
+            title = meta.get("page_title", f"页面{i + 1}")
+            route = meta.get("route", "")
             caption = meta.get("caption", "") or meta.get("suggested_caption", "") or f"图{i + 1} {title}"
-            steps = meta.get("steps", []) or self._guess_usage_steps(title)
             image_path = meta.get("image_path", "")
             elements = self._sanitize_ui_elements(meta.get("elements", []))
+            page_profile = module_meta.get(title) or module_meta.get(title.replace("筛选结果", "").strip()) or {}
+            compact_variant = self._is_compact_variant_page(meta, seen_routes)
+
+            if route:
+                seen_routes.add(route)
+
+            if compact_variant:
+                self._add_variant_page_instruction(title, caption, image_path, elements, page_profile)
+                continue
 
             self.add_title(title, level=2)
-
             if image_path and os.path.exists(image_path):
-                self.add_image(image_path, width_inches=6.0)
+                self.add_image(image_path, width_inches=6.2, max_height_inches=6.2)
                 self.add_caption(caption)
 
             self.add_title("功能讲解", level=3)
-            for paragraph in self._guess_usage_description(title, elements):
+            for paragraph in self._guess_usage_description(title, elements, page_profile):
                 self.add_paragraph(paragraph)
 
             self.add_title("详细操作说明", level=3)
-            for j, step in enumerate(steps, 1):
+            for j, step in enumerate(self._guess_usage_steps(title, page_profile), 1):
                 self.add_paragraph(f"{j}. {step}")
 
+            self.add_title("适用场景", level=3)
+            self.add_paragraph(
+                self._sanitize_doc_text(
+                    page_profile.get(
+                        "business_value",
+                        f"{title}适用于当前业务主题下的信息录入、结果查询、状态跟踪、复核确认和材料整理等典型操作场景。",
+                    )
+                )
+            )
+
             self.add_title("页面要点", level=3)
+            if page_profile.get("highlights"):
+                for highlight in page_profile["highlights"]:
+                    self.add_paragraph(f"- {highlight}")
             if elements:
                 self.add_paragraph(self._sanitize_doc_text("本页面关键可见元素包括：" + "、".join(elements[:12]) + "。"))
             else:
-                self.add_paragraph("本页面应重点关注标题区、功能按钮区、数据展示区和操作反馈区。")
+                self.add_paragraph("本页面应重点关注标题区、导航区、筛选区、数据展示区和操作反馈区。")
 
     def generate_tech_features(self) -> None:
         self.add_title("技术特点说明", level=1)
-        features = [
-            "采用 B/S 架构，支持主流浏览器访问",
-            "页面结构清晰，功能区分明确，便于用户快速定位目标操作",
+        self.add_paragraph(
+            self._profile_text(
+                "technical_features",
+                "本软件采用 B/S 架构，支持主流浏览器访问，具备模块化页面、统一数据入口、角色权限控制和结果导出等典型后台能力。",
+            )
+        )
+        self.add_paragraph(
+            self._profile_text(
+                "technical_feature_detail",
+                f"{self.product_name}在实现上强调任务专属化内容生成与页面结构稳定并重，既保证不同产品拥有各自的业务重点、模块命名与说明书侧重点，也保证整体交互风格、材料输出和运行访问方式保持统一。",
+            )
+        )
+        features = self._profile_list("technical_feature_bullets", [
+            "采用浏览器访问模式，部署与使用门槛较低",
+            "页面结构清晰，功能区分明确，便于培训与上手",
             "支持多模块统一访问，有利于集中管理业务数据和配置信息",
-            "支持多用户并发访问",
-            "采用角色权限控制，保证数据安全",
-            "支持统计分析、告警查看和基础配置等典型后台管理能力",
-        ]
-        for f in features:
-            self.add_paragraph(f"- {f}")
-
-    def generate_faq(self) -> None:
-        self.add_title("常见问题", level=1)
-        faqs = [
-            ("Q: 推荐使用哪种浏览器？", "A: 推荐使用 Chrome 90+ 或 Edge 90+ 浏览器。"),
-            ("Q: 忘记密码怎么办？", "A: 请联系系统管理员重置密码。"),
-            ("Q: 系统支持哪些分辨率？", "A: 建议使用 1440x900 及以上分辨率。"),
-        ]
-        for q, a in faqs:
-            self.add_paragraph(q, bold=True)
-            self.add_paragraph(a)
-
-    def generate_system_design(self, arch_diagram_path: str = "") -> None:
-        self.add_title("开发设计 / 系统设计", level=1)
-        self.add_title("系统总体架构", level=2)
-        self.add_paragraph(f"{self.product_name} 采用浏览器访问的软件架构，由页面展示层、业务处理层和数据存储层组成。用户通过浏览器进入系统后，可完成登录、首页查看、业务管理、统计分析、告警查看和参数设置等典型操作。")
-        self.add_paragraph("系统整体上强调模块清晰、页面稳定、数据入口统一，便于在一个平台中集中完成常见的后台管理工作。")
-        self.add_title("开发技术说明", level=2)
-        self.add_paragraph("软件采用前后端分层设计思路，页面层负责交互展示和操作入口，后端层负责数据处理、业务校验与接口输出，数据层负责信息保存和状态记录。")
-        self.add_paragraph("这种分层设计有利于功能扩展、维护管理和模块化实施，也便于后续围绕用户、设备、报表、告警和系统设置等模块持续增加功能。")
-        self.add_title("开发语言说明", level=2)
-        self.add_paragraph("本软件前端页面部分采用 TypeScript / JavaScript 进行开发，用于实现页面结构、交互逻辑和浏览器端功能。")
-        self.add_paragraph("本软件后端服务部分采用 Python 进行开发，用于完成接口服务、业务处理、数据组织和系统管理相关功能。")
-        self.add_title("技术选型说明", level=2)
-        self.add_paragraph("页面展示层采用 React 组件化方式构建，以便保持页面结构清晰、交互逻辑稳定并便于后续维护。")
-        self.add_paragraph("后端服务层采用 FastAPI 构建接口服务，以支持页面访问、数据处理和业务功能调用。")
-        self.add_paragraph("数据存储层支持 PostgreSQL 与 SQLite 两类数据库，用于满足不同环境下的数据保存和读取需求。")
-        self.add_title("系统架构图", level=2)
-
-        if arch_diagram_path and os.path.exists(arch_diagram_path):
-            self.add_image(arch_diagram_path, width_inches=6.0)
-            self.add_caption(f"图1：{self.product_name}系统架构图")
-        else:
-            self.add_paragraph("（系统架构图待生成后插入）")
-
-        self.add_title("软件核心功能 / 功能元素", level=2)
-        self.add_paragraph("软件核心功能包括登录访问、首页概览、用户管理、设备管理、报表统计、告警查看和系统设置。")
-        self.add_paragraph("从功能元素上看，系统主要由页面导航、功能按钮、数据列表、表单输入、统计摘要、状态标识和系统设置项等部分组成。")
+            "支持截图、导出、统计和留痕等交付所需能力",
+            "支持多角色分工协同与标准化流程推进",
+        ])
+        for feature in features:
+            self.add_paragraph(f"- {feature}")
 
     def generate_full(
         self,
@@ -258,15 +534,17 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.set_header(header_text)
         self.add_page_number()
 
+        screenshots_meta = screenshots_meta or []
         self.generate_cover()
-        self.generate_document_info()
+        self.generate_document_info(screenshots_meta)
         self.generate_introduction()
         self.generate_system_design(arch_diagram_path)
         self.generate_overview(prd_summary, modules)
         self.generate_runtime_environment()
         self.generate_function_structure(modules)
-        self.generate_page_instructions(screenshots_meta or [])
+        self.generate_role_permissions(prd_summary)
+        self.generate_business_flows()
+        self.generate_data_and_output()
+        self.generate_page_instructions(screenshots_meta)
         self.generate_tech_features()
-        self.generate_faq()
-
         return self.doc

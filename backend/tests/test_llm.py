@@ -9,7 +9,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-from app.services.llm import LLMClient, LLMConfig, LLMResponse, get_llm_client
+from app.services.llm import LLMClient, LLMConfig, LLMResponse, TEXT_MODEL, REASONING_MODEL, get_llm_client
 
 
 class TestLLMConfig:
@@ -61,27 +61,16 @@ class TestLLMClient:
 
         asyncio.run(_run())
 
-    def test_get_client_returns_template_when_no_key(self):
+    def test_get_client_returns_llm_client_even_when_no_key(self):
         os.environ.pop("DEEPSEEK_API_KEY", None)
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("LLM_API_KEY", None)
-
-        from app.services.llm import TemplateLLMClient
         client = get_llm_client()
-        assert isinstance(client, TemplateLLMClient)
+        assert isinstance(client, LLMClient)
 
-    def test_template_generate_prd(self):
-        from app.services.llm import TemplateLLMClient
-        import asyncio
-
-        async def _run():
-            client = TemplateLLMClient()
-            resp = await client.generate_prd("测试", "测试系统", "V1.0", "物流")
-            assert resp.success
-            assert "测试系统" in resp.text
-            assert "core_modules" in resp.structured.get("prd_summary", {})
-
-        asyncio.run(_run())
+    def test_text_and_reasoning_model_constants(self):
+        assert TEXT_MODEL == "deepseek-v4-flash"
+        assert REASONING_MODEL == "deepseek-v4-pro"
 
     def test_config_loads_from_env(self):
         os.environ["DEEPSEEK_API_KEY"] = "sk-test-key"
@@ -90,3 +79,49 @@ class TestLLMClient:
             assert config.api_key == "sk-test-key"
         finally:
             del os.environ["DEEPSEEK_API_KEY"]
+
+    def test_parse_json_object_content_accepts_fenced_json(self):
+        parsed, error = LLMClient._parse_json_object_content("""```json
+{"files":{"frontend/src/App.tsx":"export default function App(){return null;}"}}
+```""")
+        assert not error
+        assert parsed["files"]["frontend/src/App.tsx"].startswith("export default function App")
+
+    def test_parse_json_object_content_reports_invalid_json(self):
+        parsed, error = LLMClient._parse_json_object_content("not valid json")
+        assert parsed == {}
+        assert error
+
+    def test_generate_app_code_uses_json_object_mode(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["response_format"] = response_format
+            captured["parse_json_response"] = parse_json_response
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(success=True, text='{"files":{"frontend/src/App.tsx":"ok"}}', structured={"files": {"frontend/src/App.tsx": "ok"}})
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code("prd", "work", {"required_files": []})
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["parse_json_response"] is False
+        assert captured["max_tokens_override"] == 12000
+        assert captured["temperature_override"] == 0.2

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import hashlib
 import logging
@@ -125,6 +126,130 @@ def _load_manifest(task_id: str, manifest_name: str) -> dict | None:
     return None
 
 
+def _write_manifest(task_id: str, manifest_name: str, data: dict) -> None:
+    _write_json(os.path.join(manifests_dir(task_id), f"{manifest_name}.json"), data)
+
+
+def _load_prd_summary(task_id: str) -> dict:
+    summary_path = os.path.join(workspace_path(task_id), "prd", "product_summary.json")
+    if not os.path.exists(summary_path):
+        return {}
+    with open(summary_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screenshots_meta: list[dict]) -> dict:
+    merged = copy.deepcopy(project_profile or {})
+    if not isinstance(llm_content, dict):
+        return merged
+
+    # Merge top-level narrative sections consumed by the manual generator.
+    scalar_keys = [
+        "development_background",
+        "development_purpose",
+        "industry_scope",
+        "hardware_environment",
+        "runtime_hardware_environment",
+        "development_os",
+        "runtime_platform",
+        "support_environment",
+        "development_tools",
+        "overview_product_intro",
+        "overview_version_summary",
+        "system_architecture_summary",
+        "system_pipeline_summary",
+        "development_tech_overview",
+        "development_language_frontend",
+        "development_language_backend",
+        "tech_selection_frontend",
+        "tech_selection_backend",
+        "tech_selection_data",
+        "main_functions",
+        "function_elements_summary",
+        "business_flow_basic",
+        "business_flow_materials",
+        "business_flow_module_collaboration",
+        "usage_overview",
+        "technical_features",
+        "technical_feature_detail",
+        "data_organization",
+    ]
+    for key in scalar_keys:
+        value = llm_content.get(key)
+        if isinstance(value, str) and value.strip():
+            merged[key] = value.strip()
+
+    for key in ("technical_feature_bullets", "typical_scenarios"):
+        value = llm_content.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                merged[key] = cleaned
+
+    role_permissions = llm_content.get("role_permissions")
+    if isinstance(role_permissions, dict):
+        cleaned_permissions = {
+            str(role).strip(): str(desc).strip()
+            for role, desc in role_permissions.items()
+            if str(role).strip() and str(desc).strip()
+        }
+        if cleaned_permissions:
+            merged["role_permissions"] = cleaned_permissions
+
+    modules = [copy.deepcopy(module) for module in (merged.get("modules") or []) if isinstance(module, dict)]
+    module_by_title = {
+        str(module.get("title", "")).strip(): module
+        for module in modules
+        if str(module.get("title", "")).strip()
+    }
+    for override in llm_content.get("module_overrides", []) or []:
+        if not isinstance(override, dict):
+            continue
+        title = str(override.get("title", "")).strip()
+        target = module_by_title.get(title)
+        if not target:
+            continue
+        for field in ("description", "primary_action", "business_value", "variant_instruction"):
+            value = override.get(field)
+            if isinstance(value, str) and value.strip():
+                target[field] = value.strip()
+        for field in ("highlights", "steps"):
+            value = override.get(field)
+            if isinstance(value, list):
+                cleaned = [str(item).strip() for item in value if str(item).strip()]
+                if cleaned:
+                    target[field] = cleaned
+    if modules:
+        merged["modules"] = modules
+
+    page_overrides = llm_content.get("page_overrides", []) or []
+    for override in page_overrides:
+        if not isinstance(override, dict):
+            continue
+        page_title = str(override.get("page_title", "")).strip()
+        route = str(override.get("route", "")).strip()
+        for screenshot in screenshots_meta:
+            if not isinstance(screenshot, dict):
+                continue
+            title_matches = page_title and screenshot.get("page_title") == page_title
+            route_matches = route and screenshot.get("route") == route
+            if not title_matches and not route_matches:
+                continue
+            for field in ("caption", "description", "primary_action", "business_value", "variant_instruction"):
+                value = override.get(field)
+                if isinstance(value, str) and value.strip():
+                    screenshot[field] = value.strip()
+            for field in ("highlights", "steps"):
+                value = override.get(field)
+                if isinstance(value, list):
+                    cleaned = [str(item).strip() for item in value if str(item).strip()]
+                    if cleaned:
+                        screenshot[field] = cleaned
+
+    return merged
+
+
 @register_stage(StageName.PLAN)
 async def run_plan_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[plan] Generating PRD for task {ctx.task_id}")
@@ -148,7 +273,7 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
         ver = current_task.version or "V1.0"
         module_titles = list(plan_seed["core_modules"])
         summary = {
-            "app_type": "admin_web",
+            "app_type": plan_seed.get("app_type") or "admin_web",
             "core_modules": module_titles,
             "required_pages": list(plan_seed["required_pages"]),
             "user_roles": list(plan_seed["user_roles"]),
@@ -251,6 +376,8 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     try:
         codegen_report_data, codegen_error = await generate_task_app_code(app_root, prd_root, profile)
         if codegen_error:
+            if codegen_report_data:
+                _write_manifest(ctx.task_id, "app_codegen_report", codegen_report_data)
             return StageResult(success=False, error=codegen_error)
     except Exception as exc:
         return StageResult(success=False, error=f"App code generation failed: {exc}")
@@ -260,7 +387,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     app_manifest = {
         "product_name": product_name,
         "version": version,
-        "app_type": "admin_web",
+        "app_type": profile.get("app_type", "admin_web"),
         "frontend_framework": "react_vite",
         "backend_framework": "fastapi",
         "entry_routes": ["/login", "/dashboard", *[item["route"] for item in profile.get("modules", [])]],
@@ -359,9 +486,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         manifests["app_codegen_report.json"] = codegen_report_data
 
     for filename, data in manifests.items():
-        path = os.path.join(mdir, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _write_json(os.path.join(mdir, filename), data)
 
     validation = validator.validate_all({
         "app_manifest": app_manifest,

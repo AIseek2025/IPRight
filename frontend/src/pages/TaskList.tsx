@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Tag, Typography, Input, Select, Space, Card } from 'antd';
+import { Alert, Table, Tag, Typography, Input, Select, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { listTasks } from '@/api/client';
 import { STATUS_LABELS, STATUS_COLORS } from '@/types';
@@ -17,28 +17,48 @@ export default function TaskList() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [keywordFilter, setKeywordFilter] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const requestSeq = useRef(0);
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (options?: {
+    nextPage?: number;
+    nextStatus?: string;
+    nextKeyword?: string;
+  }) => {
+    const nextPage = options?.nextPage ?? page;
+    const nextStatus = options?.nextStatus ?? statusFilter;
+    const nextKeyword = options?.nextKeyword ?? keywordFilter;
+    const seq = ++requestSeq.current;
     setLoading(true);
     try {
       const data = await listTasks({
-        page,
+        page: nextPage,
         page_size: pageSize,
-        status: statusFilter,
-        keyword: keywordFilter || undefined,
+        status: nextStatus,
+        keyword: nextKeyword || undefined,
       });
+      if (seq !== requestSeq.current) return;
       setTasks(data.items);
       setTotal(data.total);
+      setError(null);
     } catch {
-      // silent
+      if (seq !== requestSeq.current) return;
+      setError('任务列表加载失败，请检查服务状态后重试');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchTasks();
+    void fetchTasks({ nextPage: page, nextStatus: statusFilter });
+    // fetchTasks depends on multiple state values via closure but the effect
+    // is intentionally only re-fired by paginate / status filter change. The
+    // search input has its own onSearch / onChange handlers that call
+    // fetchTasks explicitly with the latest keyword.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, statusFilter]);
 
   const columns: ColumnsType<TaskItem> = [
@@ -85,19 +105,43 @@ export default function TaskList() {
     <div>
       <div className="page-container">
         <Title level={4}>任务列表</Title>
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="加载失败"
+            description={error}
+          />
+        )}
         <Space style={{ marginBottom: 16 }}>
           <Input.Search
             placeholder="搜索关键词"
             value={keywordFilter}
-            onChange={(e) => setKeywordFilter(e.target.value)}
-            onSearch={fetchTasks}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              setKeywordFilter(nextValue);
+              if (!nextValue.trim()) {
+                setPage(1);
+                setError(null);
+                void fetchTasks({ nextPage: 1, nextKeyword: '' });
+              }
+            }}
+            onSearch={() => {
+              setPage(1);
+              setError(null);
+              void fetchTasks({ nextPage: 1, nextKeyword: keywordFilter });
+            }}
             style={{ width: 240 }}
             allowClear
           />
           <Select
             placeholder="筛选状态"
             value={statusFilter}
-            onChange={(v) => { setStatusFilter(v); setPage(1); }}
+            onChange={(v) => {
+              setStatusFilter(v);
+              setPage(1);
+            }}
             allowClear
             style={{ width: 160 }}
             options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v }))}
@@ -114,6 +158,9 @@ export default function TaskList() {
             total,
             onChange: (p) => setPage(p),
             showTotal: (t) => `共 ${t} 条`,
+          }}
+          locale={{
+            emptyText: error ? '任务列表加载失败' : '暂无数据',
           }}
           onRow={(record) => ({
             onClick: () => navigate(`/tasks/${record.id}`),

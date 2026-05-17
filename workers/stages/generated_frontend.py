@@ -32,6 +32,7 @@ def _ensure_frontend_dependencies(frontend_root: str) -> None:
     dependencies = package_json.setdefault("dependencies", {})
     dependencies.setdefault("@fontsource/noto-sans-sc", "latest")
     dependencies.setdefault("@ant-design/icons", "^5.3.0")
+    dependencies.setdefault("@ant-design/pro-components", "^2.8.6")
     dependencies.setdefault("antd", "^5.15.0")
     dependencies.setdefault("axios", "^1.6.0")
     dependencies.setdefault("dayjs", "^1.11.0")
@@ -81,6 +82,11 @@ def _module_code(module: dict) -> str:
 def _module_theme(module: dict) -> dict:
     route = str(module.get("route", ""))
     mapping = {
+        "/purchases": {"accent": "#1d4ed8", "soft": "#eff6ff", "strong": "#1e40af"},
+        "/sales": {"accent": "#0f766e", "soft": "#f0fdfa", "strong": "#115e59"},
+        "/inventory": {"accent": "#7c3aed", "soft": "#f5f3ff", "strong": "#6d28d9"},
+        "/suppliers": {"accent": "#b45309", "soft": "#fffbeb", "strong": "#92400e"},
+        "/orders": {"accent": "#dc2626", "soft": "#fef2f2", "strong": "#b91c1c"},
         "/talents": {"accent": "#2563eb", "soft": "#eff6ff", "strong": "#1d4ed8"},
         "/clients": {"accent": "#7c3aed", "soft": "#f5f3ff", "strong": "#6d28d9"},
         "/campaigns": {"accent": "#ea580c", "soft": "#fff7ed", "strong": "#c2410c"},
@@ -327,7 +333,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
               name="username"
               placeholder="请输入用户名"
               defaultValue="admin"
-              style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, boxSizing: 'border-box', fontFamily: uiFont }}
             />
           </div>
           <div>
@@ -337,13 +343,13 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
               type="password"
               placeholder="请输入密码"
               defaultValue="admin123"
-              style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, boxSizing: 'border-box', fontFamily: uiFont }}
             />
           </div>
           <button
             type="button"
             onClick={onLogin}
-            style={{ width: '100%', padding: '12px', background: '#1677ff', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 16, fontWeight: 600 }}
+            style={{ width: '100%', padding: '12px', background: '#1677ff', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 16, fontWeight: 600, fontFamily: uiFont }}
           >
             登录系统
           </button>
@@ -584,10 +590,11 @@ import {{ APP_PROFILE }} from '../generated/appProfile';
 const uiFont = `'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', 'IPRight CJK', sans-serif`;
 
 const panelStyle: CSSProperties = {{
-  background: '#fff',
+  background: (APP_PROFILE.visual_profile?.panel_background as string) || '#fff',
   borderRadius: 16,
   padding: 16,
   boxShadow: '0 8px 24px rgba(15, 23, 42, 0.05)',
+  border: `1px solid ${{(APP_PROFILE.visual_profile?.panel_border as string) || '#dbe3ef'}}`,
 }};
 
 const moduleTheme = {json.dumps(theme, ensure_ascii=False)};
@@ -600,6 +607,7 @@ const moduleRows = {json.dumps(module_rows, ensure_ascii=False)};
 const moduleHighlights = {json.dumps(module_highlights, ensure_ascii=False)};
 const routeBadge = {json.dumps(route_badge, ensure_ascii=False)};
 const pageVariant = {json.dumps(page_variant, ensure_ascii=False)};
+const visualProfile = APP_PROFILE.visual_profile || {{}};
 const moduleRowsSafe = moduleRows.length > 0
   ? moduleRows
   : [
@@ -609,17 +617,17 @@ const moduleRowsSafe = moduleRows.length > 0
 const modulePrimaryRow = moduleRowsSafe[0] || [];
 const moduleTopCards = [
   {{
-    label: '核心字段',
+    label: pageVariant === 'operations' ? '执行焦点' : pageVariant === 'insight' ? '重点指标' : pageVariant === 'workspace' ? '岗位视角' : '主数据范围',
     value: moduleHeaders.slice(0, 2).join(' / ') || moduleTitle,
     detail: `当前页面围绕${{moduleHeaders.slice(0, 3).join('、') || moduleTitle}}组织信息展示与操作。`,
   }},
   {{
-    label: moduleHeaders[0] || '首条记录',
+    label: pageVariant === 'operations' ? '首个任务' : pageVariant === 'insight' ? '预警样例' : pageVariant === 'workspace' ? '当前事项' : (moduleHeaders[0] || '首条记录'),
     value: modulePrimaryRow[0] || moduleTitle,
     detail: `${{moduleHeaders[1] || '主题字段'}}：${{modulePrimaryRow[1] || moduleSummary}}`,
   }},
   {{
-    label: '处理关注',
+    label: pageVariant === 'operations' ? '节点关注' : pageVariant === 'insight' ? '分析结论' : pageVariant === 'workspace' ? '协同提醒' : '业务亮点',
     value: moduleHighlights[0] || moduleAction,
     detail: moduleHighlights.slice(1, 3).join('；') || `围绕${{moduleAction}}、状态校核和结果留痕开展处理。`,
   }},
@@ -652,8 +660,7 @@ export default function {component_name}() {{
     <div style={{{{ display: 'grid', gap: 16, fontFamily: uiFont }}}}>
       <section style={{{{
         ...panelStyle,
-        background: `linear-gradient(135deg, ${{moduleTheme.soft}} 0%, #ffffff 62%)`,
-        border: `1px solid ${{moduleTheme.accent}}22`,
+        background: `linear-gradient(135deg, ${{moduleTheme.soft}} 0%, ${{(visualProfile.panel_background as string) || '#ffffff'}} 62%)`,
       }}}}>
         <div style={{{{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}}}>
           <div>
@@ -673,7 +680,7 @@ export default function {component_name}() {{
           </div>
           <button
             type="button"
-            style={{{{ border: 'none', background: moduleTheme.accent, color: '#fff', padding: '10px 16px', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}}}
+            style={{{{ border: 'none', background: moduleTheme.accent, color: '#fff', padding: '10px 16px', borderRadius: 10, cursor: 'pointer', fontWeight: 600, fontFamily: uiFont }}}}
           >
             {{moduleAction}}
           </button>
@@ -682,7 +689,11 @@ export default function {component_name}() {{
 
       <section style={{{{ display: 'grid', gridTemplateColumns: pageVariant === 'workspace' ? '1.15fr 0.85fr 0.85fr' : 'repeat(3, minmax(0, 1fr))', gap: 12 }}}}>
         {{moduleTopCards.map((card) => (
-          <div key={{card.label}} style={{{{ ...panelStyle, borderTop: `4px solid ${{moduleTheme.accent}}` }}}}>
+          <div key={{card.label}} style={{{{
+            ...panelStyle,
+            border: `1px solid ${{moduleTheme.accent}}33`,
+            boxShadow: '0 10px 24px rgba(15, 23, 42, 0.04)',
+          }}}}>
             <div style={{{{ color: '#64748b', fontSize: 12, letterSpacing: 1.1 }}}}>{{card.label}}</div>
             <div style={{{{ marginTop: 8, fontSize: 22, fontWeight: 700, color: card.label === '核心字段' ? moduleTheme.strong : '#0f172a' }}}}>{{card.value}}</div>
             <div style={{{{ marginTop: 8, color: '#475569', lineHeight: 1.6 }}}}>{{card.detail}}</div>
@@ -703,11 +714,15 @@ export default function {component_name}() {{
       <section style={{{{panelStyle}}}}>
         <div style={{{{ display: 'flex', gap: 12, marginBottom: 16 }}}}>
           <input
+            name="搜索"
             placeholder={{modulePlaceholder}}
-            style={{{{ flex: 1, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10 }}}}
+            aria-label={{modulePlaceholder}}
+            type="search"
+            autoComplete="off"
+            style={{{{ flex: 1, padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 10, fontFamily: uiFont }}}}
           />
-          <button type="button" style={{{{ padding: '10px 16px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff' }}}}>搜索</button>
-          <button type="button" style={{{{ padding: '10px 16px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff' }}}}>导出</button>
+          <button type="button" style={{{{ padding: '10px 16px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', fontFamily: uiFont }}}}>查询列表</button>
+          <button type="button" style={{{{ padding: '10px 16px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', fontFamily: uiFont }}}}>导出结果</button>
         </div>
         <table style={{{{ width: '100%', borderCollapse: 'collapse' }}}}>
           <thead>
@@ -833,6 +848,8 @@ export default function App() {{
   const [loggedIn, setLoggedIn] = useState(() => localStorage.getItem(AUTH_KEY) === 'true');
   const navigate = useNavigate();
   const location = useLocation();
+  const isDesktopClient = APP_PROFILE.app_type === 'desktop_client';
+  const visualProfile = APP_PROFILE.visual_profile || {{}};
 
   const handleLogin = () => {{
     localStorage.setItem(AUTH_KEY, 'true');
@@ -851,9 +868,78 @@ export default function App() {{
   }}
 
   return (
-    <div style={{{{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: uiFont }}}}>
-      <nav style={{{{ width: 296, minWidth: 296, background: '#0f172a', color: '#fff', padding: 20, writingMode: 'horizontal-tb', textOrientation: 'mixed' }}}}>
+    <div style={{{{ minHeight: '100vh', background: (visualProfile.shell_background as string) || '#f8fafc', fontFamily: uiFont }}}}>
+      {{isDesktopClient ? (
+        <header style={{{{
+          height: 54,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 16px 0 18px',
+          background: (visualProfile.nav_background as string) || '#111827',
+          color: (visualProfile.nav_text as string) || '#fff',
+          borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
+        }}}}>
+          <div style={{{{ display: 'flex', alignItems: 'center', gap: 12 }}}}>
+            <div style={{{{ display: 'flex', gap: 6, alignItems: 'center' }}}}>
+              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fb7185', display: 'inline-block' }}}} />
+              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }}}} />
+              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }}}} />
+            </div>
+            <div style={{{{ fontWeight: 700 }}}}>{{APP_PROFILE.product_name}}</div>
+            <div style={{{{ fontSize: 12, opacity: 0.78 }}}}>桌面客户端工作台</div>
+          </div>
+          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
+            <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.08)', fontSize: 12 }}}}>
+              {{APP_PROFILE.version}}
+            </div>
+            <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(37, 99, 235, 0.22)', fontSize: 12, color: '#dbeafe' }}}}>
+              {{APP_PROFILE.short_name}}
+            </div>
+          </div>
+        </header>
+      ) : null}}
+      {{isDesktopClient ? (
+        <section style={{{{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          padding: '12px 18px',
+          background: '#f8fafc',
+          borderBottom: '1px solid rgba(203, 213, 225, 0.8)',
+        }}}}>
+          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}}}>
+            <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#dbeafe', color: '#1d4ed8', fontWeight: 700, fontSize: 12 }}}}>
+              当前模块 {{navAliases[location.pathname] || '系统首页'}}
+            </span>
+            <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#e2e8f0', color: '#334155', fontSize: 12 }}}}>
+              {{APP_PROFILE.scene}}
+            </span>
+          </div>
+          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
+            <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>刷新视图</button>
+            <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', fontFamily: uiFont }}}}>打开工作区</button>
+          </div>
+        </section>
+      ) : null}}
+      <div style={{{{ display: 'flex', minHeight: isDesktopClient ? 'calc(100vh - 102px)' : '100vh' }}}}>
+      <nav style={{{{
+        width: isDesktopClient ? 268 : 296,
+        minWidth: isDesktopClient ? 268 : 296,
+        background: (visualProfile.nav_background as string) || '#0f172a',
+        color: (visualProfile.nav_text as string) || '#fff',
+        padding: isDesktopClient ? 16 : 20,
+        borderRight: isDesktopClient ? '1px solid rgba(148, 163, 184, 0.18)' : 'none',
+        writingMode: 'horizontal-tb',
+        textOrientation: 'mixed',
+      }}}}>
         <div style={{{{ marginBottom: 24 }}}}>
+          {{isDesktopClient ? (
+            <div style={{{{ marginBottom: 14, padding: '8px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', fontSize: 12, letterSpacing: 1.1 }}}}>
+              桌面客户端工作台
+            </div>
+          ) : null}}
           <div style={{{{
             fontSize: 20,
             fontWeight: 700,
@@ -880,9 +966,9 @@ export default function App() {{
               padding: '10px 14px',
               cursor: 'pointer',
               borderRadius: 10,
-              background: location.pathname === item.path ? '#1677ff' : 'transparent',
+              background: location.pathname === item.path ? ((visualProfile.accent as string) || '#1677ff') : 'transparent',
               marginBottom: 8,
-              color: '#fff',
+              color: (visualProfile.nav_text as string) || '#fff',
             }}}}
           >
             <div style={{{{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}}}>
@@ -910,11 +996,12 @@ export default function App() {{
           退出登录
         </div>
       </nav>
-      <main style={{{{ flex: 1, padding: 24 }}}}>
+      <main style={{{{ flex: 1, padding: isDesktopClient ? 18 : 24 }}}}>
         <Routes>
 {routes_block}
         </Routes>
       </main>
+      </div>
     </div>
   );
 }}
@@ -944,6 +1031,10 @@ html, body, #root {
   text-rendering: optimizeLegibility;
 }
 
+input, button, textarea, select {
+  font-family: var(--app-ui-font);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -955,21 +1046,46 @@ nav, aside, .sidebar, [class*='sidebar'], [class*='nav'] {
 """
 
 
+def _render_app_css() -> str:
+    return """@import "./font.css";
+
+#root {
+  min-height: 100vh;
+}
+"""
+
+
+def _ensure_main_imports_font_css(frontend_root: str) -> None:
+    main_path = Path(frontend_root) / "src" / "main.tsx"
+    if not main_path.exists():
+        return
+
+    content = main_path.read_text(encoding="utf-8")
+    if "import './font.css';" in content or 'import "./font.css";' in content:
+        return
+
+    lines = content.splitlines()
+    insert_at = 0
+    while insert_at < len(lines) and lines[insert_at].startswith("import "):
+        insert_at += 1
+    lines.insert(insert_at, "import './font.css';")
+    main_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
 def _write_task_specific_app(frontend_root: str, backend_root: str, profile: dict) -> None:
     _ensure_frontend_dependencies(frontend_root)
     _ensure_backend_dependencies(backend_root)
     _write_text(os.path.join(frontend_root, "src", "generated", "appProfile.ts"), build_frontend_profile_source(profile))
-    _write_text(os.path.join(frontend_root, "src", "App.tsx"), _render_frontend_app(profile))
     _write_text(os.path.join(frontend_root, "src", "font.css"), _render_font_css())
-    _write_text(os.path.join(frontend_root, "src", "pages", "Login.tsx"), _render_login_page(profile))
-    _write_text(os.path.join(frontend_root, "src", "pages", "Dashboard.tsx"), _render_dashboard_page(profile))
-
-    for module in profile.get("modules", []):
-        component_name = f"{_camel_name(module.get('route', module['key']))}Page"
-        _write_text(
-            os.path.join(frontend_root, "src", "pages", f"{component_name}.tsx"),
-            _render_module_page(module),
-        )
+    _write_text(os.path.join(frontend_root, "src", "App.css"), _render_app_css())
+    _ensure_main_imports_font_css(frontend_root)
+    # Remove seed UI source so core pages must come from the current task's LLM output.
+    app_entry = Path(frontend_root) / "src" / "App.tsx"
+    pages_dir = Path(frontend_root) / "src" / "pages"
+    if app_entry.exists():
+        app_entry.unlink()
+    if pages_dir.exists():
+        shutil.rmtree(pages_dir)
 
     font_source = Path(__file__).resolve().parents[2] / "assets" / "fonts" / "IPRightCJK.ttf"
     if font_source.exists():

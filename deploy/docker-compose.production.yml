@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ipright
       POSTGRES_USER: ipright
-      POSTGRES_PASSWORD: ${IPRIGHT_POSTGRES_PASSWORD:-ipright_prod_change_me}
+      POSTGRES_PASSWORD: ${IPRIGHT_POSTGRES_PASSWORD:?IPRIGHT_POSTGRES_PASSWORD must be set}
     ports:
       - "127.0.0.1:15432:5432"
     volumes:
@@ -27,8 +27,8 @@ services:
     container_name: ipright-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${IPRIGHT_MINIO_ACCESS_KEY:-iprightminio}
-      MINIO_ROOT_PASSWORD: ${IPRIGHT_MINIO_SECRET_KEY:-iprightminio_change_me}
+      MINIO_ROOT_USER: ${IPRIGHT_MINIO_ACCESS_KEY:?IPRIGHT_MINIO_ACCESS_KEY must be set}
+      MINIO_ROOT_PASSWORD: ${IPRIGHT_MINIO_SECRET_KEY:?IPRIGHT_MINIO_SECRET_KEY must be set}
     ports:
       - "127.0.0.1:19000:9000"
       - "127.0.0.1:19001:9001"

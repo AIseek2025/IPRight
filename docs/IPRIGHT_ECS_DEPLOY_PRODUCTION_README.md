@@ -188,6 +188,12 @@ LLM_MODEL=deepseek-v4-pro
 LLM_FALLBACK_MODEL=deepseek-v4-flash
 ```
 
+说明：
+
+- PRD、页面截图图注/页面说明、软件说明书正文统一固定走 `deepseek-v4-flash`
+- 编程/推理类链路固定走 `deepseek-v4-pro`
+- 文本内容链路不再回退到本地模板生成
+
 ---
 
 ## 7.1 2026-05-03 真实 ECS 预检结论

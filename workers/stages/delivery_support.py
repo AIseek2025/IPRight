@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Awaitable, Callable
 
+from sqlalchemy import select
+
+from app.models.db import Artifact
 from app.services.document.application_form import ApplicationFormGenerator
 from app.services.document.codebook import SourceCodeBookGenerator
 from app.services.document.diagrams import generate_system_architecture_diagram
@@ -16,8 +20,17 @@ def load_screenshots_meta(
     screenshots_dir_fn: Callable[[str], str],
     load_json_manifest: Callable[[str], dict | None],
 ) -> list[dict]:
+    raw = load_json_manifest("screenshot_manifest")
+    if not isinstance(raw, list):
+        manifest_path = os.path.join(artifacts_dir_fn(task_id), "screenshot_manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            raw = loaded if isinstance(loaded, list) else []
+        else:
+            raw = []
+
     screenshots_meta = []
-    raw = load_json_manifest("screenshot_manifest") or []
     for item in raw:
         image_file = item.get("image_file", "")
         screenshots_meta.append(
@@ -77,6 +90,7 @@ async def generate_manual_delivery(
     arch_diagram_path = generate_system_architecture_diagram(
         os.path.join(export_dir, "system_architecture.png"),
         task.product_name,
+        profile=project_profile,
     )
     generator.generate_full(
         prd_summary=prd_summary,
@@ -150,17 +164,33 @@ async def publish_task_exports(task_id: str, build_id: str, db_factory) -> None:
     from app.models.db import Export
 
     async with db_factory()() as db:
+        artifact_mapping: dict[tuple[str, str], uuid.UUID] = {}
+        artifacts_q = await db.execute(
+            select(Artifact).where(
+                Artifact.task_id == uuid.UUID(task_id),
+                Artifact.build_id == uuid.UUID(build_id),
+            )
+        )
+        for artifact in artifacts_q.scalars().all():
+            artifact_mapping[(artifact.artifact_type, artifact.artifact_name)] = artifact.id
+
         for export_type, filename in [
             ("manual_docx", "software_manual.docx"),
             ("source_code_docx", "source_code_book.docx"),
             ("application_form_docx", "application_form.docx"),
         ]:
+            artifact_type = {
+                "manual_docx": "software_manual_docx",
+                "source_code_docx": "source_code_book_docx",
+                "application_form_docx": "application_form_docx",
+            }[export_type]
             new_export_id = uuid.uuid4()
             export = Export(
                 id=new_export_id,
                 task_id=uuid.UUID(task_id),
                 build_id=uuid.UUID(build_id),
                 export_type=export_type,
+                artifact_id=artifact_mapping.get((artifact_type, filename)),
                 file_name=filename,
                 download_url=f"/api/v1/exports/{new_export_id}/download",
                 status="ready",
