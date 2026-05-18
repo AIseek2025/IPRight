@@ -1142,14 +1142,14 @@ class SoftwareManualGenerator(WordTemplateBase):
             self._sanitize_doc_text(
                 page_profile.get(
                     "variant_instruction",
-                    f"该截图展示了“{title}”在筛选、聚焦或结果定位后的页面状态，用于补充说明同一模块在具体业务条件下的展示效果与处理入口。",
+                    f"{title}用于呈现在筛选、聚焦或结果定位条件下的业务处理状态，便于说明同一模块在具体业务条件下的信息组织方式、结果呈现逻辑和处理入口。",
                 )
             )
         )
         if elements:
-            self.add_paragraph(self._sanitize_doc_text("截图中重点可见元素包括：" + "、".join(elements[:10]) + "。"))
+            self.add_paragraph(self._sanitize_doc_text("该功能主要涵盖：" + "、".join(elements[:10]) + "。"))
         else:
-            self.add_paragraph("该变体页应重点关注筛选条件、结果列表、状态标签和主操作入口。")
+            self.add_paragraph("该功能状态下应重点关注筛选条件、结果列表、状态标签和主操作入口。")
         self.add_title("变体页验收说明", level=4)
         for note in self._variant_page_review_notes(title, page_profile):
             self.add_paragraph(note)
@@ -1160,7 +1160,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "usage_overview",
-                "用户进入系统后，可按照“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径开展使用。后续章节将按页面顺序给出截图、功能讲解和详细操作说明。",
+                "系统围绕“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径组织主要功能。后续章节将按页面顺序陈述各项功能用途、处理步骤和页面要点。",
             )
         )
         self.add_title("主要页面操作说明", level=2)
@@ -1214,7 +1214,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 for highlight in page_profile["highlights"]:
                     self.add_paragraph(f"- {highlight}")
             if elements:
-                self.add_paragraph(self._sanitize_doc_text("本页面关键可见元素包括：" + "、".join(elements[:12]) + "。"))
+                self.add_paragraph(self._sanitize_doc_text("本功能主要包括：" + "、".join(elements[:12]) + "。"))
             else:
                 self.add_paragraph("本页面应重点关注标题区、导航区、筛选区、数据展示区和操作反馈区。")
             self.add_title("页面数据与技术说明", level=3)

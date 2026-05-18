@@ -76,7 +76,7 @@ def test_manual_normalizes_spacing_and_ui_symbols():
     assert "智慧园区管理平台 采用浏览器访问的软件架构" not in joined
     assert "智慧园区管理平台面向企事业单位的信息化管理场景" in joined
     assert "智慧园区管理平台采用浏览器访问的软件架构" in joined
-    assert "本页面关键可见元素包括：智慧园区管理平台V1.0、用户管理。" in joined
+    assert "本功能主要包括：智慧园区管理平台V1.0、用户管理。" in joined
 
 
 def test_manual_includes_generated_architecture_diagram_when_image_exists():
@@ -170,7 +170,7 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "星曜投放协同平台" in joined
     assert "达人库管理" in joined
     assert "结算与对账" in joined
-    assert "后续章节将按页面顺序给出截图、功能讲解和详细操作说明" in joined
+    assert "后续章节将按页面顺序陈述各项功能用途、处理步骤和页面要点" in joined
     assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
     assert "典型应用场景" in joined
     assert "数据组织与结果输出说明" in joined
@@ -281,7 +281,9 @@ def test_manual_compacts_filtered_variant_pages():
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "用户管理筛选结果" in joined
     assert joined.count("\n详细操作说明\n") == 1
-    assert "截图中重点可见元素包括：用户管理、搜索、导出、筛选结果。" in joined
+    assert "该功能主要涵盖：用户管理、搜索、导出、筛选结果。" in joined
+    assert "该截图展示了" not in joined
+    assert "截图中重点可见" not in joined
 
 
 def test_task_profile_builds_more_than_ten_screenshot_scenarios():

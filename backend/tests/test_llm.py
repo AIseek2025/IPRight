@@ -252,3 +252,49 @@ class TestLLMClient:
         assert '"screenshots"' in calls[0]["user"]
         assert "page_overrides" not in calls[0]["system"]
         assert any("页面名称:" in call["user"] for call in calls[1:])
+        assert "提交给版权局" in calls[0]["system"]
+        assert "以企业身份撰写" in calls[0]["system"]
+        assert "该截图展示了" in calls[0]["system"]
+
+    def test_generate_page_description_uses_copyright_enterprise_tone(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            return LLMResponse(
+                success=True,
+                structured={
+                    "caption": "图1 实时监控与分级预警",
+                    "description": "本功能用于展示预警规则、处理状态和时间信息。",
+                    "steps": ["输入筛选条件", "查看处理结果"],
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_page_description(
+                "实时监控与分级预警筛选结果",
+                "/warnings",
+                ["实时监控与分级预警", "新增预警规则", "查询列表", "导出结果"],
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert "提交给版权局的软件著作权申请材料" in captured["messages"][0]["content"]
+        assert "不要再使用“该截图展示了”" in captured["messages"][0]["content"]
+        assert "以企业申报软件著作权的正式口吻撰写" in captured["messages"][0]["content"]
