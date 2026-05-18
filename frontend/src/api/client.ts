@@ -24,6 +24,8 @@ declare global {
   }
 }
 
+const ENV_API_TOKEN = import.meta.env.VITE_IPRIGHT_API_TOKEN ?? '';
+
 export function getApiToken(): string {
   if (typeof window !== 'undefined') {
     if (window.__IPRIGHT_API_TOKEN__) return window.__IPRIGHT_API_TOKEN__;
@@ -34,8 +36,7 @@ export function getApiToken(): string {
       // ignore (private browsing / SSR contexts where storage is restricted)
     }
   }
-  const fromEnv = import.meta?.env?.VITE_IPRIGHT_API_TOKEN;
-  return typeof fromEnv === 'string' ? fromEnv : '';
+  return ENV_API_TOKEN;
 }
 
 export function setApiToken(token: string): void {
