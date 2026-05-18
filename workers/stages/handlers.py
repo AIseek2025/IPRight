@@ -12,6 +12,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models.db import Artifact, Task
+from app.services import TaskService
+from app.services.document.manual import OPTIONAL_MANUAL_MODULES
 from app.services.project_profile import (
     build_plan_seed,
     build_task_profile,
@@ -118,6 +120,27 @@ async def _create_artifact(
         return artifact
 
 
+async def _log_task_progress(
+    ctx: StageContext,
+    *,
+    event_type: str,
+    title: str,
+    detail: str | None = None,
+    payload_json: dict | None = None,
+) -> None:
+    async with ctx.db_factory()() as db:
+        service = TaskService(db)
+        await service.log_event(
+            task_id=uuid.UUID(ctx.task_id),
+            build_id=uuid.UUID(ctx.build_id),
+            event_type=event_type,
+            title=title,
+            detail=detail,
+            payload_json=payload_json,
+        )
+        await db.commit()
+
+
 def _load_manifest(task_id: str, manifest_name: str) -> dict | None:
     path = os.path.join(manifests_dir(task_id), f"{manifest_name}.json")
     if os.path.exists(path):
@@ -143,6 +166,8 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
     merged = copy.deepcopy(project_profile or {})
     if not isinstance(llm_content, dict):
         return merged
+
+    optional_module_keys = {item["key"] for item in OPTIONAL_MANUAL_MODULES}
 
     # Merge top-level narrative sections consumed by the manual generator.
     scalar_keys = [
@@ -196,6 +221,19 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
         }
         if cleaned_permissions:
             merged["role_permissions"] = cleaned_permissions
+
+    selected_optional_modules = llm_content.get("selected_optional_modules")
+    if isinstance(selected_optional_modules, list):
+        cleaned_optional_modules: list[str] = []
+        seen_optional_modules: set[str] = set()
+        for item in selected_optional_modules:
+            key = str(item).strip()
+            if not key or key not in optional_module_keys or key in seen_optional_modules:
+                continue
+            cleaned_optional_modules.append(key)
+            seen_optional_modules.add(key)
+        if cleaned_optional_modules:
+            merged["selected_optional_modules"] = cleaned_optional_modules
 
     modules = [copy.deepcopy(module) for module in (merged.get("modules") or []) if isinstance(module, dict)]
     module_by_title = {
@@ -253,6 +291,12 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
 @register_stage(StageName.PLAN)
 async def run_plan_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[plan] Generating PRD for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始生成 PRD",
+        detail="正在根据原始需求整理产品需求文档与开发任务书",
+    )
 
     async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
@@ -266,36 +310,8 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     prd_content = ""
     work_order_content = ""
     prd_summary = {}
-    plan_seed = build_plan_seed(task.keyword or task.product_name, task.product_name, task.industry)
-
-    def _fallback_plan_content(current_task: Task) -> tuple[str, str, dict]:
-        kw = current_task.keyword or current_task.product_name
-        ver = current_task.version or "V1.0"
-        module_titles = list(plan_seed["core_modules"])
-        summary = {
-            "app_type": plan_seed.get("app_type") or "admin_web",
-            "core_modules": module_titles,
-            "required_pages": list(plan_seed["required_pages"]),
-            "user_roles": list(plan_seed["user_roles"]),
-        }
-        prd_md = (
-            f"# {current_task.product_name}{ver} 产品需求文档\n\n"
-            f"## 1. 背景\n围绕“{kw}”构建面向{plan_seed['industry_scope']}的专属业务管理与交付支撑平台。\n\n"
-            "## 2. 核心模块\n"
-            + "\n".join(f"- {name}" for name in module_titles)
-            + "\n\n## 3. 业务对象\n"
-            + "\n".join(f"- {name}" for name in plan_seed["core_entities"])
-            + "\n\n## 4. 非功能要求\n- 页面稳定可访问\n- 关键操作可留痕\n- 支持文档与材料导出\n"
-        )
-        work_order_md = (
-            f"# {current_task.product_name} 开发工单\n\n"
-            "## 阶段拆分\n"
-            "1. 生成应用骨架与页面\n"
-            "2. 运行健康检查\n"
-            "3. 采集截图并生成说明书/源码文档\n"
-            "4. 导出交付材料\n"
-        )
-        return prd_md, work_order_md, summary
+    task_notes = getattr(task, "notes", None)
+    plan_seed = build_plan_seed(task.keyword or task.product_name, task.product_name, task.industry, task_notes)
     try:
         from app.services.llm import get_llm_client
         llm = get_llm_client()
@@ -305,6 +321,7 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
             product_name=task.product_name,
             version=task.version,
             industry=task.industry or "",
+            notes=task_notes or "",
             plan_seed=plan_seed,
         )
 
@@ -313,14 +330,20 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
             work_order_content = resp.structured.get("work_order_markdown", "")
             prd_summary = normalize_prd_summary_with_plan_seed(resp.structured.get("prd_summary", {}), plan_seed)
             logger.info(f"[plan] LLM PRD generated successfully ({len(prd_content)} chars)")
+            await _log_task_progress(
+                ctx,
+                event_type="stage_progress",
+                title="PRD 已生成",
+                detail=f"已生成 PRD 与开发任务书，正文约 {len(prd_content)} 字符",
+                payload_json={"prd_chars": len(prd_content)},
+            )
         else:
-            logger.warning("[plan] LLM unavailable, fallback to template: %s", resp.error or "unknown error")
-            prd_content, work_order_content, prd_summary = _fallback_plan_content(task)
-            llm_used = "template_fallback"
+            error = resp.error or "unknown error"
+            logger.warning("[plan] LLM unavailable, refusing template fallback: %s", error)
+            return StageResult(success=False, error=f"PRD generation unavailable: {error}")
     except Exception as exc:
-        logger.warning("[plan] LLM exception, fallback to template: %s", exc)
-        prd_content, work_order_content, prd_summary = _fallback_plan_content(task)
-        llm_used = "template_fallback"
+        logger.warning("[plan] LLM exception, refusing template fallback: %s", exc)
+        return StageResult(success=False, error=f"PRD generation unavailable: {exc}")
 
     prd_path = os.path.join(prd_dir, "product_prd.md")
     with open(prd_path, "w", encoding="utf-8") as f:
@@ -341,6 +364,12 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     await _create_artifact(
         ctx.db_factory, ctx.task_id, ctx.build_id,
         "development_work_order", "development_work_order.md", work_order_path,
+    )
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="PRD 工件已落盘",
+        detail="已写入 PRD、任务书与摘要清单，准备进入应用构建阶段",
     )
 
     return StageResult(
@@ -367,7 +396,15 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         product_name=task.product_name,
         version=task.version,
         industry=task.industry,
+        notes=getattr(task, "notes", None),
         prd_summary=prd_summary,
+    )
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="任务画像已生成",
+        detail=f"已抽取 {len(profile.get('modules', []))} 个模块，准备生成前后端代码与清单",
+        payload_json={"module_count": len(profile.get("modules", []))},
     )
 
     app_root = os.path.join(workspace_path(ctx.task_id), "app")
@@ -381,6 +418,24 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
             return StageResult(success=False, error=codegen_error)
     except Exception as exc:
         return StageResult(success=False, error=f"App code generation failed: {exc}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="应用代码已生成",
+        detail=(
+            f"已生成 {codegen_report_data.get('generated_file_count', 0) if codegen_report_data else 0} 个目标文件"
+            + (
+                f"，核心自愈 {len(codegen_report_data.get('repaired_core_paths', []))} 个"
+                if codegen_report_data and codegen_report_data.get("repaired_core_paths")
+                else ""
+            )
+        ),
+        payload_json={
+            "generated_file_count": codegen_report_data.get("generated_file_count", 0) if codegen_report_data else 0,
+            "repaired_core_paths": codegen_report_data.get("repaired_core_paths", []) if codegen_report_data else [],
+            "repaired_support_paths": codegen_report_data.get("repaired_support_paths", []) if codegen_report_data else [],
+        },
+    )
 
     profile["source_code_line_estimate"] = count_source_lines(app_root)
 
@@ -503,6 +558,12 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
 
     if not all_valid:
         return StageResult(success=False, error=f"Manifest validation failed: {'; '.join(validation_errors)}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="运行清单校验通过",
+        detail="应用清单、运行清单、截图清单和代码索引均已通过校验",
+    )
 
     for filename in manifests:
         artifact_type = filename.replace(".json", "")
@@ -522,6 +583,12 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
 @register_stage(StageName.VERIFY_RUN)
 async def run_verify_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[verify_run] Running health checks for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始运行验证",
+        detail="正在安装依赖、启动前后端并执行健康检查",
+    )
 
     run_manifest = _load_manifest(ctx.task_id, "run_manifest")
     app_manifest = _load_manifest(ctx.task_id, "app_manifest")
@@ -541,6 +608,13 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
     )
     if not success:
         return StageResult(success=False, error=error)
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="运行验证通过",
+        detail="前后端服务已通过健康检查，准备进入截图阶段",
+        payload_json={"runtime_status": runtime_status},
+    )
 
     return StageResult(success=True, artifacts=[], metadata={"runtime_status": runtime_status})
 
@@ -548,6 +622,12 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
 @register_stage(StageName.CAPTURE)
 async def run_capture_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[capture] Capturing screenshots for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始页面截图",
+        detail="正在启动预览环境并按场景抓取页面截图",
+    )
 
     capture_manifest = _load_manifest(ctx.task_id, "capture_manifest")
     app_manifest = _load_manifest(ctx.task_id, "app_manifest")
@@ -557,7 +637,7 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
         return StageResult(success=False, error="capture_manifest not found")
 
     output_dir = reset_screenshots_dir(ctx.task_id)
-    total_count, success_count = await execute_capture_flow(
+    total_count, success_count, missing_essential_titles = await execute_capture_flow(
         task_id=ctx.task_id,
         build_id=ctx.build_id,
         workspace_root=workspace_path(ctx.task_id),
@@ -570,16 +650,42 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
         db_factory=ctx.db_factory,
         sleep_fn=asyncio_sleep,
     )
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="截图阶段完成",
+        detail=f"共尝试 {total_count} 张截图，成功 {success_count} 张",
+        payload_json={
+            "screenshots_total": total_count,
+            "screenshots_ok": success_count,
+            "missing_essential_titles": missing_essential_titles,
+        },
+    )
+    error = None
+    if missing_essential_titles:
+        error = "核心页面截图失败: " + "、".join(missing_essential_titles)
+    elif success_count < 1:
+        error = "No screenshots captured successfully"
     return StageResult(
-        success=success_count >= 1,
-        error=None if success_count >= 1 else "No screenshots captured successfully",
-        metadata={"screenshots_total": total_count, "screenshots_ok": success_count},
+        success=error is None,
+        error=error,
+        metadata={
+            "screenshots_total": total_count,
+            "screenshots_ok": success_count,
+            "missing_essential_titles": missing_essential_titles,
+        },
     )
 
 
 @register_stage(StageName.COMPOSE_MANUAL)
 async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[compose_manual] Generating software manual for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始生成说明书",
+        detail="正在整合截图、PRD 与项目画像，生成软件说明书和申请表",
+    )
 
     async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
@@ -606,6 +712,17 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
         merge_manual_llm_content=_merge_manual_llm_content,
         db_factory=ctx.db_factory,
     )
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="说明书已生成",
+        detail=f"说明书已生成，纳入 {screenshot_count} 张截图，LLM={manual_llm_used}",
+        payload_json={
+            "screenshot_count": screenshot_count,
+            "llm_used": manual_llm_used,
+            "export_path": output_path,
+        },
+    )
 
     return StageResult(
         success=True,
@@ -622,6 +739,12 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
 @register_stage(StageName.COMPOSE_CODE_BOOK)
 async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[compose_code_book] Generating source code book for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始生成源码文档",
+        detail="正在整理源码目录与关键文件，输出源代码说明书",
+    )
 
     async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
@@ -642,6 +765,13 @@ async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
         create_artifact=_create_artifact,
         db_factory=ctx.db_factory,
     )
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="源码文档已生成",
+        detail="源代码说明书已生成，准备进入发布阶段",
+        payload_json={"export_path": output_path},
+    )
 
     return StageResult(
         success=True,
@@ -655,6 +785,12 @@ async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
 @register_stage(StageName.PUBLISH)
 async def run_publish_stage(ctx: StageContext) -> StageResult:
     logger.info(f"[publish] Publishing exports for task {ctx.task_id}")
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="开始发布交付物",
+        detail="正在登记导出文件与整包下载信息",
+    )
 
     async with ctx.db_factory()() as db:
         task = await db.get(Task, uuid.UUID(ctx.task_id))
@@ -662,6 +798,13 @@ async def run_publish_stage(ctx: StageContext) -> StageResult:
             return StageResult(success=False, error="Task not found")
 
     await publish_task_exports(ctx.task_id, ctx.build_id, ctx.db_factory)
+    await _log_task_progress(
+        ctx,
+        event_type="stage_progress",
+        title="交付物已发布",
+        detail="导出文件和整包下载入口已准备完成",
+        payload_json={"published": True},
+    )
 
     return StageResult(success=True, artifacts=[], metadata={"published": True})
 

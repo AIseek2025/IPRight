@@ -92,6 +92,14 @@ class TestLLMClient:
         assert parsed == {}
         assert error
 
+    def test_parse_json_object_content_repairs_raw_newlines_inside_strings(self):
+        parsed, error = LLMClient._parse_json_object_content(
+            '{"prd_markdown":"# 电力调度平台 V1.0 产品需求文档\n\n## 1. 产品概述\n电力调度平台用于调度中心。","prd_summary":{"app_type":"admin_web"}}'
+        )
+        assert not error
+        assert parsed["prd_markdown"].startswith("# 电力调度平台 V1.0 产品需求文档")
+        assert parsed["prd_summary"]["app_type"] == "admin_web"
+
     def test_generate_app_code_uses_json_object_mode(self, monkeypatch):
         captured = {}
 
@@ -105,6 +113,7 @@ class TestLLMClient:
             max_tokens_override=None,
             temperature_override=None,
         ):
+            captured["messages"] = messages
             captured["response_format"] = response_format
             captured["parse_json_response"] = parse_json_response
             captured["max_tokens_override"] = max_tokens_override
@@ -125,3 +134,121 @@ class TestLLMClient:
         assert captured["parse_json_response"] is False
         assert captured["max_tokens_override"] == 12000
         assert captured["temperature_override"] == 0.2
+        assert "不得挪用任何历史任务的行业素材" in captured["messages"][0]["content"]
+        assert "raw_user_request" in captured["messages"][0]["content"]
+
+    def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            return LLMResponse(
+                success=True,
+                text='{"prd_markdown":"# PRD","work_order_markdown":"# Work","prd_summary":{"app_type":"admin_web","core_modules":["模块A","模块B","模块C","模块D"],"required_pages":["/login","/dashboard","/a"],"user_roles":["管理员"],"scene":"场景","industry_scope":"行业","core_entities":["对象A"]}}',
+                structured={},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_prd(
+                keyword="电力调度平台",
+                product_name="电力调度平台",
+                version="V1.0",
+                industry="电网调度",
+                notes="重点关注调度令",
+                plan_seed={"raw_user_request": {"keyword": "电力调度平台"}},
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert "原始用户输入（唯一主题源）" in captured["messages"][1]["content"]
+        assert "重点关注调度令" in captured["messages"][1]["content"]
+        assert "platform" not in captured["messages"][1]["content"].lower()
+
+    def test_generate_manual_content_splits_overview_and_page_overrides(self, monkeypatch):
+        calls = []
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            calls.append(
+                {
+                    "system": messages[0]["content"],
+                    "user": messages[1]["content"],
+                    "response_format": response_format,
+                    "max_tokens_override": max_tokens_override,
+                }
+            )
+            if "页面名称:" in messages[1]["content"]:
+                return LLMResponse(
+                    success=True,
+                    structured={
+                        "caption": "图: 电网运行总览",
+                        "description": "用于查看主网运行状态与关键指标。",
+                        "steps": ["输入筛选条件", "查看运行结果"],
+                    },
+                )
+            return LLMResponse(
+                success=True,
+                structured={
+                    "development_background": "背景",
+                    "development_purpose": "目的",
+                    "module_overrides": [{"title": "电网运行总览", "description": "模块描述"}],
+                    "role_permissions": {"管理员": "查看全部"},
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_manual_content(
+                product_name="电力调度平台",
+                version="V1.0",
+                profile={
+                    "keyword": "电力调度平台",
+                    "topic_label": "电力调度平台",
+                    "scene": "电网调度",
+                    "modules": [{"title": "电网运行总览", "route": "/grid"}],
+                    "user_roles": ["管理员"],
+                },
+                prd_summary={"required_pages": ["/login", "/dashboard", "/grid"]},
+                screenshots_meta=[
+                    {"page_title": "电网运行总览", "route": "/grid", "elements": ["搜索", "导出"]},
+                ],
+            )
+            assert resp.success
+            assert resp.structured["development_background"] == "背景"
+            assert resp.structured["page_overrides"][0]["page_title"] == "电网运行总览"
+            assert resp.structured["page_overrides"][0]["steps"] == ["输入筛选条件", "查看运行结果"]
+
+        asyncio.run(_run())
+        assert calls[0]["response_format"] == "json_object"
+        assert calls[0]["max_tokens_override"] == 5200
+        assert '"screenshots"' in calls[0]["user"]
+        assert "page_overrides" not in calls[0]["system"]
+        assert any("页面名称:" in call["user"] for call in calls[1:])

@@ -1082,10 +1082,18 @@ def _write_task_specific_app(frontend_root: str, backend_root: str, profile: dic
     # Remove seed UI source so core pages must come from the current task's LLM output.
     app_entry = Path(frontend_root) / "src" / "App.tsx"
     pages_dir = Path(frontend_root) / "src" / "pages"
+    seed_support_files = [
+        Path(frontend_root) / "src" / "services" / "api.ts",
+        Path(frontend_root) / "src" / "types" / "constants.ts",
+        Path(frontend_root) / "src" / "types" / "models.ts",
+    ]
     if app_entry.exists():
         app_entry.unlink()
     if pages_dir.exists():
         shutil.rmtree(pages_dir)
+    for seed_path in seed_support_files:
+        if seed_path.exists():
+            seed_path.unlink()
 
     font_source = Path(__file__).resolve().parents[2] / "assets" / "fonts" / "IPRightCJK.ttf"
     if font_source.exists():

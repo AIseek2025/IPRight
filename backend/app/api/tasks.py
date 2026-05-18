@@ -472,6 +472,7 @@ async def stream_task_status(task_id: uuid.UUID):
     async def event_stream():
         last_status = None
         last_stage = None
+        seen_event_ids: set[str] = set()
         factory = get_session_factory()
         for _ in range(300):
             # Use an independent short-lived session per poll so we never read
@@ -488,6 +489,13 @@ async def stream_task_status(task_id: uuid.UUID):
                     return
                 current_status = task.status
                 current_stage = task.current_stage
+                events_q = await session.execute(
+                    select(TaskEvent)
+                    .where(TaskEvent.task_id == task_id)
+                    .order_by(TaskEvent.created_at.desc())
+                    .limit(20)
+                )
+                recent_events = list(reversed(events_q.scalars().all()))
 
             if current_status != last_status or current_stage != last_stage:
                 last_status = current_status
@@ -500,7 +508,24 @@ async def stream_task_status(task_id: uuid.UUID):
                     },
                     ensure_ascii=False,
                 )
-                yield f"data: {data}\n\n"
+                yield f"event: status\ndata: {data}\n\n"
+
+            for event in recent_events:
+                event_id = str(event.id)
+                if event_id in seen_event_ids:
+                    continue
+                seen_event_ids.add(event_id)
+                payload = json.dumps(
+                    {
+                        "id": event_id,
+                        "event_type": event.event_type,
+                        "title": event.title,
+                        "detail": event.detail,
+                        "created_at": event.created_at.isoformat() if event.created_at else None,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"event: task_event\ndata: {payload}\n\n"
 
             if current_status in ("completed", "failed", "cancelled"):
                 break

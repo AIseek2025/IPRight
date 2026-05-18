@@ -511,10 +511,10 @@ class PlaywrightCapture:
             return False
 
         file_size = os.path.getsize(image_path)
-        if file_size < 3_000:
-            return False
-
-        return await self._has_meaningful_content(page, route=route, title=title, expected_markers=expected_markers)
+        meaningful = await self._has_meaningful_content(page, route=route, title=title, expected_markers=expected_markers)
+        if meaningful:
+            return file_size >= 800
+        return False
 
     async def _do_login(self, page, account: dict) -> None:
         username = account.get("username", "admin")
@@ -659,6 +659,7 @@ class PlaywrightCapture:
         action_type = action.get("action", "")
         target = action.get("target", "")
         value = action.get("value", "")
+        optional = bool(action.get("optional"))
 
         try:
             if action_type == "login_as_admin":
@@ -670,6 +671,8 @@ class PlaywrightCapture:
             elif action_type == "fill_input":
                 filled = await self._fill_input_field(page, target, value)
                 if not filled:
+                    if optional:
+                        return
                     raise RuntimeError(f"Unable to locate input field for target: {target}")
                 await self._trigger_search_submit(page, target)
             elif action_type == "wait_for_text":
@@ -677,6 +680,9 @@ class PlaywrightCapture:
             await page.wait_for_timeout(500)
             await self._stabilize_page(page)
         except Exception as e:
+            if optional:
+                logger.info(f"Optional action {action_type} / {target} skipped: {e}")
+                return
             logger.warning(f"Action {action_type} / {target} failed: {e}")
 
     def _stub_capture(self, capture_manifest: dict) -> list[ScreenshotResult]:

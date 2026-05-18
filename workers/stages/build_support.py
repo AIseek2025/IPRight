@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -8,6 +9,7 @@ from pathlib import Path
 from workers.stages.generated_backend import GENERATED_BACKEND_APP_FILES
 from workers.stages.generated_frontend import (
     _camel_name,
+    _render_module_page,
     _write_task_specific_app,
 )
 
@@ -34,6 +36,12 @@ def _write_text(path: str, content: str) -> None:
 
 def _requires_llm_frontend_generation(relative_path: str) -> bool:
     if relative_path == "frontend/src/App.tsx":
+        return True
+    if relative_path in {
+        "frontend/src/services/api.ts",
+        "frontend/src/types/constants.ts",
+        "frontend/src/types/models.ts",
+    }:
         return True
     return relative_path.startswith("frontend/src/pages/") and relative_path.endswith((".ts", ".tsx", ".js", ".jsx"))
 
@@ -105,7 +113,9 @@ def build_codegen_requirements(profile: dict) -> dict:
                 "component_name": component_name,
                 "description": module.get("description", ""),
                 "primary_action": module.get("primary_action", ""),
+                "filter_placeholder": module.get("filter_placeholder", ""),
                 "table_headers": list(module.get("table_headers", [])),
+                "rows": list(module.get("rows", []))[:6],
                 "highlights": list(module.get("highlights", [])),
                 "page_variant": module.get("page_variant", "records"),
             }
@@ -114,11 +124,15 @@ def build_codegen_requirements(profile: dict) -> dict:
         "frontend/src/App.tsx",
         "frontend/src/pages/Login.tsx",
         "frontend/src/pages/Dashboard.tsx",
+        "frontend/src/services/api.ts",
+        "frontend/src/types/constants.ts",
+        "frontend/src/types/models.ts",
     ]
     required_files = [*core_required_files, *[page["file_path"] for page in module_pages]]
     return {
         "core_required_files": core_required_files,
         "required_files": required_files,
+        "raw_user_request": profile.get("raw_user_request", {}),
         "app_type": profile.get("app_type", "admin_web"),
         "preset_key": profile.get("preset_key", ""),
         "module_pages": module_pages,
@@ -141,7 +155,16 @@ def build_codegen_requirements(profile: dict) -> dict:
 def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
     if not codegen_requirements.get("required_files"):
         return []
+    core_required_files = list(codegen_requirements.get("core_required_files", []))
+    route_shell_files = [
+        "frontend/src/App.tsx",
+        "frontend/src/pages/Login.tsx",
+        "frontend/src/pages/Dashboard.tsx",
+    ]
+    primary_core_files = [path for path in route_shell_files if path in core_required_files]
+    support_core_files = [path for path in core_required_files if path not in primary_core_files]
     common_requirements = {
+        "raw_user_request": codegen_requirements.get("raw_user_request", {}),
         "app_type": codegen_requirements.get("app_type", "admin_web"),
         "preset_key": codegen_requirements.get("preset_key", ""),
         "product_name": codegen_requirements.get("product_name"),
@@ -161,14 +184,26 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
     batches = [
         {
             "name": "core",
-            "required_files": list(codegen_requirements.get("core_required_files", [])),
+            "required_files": primary_core_files,
             "requirements": {
                 **common_requirements,
-                "required_files": list(codegen_requirements.get("core_required_files", [])),
+                "required_files": primary_core_files,
                 "module_pages": list(codegen_requirements.get("module_pages", [])),
             },
         }
     ]
+    if support_core_files:
+        batches.append(
+            {
+                "name": "support",
+                "required_files": support_core_files,
+                "requirements": {
+                    **common_requirements,
+                    "required_files": support_core_files,
+                    "module_pages": [],
+                },
+            }
+        )
     for module_page in codegen_requirements.get("module_pages", []):
         batches.append(
             {
@@ -186,41 +221,56 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
 
 def normalize_prd_summary_with_plan_seed(prd_summary: dict, plan_seed: dict) -> dict:
     normalized = dict(prd_summary or {})
-    generic_modules = {"首页概览", "数据管理", "流程管理", "报表中心", "系统设置", "首页", "概览仪表盘"}
-    current_modules = [str(item).strip() for item in normalized.get("core_modules") or [] if str(item).strip()]
-    current_routes = [str(item).strip() for item in normalized.get("required_pages") or [] if str(item).strip()]
-    current_roles = [str(item).strip() for item in normalized.get("user_roles") or [] if str(item).strip()]
-
-    valid_app_types = {"admin_web", "desktop_client"}
-    if normalized.get("app_type") not in valid_app_types:
-        normalized["app_type"] = plan_seed.get("app_type") or "admin_web"
-
-    should_reset_modules = (
-        not current_modules
-        or sum(item in generic_modules for item in current_modules) >= max(2, len(current_modules) - 1)
+    normalized["raw_user_request"] = dict(
+        normalized.get("raw_user_request") or plan_seed.get("raw_user_request") or {}
     )
-    should_reset_routes = not current_routes or "/data-list" in current_routes or "/workflow" in current_routes
+    normalized["source_of_truth"] = "raw_user_request"
 
-    if plan_seed.get("preset_key") == "media" and current_modules:
-        expected_modules = set(plan_seed.get("core_modules") or [])
-        themed_tokens = ("剧", "演员", "内容", "评论", "排期", "投放", "数据", "审核", "标签", "选角", "播放")
-        overlap = sum(item in expected_modules for item in current_modules)
-        themed_count = sum(any(token in item for token in themed_tokens) for item in current_modules)
-        duplicate_routes = len(set(current_routes)) < len(current_routes) if current_routes else True
-        if overlap < max(2, min(3, len(expected_modules) - 1)):
-            should_reset_modules = True
-        if duplicate_routes or themed_count < max(2, len(current_modules) - 1):
-            should_reset_routes = True
-        if should_reset_modules:
-            should_reset_routes = True
+    def _dedupe_str_list(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in items:
+            value = str(item).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
 
-    if should_reset_modules:
-        normalized["core_modules"] = list(plan_seed["core_modules"])
-    if should_reset_routes:
-        normalized["required_pages"] = list(plan_seed["required_pages"])
-    if not current_roles or current_roles in (["admin"], ["admin", "operator"]):
-        normalized["user_roles"] = list(plan_seed["user_roles"])
+    app_type_aliases = {
+        "web": "admin_web",
+        "admin": "admin_web",
+        "admin_web": "admin_web",
+        "desktop": "desktop_client",
+        "desktop_client": "desktop_client",
+        "client": "desktop_client",
+        "workstation": "desktop_client",
+    }
+    normalized_app_type = app_type_aliases.get(str(normalized.get("app_type") or "").strip().lower(), "")
+    normalized["app_type"] = normalized_app_type or plan_seed.get("app_type") or "admin_web"
 
+    current_modules = _dedupe_str_list(list(normalized.get("core_modules") or []))
+    current_routes = _dedupe_str_list(list(normalized.get("required_pages") or []))
+    current_roles = _dedupe_str_list(list(normalized.get("user_roles") or []))
+    current_entities = _dedupe_str_list(list(normalized.get("core_entities") or []))
+
+    if not current_modules:
+        current_modules = list(plan_seed.get("core_modules") or [])
+    if not current_routes:
+        current_routes = list(plan_seed.get("required_pages") or [])
+    if not current_roles:
+        current_roles = list(plan_seed.get("user_roles") or [])
+    if not current_entities:
+        current_entities = list(plan_seed.get("core_entities") or [])
+
+    normalized["core_modules"] = current_modules
+    normalized["required_pages"] = current_routes
+    normalized["user_roles"] = current_roles
+    normalized["core_entities"] = current_entities
+    if not str(normalized.get("scene") or "").strip():
+        normalized["scene"] = plan_seed.get("scene") or ""
+    if not str(normalized.get("industry_scope") or "").strip():
+        normalized["industry_scope"] = plan_seed.get("industry_scope") or ""
     return normalized
 
 
@@ -303,6 +353,461 @@ def hydrate_missing_files_from_template(
     return hydrated
 
 
+def _json_text(value: str) -> str:
+    return json.dumps(str(value or ""), ensure_ascii=False)
+
+
+def _synthesize_support_runtime_files(
+    generated_files: dict[str, str],
+    profile: dict,
+    required_files: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+    product_name = str(profile.get("product_name") or "业务平台").strip() or "业务平台"
+    version = str(profile.get("version") or "V1.0").strip() or "V1.0"
+
+    support_files = {
+        "frontend/src/services/api.ts": """export interface ApiResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+}
+
+export async function request<T = unknown>(payload: T): Promise<ApiResult<T>> {
+  return { success: true, data: payload };
+}
+
+export const api = {
+  login: async (username: string, _password: string) =>
+    request({
+      token: "demo-token",
+      user: {
+        name: username || "管理员",
+        role: "管理员",
+      },
+    }),
+};
+""",
+        "frontend/src/types/constants.ts": (
+            f"export const APP_NAME = {_json_text(product_name)};\n"
+            f"export const APP_VERSION = {_json_text(version)};\n"
+            "export const DEMO_USERNAME = 'admin';\n"
+            "export const DEMO_PASSWORD = 'admin123';\n"
+        ),
+        "frontend/src/types/models.ts": """export interface DemoUser {
+  name: string;
+  role: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: DemoUser;
+}
+
+export interface ApiResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+}
+""",
+    }
+
+    for relative_path, content in support_files.items():
+        if relative_path not in required_files:
+            continue
+        if str(synthesized.get(relative_path, "")).strip():
+            continue
+        synthesized[relative_path] = content
+        repaired_paths.append(relative_path)
+
+    return synthesized, repaired_paths
+
+
+def _build_module_route_specs(profile: dict, generated_files: dict[str, str]) -> list[dict[str, str | bool]]:
+    route_specs: list[dict[str, str | bool]] = []
+    seen_routes: set[str] = set()
+    for index, module in enumerate(profile.get("modules", []), start=1):
+        raw_route = str(module.get("route") or "").strip()
+        route = raw_route or f"/module-{index}"
+        if route in seen_routes:
+            continue
+        seen_routes.add(route)
+        source = module.get("route") or module.get("key") or module.get("title") or route
+        component_name = f"{_camel_name(str(source))}Page"
+        file_path = f"frontend/src/pages/{component_name}.tsx"
+        route_specs.append(
+            {
+                "route": route,
+                "title": str(module.get("title") or f"业务模块{index}").strip() or f"业务模块{index}",
+                "description": str(module.get("description") or "").strip(),
+                "component_name": component_name,
+                "has_component": bool(str(generated_files.get(file_path, "")).strip()),
+            }
+        )
+    return route_specs
+
+
+def _synthesize_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
+    route_specs = _build_module_route_specs(profile, generated_files)
+    import_lines = [
+        "import React, { useEffect, useMemo, useState } from 'react';",
+        "import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';",
+        "import { Button, Layout, Menu, Space, Tag, Typography } from 'antd';",
+        "import { APP_PROFILE } from './generated/appProfile';",
+        "import Login from './pages/Login';",
+        "import Dashboard from './pages/Dashboard';",
+    ]
+    imported_components: set[str] = set()
+    for spec in route_specs:
+        component_name = str(spec["component_name"])
+        if not spec["has_component"] or component_name in imported_components:
+            continue
+        import_lines.append(f"import {component_name} from './pages/{component_name}';")
+        imported_components.add(component_name)
+
+    module_items = []
+    for spec in route_specs:
+        component_expr = f"<{spec['component_name']} />" if spec["has_component"] else "<Dashboard />"
+        description = _json_text(str(spec["description"]))
+        module_items.append(
+            "  { key: "
+            + _json_text(str(spec["route"]))
+            + ", label: "
+            + _json_text(str(spec["title"]))
+            + ", description: "
+            + description
+            + ", element: "
+            + component_expr
+            + " },"
+        )
+    module_items_text = "\n".join(module_items) if module_items else "  // 当前任务没有额外模块页时，保留空数组。"
+    template = """
+
+const { Header, Sider, Content } = Layout;
+
+type DemoAuth = {
+  token?: string;
+  user?: {
+    name?: string;
+    role?: string;
+  };
+};
+
+const MODULE_ITEMS = [
+__MODULE_ITEMS__
+];
+
+function readDemoAuth(): DemoAuth | null {
+  const raw = localStorage.getItem('ipright_demo_auth');
+  if (raw) {
+    try {
+      return JSON.parse(raw) as DemoAuth;
+    } catch (_error) {
+      localStorage.removeItem('ipright_demo_auth');
+    }
+  }
+  const token = localStorage.getItem('token') || '';
+  const userRaw = localStorage.getItem('user');
+  if (token || userRaw) {
+    let user: DemoAuth['user'] = undefined;
+    if (userRaw) {
+      try {
+        user = JSON.parse(userRaw);
+      } catch (_error) {
+        user = { name: '管理员', role: '管理员' };
+      }
+    }
+    return { token: token || 'demo-token', user: user || { name: '管理员', role: '管理员' } };
+  }
+  return null;
+}
+
+function clearDemoAuth() {
+  localStorage.removeItem('ipright_demo_auth');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+}
+
+export default function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [auth, setAuth] = useState<DemoAuth | null>(() => readDemoAuth());
+
+  useEffect(() => {
+    setAuth(readDemoAuth());
+  }, [location.pathname]);
+
+  const menuItems = useMemo(
+    () => [
+      { key: '/dashboard', label: '系统首页' },
+      ...MODULE_ITEMS.map((item) => ({ key: item.key, label: item.label })),
+    ],
+    []
+  );
+
+  const selectedKey = useMemo(() => {
+    const matched = menuItems.find((item) => {
+      const key = String(item.key);
+      return location.pathname === key || location.pathname.startsWith(key + '/');
+    });
+    return String(matched?.key || '/dashboard');
+  }, [location.pathname, menuItems]);
+
+  const productName = APP_PROFILE?.product_name || __PRODUCT_NAME__;
+  const currentScene = APP_PROFILE?.scene || __SCENE__;
+  const currentAppType = APP_PROFILE?.app_type || __APP_TYPE__;
+  const roleLabel = auth?.user?.role || '管理员';
+
+  if (location.pathname === '/login') {
+    if (auth?.token) {
+      return <Navigate to="/dashboard" replace />;
+    }
+    return (
+      <Login
+        onLogin={() => {
+          const nextAuth = readDemoAuth();
+          if (nextAuth?.token) {
+            setAuth(nextAuth);
+            navigate('/dashboard', { replace: true });
+          }
+        }}
+      />
+    );
+  }
+
+  if (!auth?.token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <Layout style={{ minHeight: '100vh', fontFamily: `__FONT_STACK__` }}>
+      <Sider width={250} theme="dark">
+        <div style={{ padding: '20px 18px 12px' }}>
+          <Typography.Title level={4} style={{ margin: 0, color: '#fff' }}>
+            {productName}
+          </Typography.Title>
+          <Typography.Paragraph style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.7)' }}>
+            {currentScene}
+          </Typography.Paragraph>
+        </div>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={menuItems}
+          onClick={({ key }) => navigate(String(key))}
+        />
+      </Sider>
+      <Layout>
+        <Header
+          style={{
+            background: '#fff',
+            padding: '0 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: '1px solid #f0f0f0',
+          }}
+        >
+          <Space size={12}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {productName}
+            </Typography.Title>
+            <Tag color="blue">{currentAppType}</Tag>
+            <Tag color="geekblue">{roleLabel}</Tag>
+          </Space>
+          <Button
+            onClick={() => {
+              clearDemoAuth();
+              setAuth(null);
+              navigate('/login', { replace: true });
+            }}
+          >
+            退出登录
+          </Button>
+        </Header>
+        <Content style={{ padding: 20, background: '#f5f7fa' }}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            {MODULE_ITEMS.map((item) => (
+              <Route key={item.key} path={item.key} element={item.element} />
+            ))}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Content>
+      </Layout>
+    </Layout>
+  );
+}
+"""
+    return (
+        "\n".join(import_lines)
+        + template.replace("__MODULE_ITEMS__", module_items_text)
+        .replace("__PRODUCT_NAME__", _json_text(str(profile.get("product_name") or "业务平台")))
+        .replace("__SCENE__", _json_text(str(profile.get("scene") or "业务分析与协同")))
+        .replace("__APP_TYPE__", _json_text(str(profile.get("app_type") or "admin_web")))
+        .replace("__FONT_STACK__", FRONTEND_UI_FONT_STACK)
+    )
+
+
+def _synthesize_dashboard_tsx(profile: dict) -> str:
+    template = """import React from 'react';
+import { Card, Col, List, Row, Space, Statistic, Tag, Typography } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const metrics = Array.isArray(APP_PROFILE?.dashboard_metrics) ? APP_PROFILE.dashboard_metrics.slice(0, 4) : [];
+  const modules = Array.isArray(APP_PROFILE?.modules) ? APP_PROFILE.modules.slice(0, 6) : [];
+  const roles = Array.isArray(APP_PROFILE?.user_roles) && APP_PROFILE.user_roles.length
+    ? APP_PROFILE.user_roles
+    : __ROLES__;
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card>
+        <Typography.Title level={3} style={{ marginTop: 0 }}>
+          系统首页
+        </Typography.Title>
+        <Typography.Paragraph>
+          {APP_PROFILE?.product_name || __PRODUCT_NAME__}
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
+          {APP_PROFILE?.scene || __SCENE__}
+        </Typography.Paragraph>
+        <Space wrap>
+          {roles.map((role: string) => (
+            <Tag key={role} color="blue">
+              {role}
+            </Tag>
+          ))}
+        </Space>
+      </Card>
+
+      <Row gutter={[16, 16]}>
+        {(metrics.length ? metrics : [{ title: '核心指标', value: modules.length || 1 }, { title: '模块数量', value: modules.length || 1 }]).map((item: any, index: number) => (
+          <Col span={12} key={index}>
+            <Card>
+              <Statistic title={item.title || `指标${index + 1}`} value={item.value ?? item.metric ?? index + 1} />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      <Card title="业务模块概览">
+        <List
+          dataSource={modules.length ? modules : [{ title: '工作台总览', description: '可继续补充模块页内容。' }]}
+          renderItem={(item: any) => (
+            <List.Item>
+              <List.Item.Meta
+                title={item.title || '工作台模块'}
+                description={item.description || item.primary_action || '用于展示当前任务的关键业务信息。'}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+    </Space>
+  );
+}
+"""
+    return (
+        template.replace("__ROLES__", json.dumps(list(profile.get("user_roles") or ["管理员"]), ensure_ascii=False))
+        .replace("__PRODUCT_NAME__", _json_text(str(profile.get("product_name") or "业务平台")))
+        .replace("__SCENE__", _json_text(str(profile.get("scene") or "业务分析与协同")))
+    )
+
+
+def _synthesize_login_tsx(profile: dict) -> str:
+    template = """import React, { useState } from 'react';
+import { Button, Card, Input, Space, Typography } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+type LoginProps = {
+  onLogin?: () => void;
+};
+
+export default function Login({ onLogin }: LoginProps) {
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('admin123');
+
+  const handleSubmit = () => {
+    const auth = {
+      token: 'demo-token',
+      user: {
+        name: username || '管理员',
+        role: '管理员',
+      },
+    };
+    localStorage.setItem('ipright_demo_auth', JSON.stringify(auth));
+    localStorage.setItem('token', auth.token);
+    localStorage.setItem('user', JSON.stringify(auth.user));
+    onLogin?.();
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #0f172a, #1d4ed8)',
+        fontFamily: `__FONT_STACK__`,
+      }}
+    >
+      <Card style={{ width: 420, borderRadius: 16 }}>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div>
+            <Typography.Title level={3} style={{ marginBottom: 8 }}>
+              登录
+            </Typography.Title>
+            <Typography.Paragraph type="secondary">
+              {APP_PROFILE?.product_name || __PRODUCT_NAME__}
+            </Typography.Paragraph>
+          </div>
+          <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="用户名" />
+          <Input.Password value={password} onChange={(event) => setPassword(event.target.value)} placeholder="密码" />
+          <Button type="primary" block onClick={handleSubmit}>
+            登录
+          </Button>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            演示账号：admin / admin123
+          </Typography.Paragraph>
+        </Space>
+      </Card>
+    </div>
+  );
+}
+"""
+    return (
+        template.replace("__FONT_STACK__", FRONTEND_UI_FONT_STACK)
+        .replace("__PRODUCT_NAME__", _json_text(str(profile.get("product_name") or "业务平台")))
+    )
+
+
+def synthesize_recoverable_core_files(
+    generated_files: dict[str, str],
+    invalid_core_paths: list[str],
+    profile: dict,
+) -> tuple[dict[str, str], list[str]]:
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+    builders = {
+        "frontend/src/App.tsx": lambda: _synthesize_app_tsx(profile, synthesized),
+        "frontend/src/pages/Dashboard.tsx": lambda: _synthesize_dashboard_tsx(profile),
+        "frontend/src/pages/Login.tsx": lambda: _synthesize_login_tsx(profile),
+    }
+    for relative_path in invalid_core_paths:
+        builder = builders.get(relative_path)
+        if not builder:
+            continue
+        synthesized[relative_path] = builder()
+        repaired_paths.append(relative_path)
+    return synthesized, repaired_paths
+
+
 def repair_invalid_core_files(
     app_root: str,
     generated_files: dict[str, str],
@@ -321,24 +826,39 @@ def repair_invalid_core_files(
         if str(module.get("route", "")).strip()
     ]
     requires_route_shell = bool(expected_module_imports or expected_module_routes)
+    allowed_page_imports = {"Login", "Dashboard", *expected_module_imports}
+    required_page_import_lines = [
+        f"import {component_name} from './pages/{component_name}';"
+        for component_name in expected_module_imports
+    ]
 
     def _contains_any(content: str, tokens: list[str]) -> bool:
         return any(token in content for token in tokens if token)
+
+    def _references_unknown_page_import(content: str) -> bool:
+        imported_pages = set(
+            match.group(1)
+            for match in re.finditer(
+                r"import\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\s+['\"]\.\/pages\/[A-Za-z_][A-Za-z0-9_]*['\"]",
+                content,
+            )
+        )
+        return any(name not in allowed_page_imports for name in imported_pages)
 
     validators = {
         "frontend/src/App.tsx": lambda content: (
             "PlaceholderPage" not in content
             and "模块开发中" not in content
+            and "ModuleShell" not in content
+            and not _references_unknown_page_import(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
             and (
                 not requires_route_shell
                 or (
                     _contains_any(content, ["Routes", "Route", "useRoutes"])
-                    and (
-                        _contains_any(content, expected_module_imports)
-                        or _contains_any(content, expected_module_routes)
-                    )
+                    and all(import_line in content for import_line in required_page_import_lines)
+                    and _contains_any(content, expected_module_routes)
                 )
             )
         ),
@@ -378,6 +898,43 @@ def repair_invalid_core_files(
     return repaired, invalid_paths
 
 
+def repair_invalid_module_pages(
+    generated_files: dict[str, str],
+    profile: dict,
+) -> tuple[dict[str, str], list[str]]:
+    repaired = dict(generated_files)
+    repaired_paths: list[str] = []
+
+    for module in profile.get("modules", []):
+        component_name = f"{_camel_name(module.get('route', module['key']))}Page"
+        relative_path = f"frontend/src/pages/{component_name}.tsx"
+        content = str(repaired.get(relative_path, "") or "")
+        row_tokens = [
+            str(cell).strip()
+            for row in list(module.get("rows", []))[:2]
+            for cell in list(row)[:3]
+            if str(cell).strip()
+        ]
+        header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
+        must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
+        is_valid = (
+            bool(content)
+            and "generated/appProfile" in content
+            and "APP_PROFILE" in content
+            and "ModuleShell" not in content
+            and "模块开发中" not in content
+            and "const mockData" not in content
+            and "mockData:" not in content
+            and must_have_task_data
+        )
+        if is_valid:
+            continue
+        repaired[relative_path] = _render_module_page(module)
+        repaired_paths.append(relative_path)
+
+    return repaired, repaired_paths
+
+
 def _preview_generated_content(content: str, limit: int = 320) -> str:
     snippet = " ".join((content or "").split())
     if len(snippet) <= limit:
@@ -396,6 +953,7 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
         hints.append(
             "App.tsx 必须导入并使用 ./generated/appProfile 中的 APP_PROFILE，不能只写静态文案。"
         )
+        hints.append("App.tsx 只能引用 Login、Dashboard 和当前任务 required_files 中明确要求的模块页面，不能额外导入不存在的页面组件。")
         if module_routes:
             hints.append(
                 "App.tsx 必须使用 Routes/Route 或 useRoutes 显式挂接这些模块路由: "
@@ -530,12 +1088,19 @@ async def generate_task_app_code(
             "generated_paths": sorted(generated_files.keys()),
             "batches": batch_reports,
             "repaired_core_paths": [],
+            "repaired_module_paths": [],
             "template_ui_fallback_used": False,
+            "repaired_support_paths": [],
         }
         report.update(extra)
         return report
 
     generated_files = hydrate_missing_files_from_template(app_root, generated_files, codegen_requirements["required_files"])
+    generated_files, repaired_support_paths = _synthesize_support_runtime_files(
+        generated_files,
+        profile,
+        codegen_requirements["required_files"],
+    )
     generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
     if invalid_core_paths and batches:
         llm = get_llm_client()
@@ -598,21 +1163,59 @@ async def generate_task_app_code(
                 )
                 if not invalid_core_paths:
                     break
+    repaired_core_paths: list[str] = []
+    if invalid_core_paths:
+        generated_files, repaired_core_paths = synthesize_recoverable_core_files(
+            generated_files,
+            invalid_core_paths,
+            profile,
+        )
+        if repaired_core_paths:
+            generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
+            batch_reports.append(
+                {
+                    "batch": "core_structural_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_core_paths),
+                    "generated_paths": sorted(repaired_core_paths),
+                    "fallback_to_template": bool(invalid_core_paths),
+                    "error": (
+                        "still invalid after structural fallback: " + ", ".join(invalid_core_paths)
+                        if invalid_core_paths
+                        else None
+                    ),
+                }
+            )
     if invalid_core_paths:
         invalid_core_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
             for relative_path in invalid_core_paths
         }
         return _build_codegen_report(
+            repaired_core_paths=sorted(repaired_core_paths),
+            repaired_support_paths=sorted(repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
             invalid_core_paths=invalid_core_paths,
             invalid_core_previews=invalid_core_previews,
         ), (
             "App code generation failed: missing or invalid LLM-generated core frontend files: "
             + ", ".join(invalid_core_paths)
         )
+    generated_files, repaired_module_paths = repair_invalid_module_pages(generated_files, profile)
     generated_files = normalize_generated_frontend_files(generated_files)
     applied, apply_error = apply_generated_code_bundle(app_root, generated_files, codegen_requirements["required_files"])
     if not applied:
-        return _build_codegen_report(apply_error=apply_error), f"App code generation failed: {apply_error}"
+        return _build_codegen_report(
+            repaired_core_paths=sorted(repaired_core_paths),
+            repaired_module_paths=sorted(repaired_module_paths),
+            repaired_support_paths=sorted(repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
+            apply_error=apply_error,
+        ), f"App code generation failed: {apply_error}"
 
-    return _build_codegen_report(), None
+    return _build_codegen_report(
+        repaired_core_paths=sorted(repaired_core_paths),
+        repaired_module_paths=sorted(repaired_module_paths),
+        repaired_support_paths=sorted(repaired_support_paths),
+        template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
+    ), None

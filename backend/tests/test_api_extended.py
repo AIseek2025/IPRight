@@ -19,7 +19,7 @@ os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine
-from app.models.db import Artifact, Build, Screenshot, Task
+from app.models.db import Artifact, Build, Screenshot, Task, TaskEvent
 from app.services import TaskService
 
 
@@ -210,6 +210,42 @@ class TestTaskLifecycle:
             assert build.status == "completed"
             assert build.current_stage == "completed"
             assert build.finished_at is not None
+
+    async def test_task_service_log_event_visible_in_dashboard_timeline(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "进度日志测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            service = TaskService(session)
+            await service.log_event(
+                task_id=task.id,
+                build_id=task.active_build_id,
+                event_type="stage_progress",
+                title="应用代码已生成",
+                detail="已完成核心页面与运行清单写入",
+                payload_json={"generated_file_count": 9},
+            )
+            await session.commit()
+
+        async with get_session_factory()() as session:
+            events = (
+                await session.execute(
+                    select(TaskEvent)
+                    .where(TaskEvent.task_id == uuid.UUID(task_id))
+                    .order_by(TaskEvent.created_at.desc())
+                )
+            ).scalars().all()
+            assert any(event.title == "应用代码已生成" for event in events)
+
+        dashboard_resp = await async_client.get(f"/api/v1/tasks/{task_id}/dashboard")
+        assert dashboard_resp.status_code == 200
+        timeline = dashboard_resp.json()["data"]["timeline"]
+        assert any(item["title"] == "应用代码已生成" for item in timeline)
 
     async def test_get_dashboard(self, async_client):
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "dashboard测试"})

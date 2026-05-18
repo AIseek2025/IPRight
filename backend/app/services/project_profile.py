@@ -83,6 +83,67 @@ def _build_module(
     }
 
 
+def _contains_any(text: str, tokens: list[str] | tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _has_power_dispatch_context(text: str) -> bool:
+    return _contains_any(
+        text,
+        (
+            "电力",
+            "电网",
+            "负荷",
+            "输电",
+            "配电",
+            "变电",
+            "变电站",
+            "调度令",
+            "调度指令",
+            "工作票",
+            "操作票",
+            "停电",
+            "复电",
+            "机组",
+            "发电",
+            "并网",
+            "潮流",
+        ),
+    )
+
+
+def _has_logistics_context(text: str) -> bool:
+    return _contains_any(
+        text,
+        (
+            "物流",
+            "运单",
+            "车队",
+            "司机",
+            "配送",
+            "仓配",
+            "签收",
+            "回单",
+            "分拨",
+            "在途",
+        ),
+    )
+
+
+def _build_raw_user_request(
+    keyword: str,
+    product_name: str,
+    industry: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    return {
+        "keyword": _clean_phrase(str(keyword or "")),
+        "product_name": _clean_phrase(str(product_name or "")),
+        "industry": _clean_phrase(str(industry or "")),
+        "notes": _clean_phrase(str(notes or "")),
+    }
+
+
 def _marketing_preset() -> DomainPreset:
     return DomainPreset(
         key="marketing",
@@ -233,6 +294,37 @@ def _finance_preset() -> DomainPreset:
             _build_module("系统设置", "/settings", "⚙️"),
         ],
         industry_scope="投研分析、量化研究、交易执行、风控预警、合规审计",
+        dev_tools="Python 3.11、FastAPI、React、TypeScript、Vite、python-docx、PostgreSQL",
+        support_env="主流 Chromium 内核浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite",
+    )
+
+
+def _power_dispatch_preset() -> DomainPreset:
+    return DomainPreset(
+        key="power_dispatch",
+        name="电力调度",
+        scene="电网运行监视、负荷调度、检修协同与故障处置",
+        short_name="电力调度",
+        software_category="电力调度管理软件",
+        core_entities=["电网线路", "变电站", "负荷曲线", "检修工作票", "调度指令"],
+        user_roles=["管理员", "调度长", "值班调度员", "检修协调员", "运行分析员"],
+        dashboard_metrics=[
+            {"title": "受控站点", "value": "84", "color": "#1677ff"},
+            {"title": "调度指令", "value": "12", "color": "#13c2c2"},
+            {"title": "越限告警", "value": "5", "color": "#f5222d"},
+            {"title": "待复电任务", "value": "3", "color": "#722ed1"},
+        ],
+        modules=[
+            _build_module("电网运行总览", "/grid-overview", "⚡"),
+            _build_module("负荷调度中心", "/load-dispatch", "🧭"),
+            _build_module("发电计划协同", "/generation-plans", "🔋"),
+            _build_module("输变线路监测", "/transmission-lines", "🗼"),
+            _build_module("检修工作票中心", "/work-tickets", "🧾"),
+            _build_module("告警与故障联动", "/faults", "🚨"),
+            _build_module("调度日志与指令", "/dispatch-orders", "📜"),
+            _build_module("系统设置", "/settings", "⚙️"),
+        ],
+        industry_scope="电网调度、负荷监视、输变线路监测、检修协同、故障处置",
         dev_tools="Python 3.11、FastAPI、React、TypeScript、Vite、python-docx、PostgreSQL",
         support_env="主流 Chromium 内核浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite",
     )
@@ -436,6 +528,7 @@ def _select_preset(keyword: str, product_name: str, industry: str | None) -> Dom
     preset_tokens: list[tuple[DomainPreset, list[str]]] = [
         (_media_preset(), ["短剧", "剧集", "演员", "影视", "片单", "内容平台", "评论", "番剧", "节目"]),
         (_marketing_preset(), ["广告", "投放", "kol", "达人", "小红书", "营销", "种草", "流量", "品牌"]),
+        (_power_dispatch_preset(), ["电力调度", "电网调度", "电力", "电网", "负荷", "变电", "输电", "配电", "调度令", "调度指令", "工作票", "停电", "复电", "机组", "发电", "并网"]),
         (_logistics_preset(), ["物流", "调度", "运单", "车队", "司机", "配送", "线路", "签收", "仓配", "在途"]),
         (_supply_chain_finance_preset(), ["供应链金融", "融资", "授信", "保理", "应收", "敞口", "核心企业", "资金", "贸易背景", "金融"]),
         (_supply_chain_preset(), ["供应链", "采购", "仓储", "库存", "履约", "供应商", "订单", "对账"]),
@@ -461,8 +554,15 @@ def _select_preset(keyword: str, product_name: str, industry: str | None) -> Dom
                 score += 2
             if any(token in source for token in ["金融", "融资", "授信", "敞口", "资金", "分析", "监控"]):
                 score += 4
+        if preset.key == "power_dispatch":
+            if _has_power_dispatch_context(source):
+                score += 6
+            if any(token in source for token in ["调度", "值班", "负荷", "复电", "检修", "电网运行"]):
+                score += 3
         if preset.key == "logistics":
-            if any(token in source for token in ["调度", "车队", "司机", "运单", "线路", "签收"]):
+            if _has_power_dispatch_context(source):
+                score -= 6
+            elif any(token in source for token in ["调度", "车队", "司机", "运单", "线路", "签收"]):
                 score += 3
         if score > best_score:
             best_score = score
@@ -816,6 +916,16 @@ def _build_visual_profile(
 
 
 def _module_kind(title: str) -> str:
+    if any(token in title for token in ["负荷调度", "电力调度", "调度日志", "调度指令", "调度令"]):
+        return "power_dispatch"
+    if any(token in title for token in ["电网运行", "输变线路", "线路监测", "输电线路", "配电线路", "变电站", "潮流"]):
+        return "grid_monitor"
+    if any(token in title for token in ["发电计划", "机组", "并网", "新能源", "功率预测"]):
+        return "generation"
+    if any(token in title for token in ["检修", "工作票", "操作票", "停复电"]):
+        return "work_tickets"
+    if any(token in title for token in ["故障联动", "故障处置", "停电", "复电"]) and "告警" in title:
+        return "power_faults"
     if any(token in title for token in ["授信", "主体"]):
         return "credit_subjects"
     if any(token in title for token in ["融资", "放款", "保理"]):
@@ -867,6 +977,11 @@ def _module_kind(title: str) -> str:
 
 def _module_route_hint(title: str) -> str | None:
     mapping = [
+        (["负荷调度", "电力调度", "调度日志", "调度指令", "调度令"], "/load-dispatch"),
+        (["电网运行", "输变线路", "线路监测", "输电线路", "配电线路", "变电站", "潮流"], "/transmission-lines"),
+        (["发电计划", "机组", "并网", "新能源"], "/generation-plans"),
+        (["检修", "工作票", "操作票", "停复电"], "/work-tickets"),
+        (["故障联动", "故障处置", "停电", "复电"], "/faults"),
         (["授信", "主体"], "/credit-subjects"),
         (["融资", "放款", "保理"], "/financing"),
         (["敞口", "资金", "头寸"], "/exposure"),
@@ -926,6 +1041,16 @@ def _module_route(title: str, index: int, fallback_route: str, page_routes: list
 
 
 def _module_headers(kind: str) -> list[str]:
+    if kind == "power_dispatch":
+        return ["指令编号", "调度单元", "负荷水平", "执行状态", "值班调度员", "更新时间"]
+    if kind == "grid_monitor":
+        return ["线路/站点编号", "线路/站点名称", "运行状态", "越限等级", "责任班组", "更新时间"]
+    if kind == "generation":
+        return ["计划编号", "机组/电源", "出力目标", "并网状态", "计划周期", "更新时间"]
+    if kind == "work_tickets":
+        return ["票号", "检修对象", "工作类型", "许可状态", "计划复电时间", "更新时间"]
+    if kind == "power_faults":
+        return ["事件编号", "故障主题", "影响范围", "处置阶段", "恢复状态", "发现时间"]
     if kind == "credit_subjects":
         return ["主体编号", "核心企业/主体", "授信额度", "评级状态", "预警级别", "更新时间"]
     if kind == "financing":
@@ -976,6 +1101,16 @@ def _module_headers(kind: str) -> list[str]:
 
 
 def _module_primary_action(title: str) -> str:
+    if any(token in title for token in ["负荷调度", "电力调度", "调度指令", "调度令"]):
+        return "下发调度指令"
+    if any(token in title for token in ["电网运行", "输变线路", "线路监测", "变电站", "潮流"]):
+        return "查看运行断面"
+    if any(token in title for token in ["发电计划", "机组", "并网", "新能源"]):
+        return "调整发电计划"
+    if any(token in title for token in ["检修", "工作票", "操作票", "停复电"]):
+        return "签发检修工作票"
+    if any(token in title for token in ["故障联动", "故障处置", "停电", "复电"]) and "告警" in title:
+        return "发起故障联动"
     if any(token in title for token in ["授信", "主体"]):
         return "新建授信主体"
     if any(token in title for token in ["融资", "放款", "保理"]):
@@ -1033,6 +1168,16 @@ def _module_primary_action(title: str) -> str:
 
 def _module_filter(title: str, focus_terms: list[str]) -> str:
     focus = "/".join(focus_terms[:2]) or "关键字/负责人/状态"
+    if any(token in title for token in ["负荷调度", "电力调度", "调度指令", "调度令"]):
+        return "搜索指令编号 / 调度单元 / 执行状态"
+    if any(token in title for token in ["电网运行", "输变线路", "线路监测", "变电站", "潮流"]):
+        return "搜索站点名称 / 线路名称 / 越限等级"
+    if any(token in title for token in ["发电计划", "机组", "并网", "新能源"]):
+        return "搜索计划编号 / 机组名称 / 并网状态"
+    if any(token in title for token in ["检修", "工作票", "操作票", "停复电"]):
+        return "搜索票号 / 检修对象 / 许可状态"
+    if any(token in title for token in ["故障联动", "故障处置", "停电", "复电"]) and "告警" in title:
+        return "搜索事件编号 / 影响范围 / 恢复状态"
     if any(token in title for token in ["授信", "主体"]):
         return "搜索主体编号 / 企业名称 / 评级状态"
     if any(token in title for token in ["融资", "放款", "保理"]):
@@ -1080,6 +1225,36 @@ def _module_rows(
     role_a = roles[0] if roles else "管理员"
     role_b = roles[1] if len(roles) > 1 else role_a
     role_c = roles[2] if len(roles) > 2 else role_b
+    if kind == "power_dispatch":
+        return [
+            [f"{base_code}-181", "华东主网", "78%", "待执行", role_a, "2026-05-02"],
+            [f"{base_code}-182", "苏南断面", "82%", "执行中", role_b, "2026-05-01"],
+            [f"{base_code}-183", "沿海新能源汇集", "64%", "已完成", role_c, "2026-04-30"],
+        ]
+    if kind == "grid_monitor":
+        return [
+            [f"{base_code}-191", "500kV 东枢纽变电站", "正常", "无越限", role_a, "2026-05-02"],
+            [f"{base_code}-192", "苏中北环输电线", "重载", "一级告警", role_b, "2026-05-01"],
+            [f"{base_code}-193", "滨江配电联络线", "检修切换", "需关注", role_c, "2026-04-30"],
+        ]
+    if kind == "generation":
+        return [
+            [f"{base_code}-201", "1号燃机机组", "420MW", "并网运行", "日内计划", "2026-05-02"],
+            [f"{base_code}-202", "海上风电场 A 区", "260MW", "计划调整中", "滚动计划", "2026-05-01"],
+            [f"{base_code}-203", "光伏汇集站 B", "180MW", "待并网复核", "次日计划", "2026-04-30"],
+        ]
+    if kind == "work_tickets":
+        return [
+            [f"{base_code}-211", "220kV 江北变电站", "设备检修", "待许可", "2026-05-02 18:00", "2026-05-02"],
+            [f"{base_code}-212", "城西配电线路 3 段", "带电作业", "执行中", "2026-05-01 22:30", "2026-05-01"],
+            [f"{base_code}-213", "沿江输电通道", "消缺复电", "已结束", "2026-04-30 20:00", "2026-04-30"],
+        ]
+    if kind == "power_faults":
+        return [
+            [f"{base_code}-221", "主网断面越限", "华东主网", "应急处置", "待恢复", "2026-05-02 09:20"],
+            [f"{base_code}-222", "变电站保护动作", "苏南片区", "联动核查", "恢复中", "2026-05-01 16:35"],
+            [f"{base_code}-223", "配电线路停电事件", "滨江片区", "已闭环", "已复电", "2026-04-30 11:10"],
+        ]
     if kind == "credit_subjects":
         return [
             [f"{base_code}-111", f"{focus_a}核心企业", "8,000万", "A 级", "关注", "2026-05-02"],
@@ -1227,6 +1402,16 @@ def _module_rows(
 
 def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> str:
     focus = "、".join(focus_terms[:3]) or keyword or title
+    if _module_kind(title) == "power_dispatch":
+        return "调度指令、负荷水平与执行状态"
+    if _module_kind(title) == "grid_monitor":
+        return "站点运行状态、断面越限与责任班组"
+    if _module_kind(title) == "generation":
+        return "机组出力、计划周期与并网状态"
+    if _module_kind(title) == "work_tickets":
+        return "工作票状态、检修对象与计划复电时间"
+    if _module_kind(title) == "power_faults":
+        return "故障事件、影响范围与恢复状态"
     if _module_kind(title) == "credit_subjects":
         return "授信主体、评级结论与授信额度"
     if _module_kind(title) == "financing":
@@ -1282,6 +1467,36 @@ def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> st
 def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_phrase: str) -> list[str]:
     focus = _module_domain_focus(title, keyword, focus_terms)
     kind = _module_kind(title)
+    if kind == "power_dispatch":
+        return [
+            "支持围绕调度单元、负荷水平和执行状态统一查看日内调度指令",
+            "支持按值班调度员、执行状态和负荷区间快速定位重点指令",
+            f"支持{role_phrase}同步调度令、负荷调整结果和执行反馈",
+        ]
+    if kind == "grid_monitor":
+        return [
+            "支持围绕输变线路、站点状态和断面越限统一查看电网运行健康度",
+            "支持按线路名称、越限等级和责任班组快速筛查重点风险",
+            f"支持{role_phrase}共享断面监测结果、处置建议和运行留痕",
+        ]
+    if kind == "generation":
+        return [
+            "支持围绕机组出力、新能源并网和滚动计划统一维护发电计划",
+            "支持按机组、电源类型和计划周期快速定位需调整的计划项",
+            f"支持{role_phrase}同步计划修订、功率目标和并网反馈",
+        ]
+    if kind == "work_tickets":
+        return [
+            "支持围绕检修对象、工作票状态和计划复电时间统一查看检修安排",
+            "支持按票号、许可状态和检修类型筛查待协同事项",
+            f"支持{role_phrase}共享检修许可、停复电进度和安全措施记录",
+        ]
+    if kind == "power_faults":
+        return [
+            "支持围绕越限告警、停电事件和保护动作统一组织故障联动处置",
+            "支持按影响范围、恢复状态和处置阶段快速筛查重点事件",
+            f"支持{role_phrase}同步故障研判、恢复进度和复盘留痕",
+        ]
     if kind == "credit_subjects":
         return [
             "支持围绕核心企业、供应商与渠道主体维护授信额度和评级结果",
@@ -1437,6 +1652,31 @@ def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_ph
 def _module_description(title: str, keyword: str, scene: str, focus_terms: list[str]) -> str:
     focus = _module_domain_focus(title, keyword, focus_terms)
     kind = _module_kind(title)
+    if kind == "power_dispatch":
+        return (
+            f"{title}模块围绕负荷平衡、调度指令和执行反馈组织页面信息，用于支撑{scene}中的日内指令下发与执行跟踪。"
+            f"页面重点展示{focus}，方便调度长和值班调度员快速确认调度动作与执行结果。"
+        )
+    if kind == "grid_monitor":
+        return (
+            f"{title}模块用于统一查看输变线路、关键站点和断面越限状态，帮助团队在{scene}中及时识别运行风险并联动处置。"
+            f"页面重点展示{focus}，便于快速完成运行监视、断面研判和风险升级。"
+        )
+    if kind == "generation":
+        return (
+            f"{title}模块聚焦机组出力、新能源并网和滚动计划编排，用于协调{scene}中的发电计划调整与执行反馈。"
+            f"页面重点展示{focus}，便于统一查看计划目标、修订原因和计划周期。"
+        )
+    if kind == "work_tickets":
+        return (
+            f"{title}模块用于维护检修对象、工作票状态和停复电安排，帮助团队在{scene}中快速完成检修许可、协同确认和闭环留痕。"
+            f"页面重点展示{focus}，便于统一查看工作类型、许可状态和计划复电时间。"
+        )
+    if kind == "power_faults":
+        return (
+            f"{title}模块围绕故障事件、影响范围和恢复进度组织页面信息，用于支撑{scene}中的故障联动、停复电协同和过程复盘。"
+            f"页面重点展示{focus}，方便统一查看事件分级、恢复状态和待办事项。"
+        )
     if kind == "credit_subjects":
         return (
             f"{title}模块用于维护核心企业、上下游主体与授信状态，重点服务于{scene}中的评级复核、额度配置和主体准入。"
@@ -1558,6 +1798,41 @@ def _module_description(title: str, keyword: str, scene: str, focus_terms: list[
 def _module_steps(title: str, primary_action: str, focus_terms: list[str]) -> list[str]:
     focus = _module_domain_focus(title, title, focus_terms)
     kind = _module_kind(title)
+    if kind == "power_dispatch":
+        return [
+            "进入负荷调度页面后先查看指令编号、调度单元、负荷水平和执行状态。",
+            "通过调度单元、值班调度员或执行状态筛选重点指令，确认是否需要调整负荷或补充执行说明。",
+            f"根据业务需要执行“{primary_action}”，同步指令内容、目标出力和执行反馈。",
+            "处理完成后复核执行状态、负荷水平和更新时间，确保调度过程闭环可追踪。",
+        ]
+    if kind == "grid_monitor":
+        return [
+            "进入电网运行页面后先查看站点名称、运行状态、越限等级和责任班组。",
+            "通过线路名称、断面状态或越限等级筛选重点对象，确认是否存在重载、检修切换或风险升级。",
+            f"根据业务需要执行“{primary_action}”，补充运行断面、处置建议和监测结果。",
+            "处理完成后复核运行状态、越限等级和更新时间，确保监视结果可持续跟踪。",
+        ]
+    if kind == "generation":
+        return [
+            "进入发电计划页面后优先查看机组/电源、出力目标、并网状态和计划周期。",
+            "通过机组名称、计划周期或并网状态筛选重点计划，确认是否需要调整出力或修订滚动计划。",
+            f"执行“{primary_action}”或详情处理动作，更新功率目标、修订原因和协同结果。",
+            "处理后复核出力目标、并网状态和更新时间，确保计划变更结果一致可见。",
+        ]
+    if kind == "work_tickets":
+        return [
+            "进入检修工作票页面后先查看票号、检修对象、许可状态和计划复电时间。",
+            "通过票号、工作类型或许可状态筛选重点票据，确认是否存在待许可或待复电事项。",
+            f"根据业务需要执行“{primary_action}”，补充安全措施、停复电安排和协同说明。",
+            "处理完成后复核许可状态、计划复电时间和更新时间，确保检修链路完整可审计。",
+        ]
+    if kind == "power_faults":
+        return [
+            "进入故障联动页面后先查看事件编号、影响范围、处置阶段和恢复状态。",
+            "通过影响范围、事件等级或恢复状态筛选重点事件，确认是否需要联动检修、复电或升级处置。",
+            f"根据业务需要执行“{primary_action}”，补充事件研判、联动记录和恢复进度。",
+            "处理完成后复核恢复状态、处置阶段和更新时间，确保事件处置闭环清晰可追踪。",
+        ]
     if kind == "credit_subjects":
         return [
             "进入授信主体页面后先查看主体编号、授信额度、评级状态和预警级别。",
@@ -1687,6 +1962,16 @@ def _module_steps(title: str, primary_action: str, focus_terms: list[str]) -> li
 
 def _module_business_value(title: str, keyword: str, scene: str) -> str:
     kind = _module_kind(title)
+    if kind == "power_dispatch":
+        return "负荷调度中心将调度指令、执行状态和负荷变化统一呈现，有助于值班调度岗位快速协调电网运行与出力平衡。"
+    if kind == "grid_monitor":
+        return "输变线路监测将关键站点、断面越限和运行状态集中展示，便于团队及时发现运行风险并联动处置。"
+    if kind == "generation":
+        return "发电计划协同把机组出力、新能源并网和计划修订放到同一工作台中，有助于提升计划调整效率和协同一致性。"
+    if kind == "work_tickets":
+        return "检修工作票中心将停复电安排、检修许可和工作票流转集中维护，有助于降低跨班组协同中的信息遗漏风险。"
+    if kind == "power_faults":
+        return "告警与故障联动把故障研判、影响范围和恢复进度串成统一链路，便于团队快速完成停复电协同与复盘留痕。"
     if kind == "credit_subjects":
         return "授信主体管理把核心企业、授信额度和评级结果集中维护，便于风控与授信角色统一判断主体准入和额度策略。"
     if kind == "financing":
@@ -1786,6 +2071,8 @@ def _topic_label(keyword: str, product_name: str) -> str:
 
 def _infer_scene(keyword: str, industry: str | None, module_titles: list[str], preset: DomainPreset) -> str:
     source = " ".join([keyword, industry or "", *module_titles])
+    if _has_power_dispatch_context(source):
+        return "电网运行监视、负荷调度、检修协同与故障处置"
     if any(token in source for token in ["物流", "调度", "运单", "车队", "线路", "签收", "仓配"]):
         return "运单编排、车队调度、线路跟踪与签收回单协同"
     if any(token in source for token in ["金融", "融资", "授信", "敞口", "保理", "资金", "贸易背景", "核心企业"]):
@@ -1864,7 +2151,12 @@ def _ensure_minimum_screenshot_scenarios(
                     "route": module["route"],
                     "actions": [
                         "login_as_admin",
-                        {"action": "fill_input", "target": "搜索", "value": search_value},
+                        {
+                            "action": "fill_input",
+                            "target": "搜索",
+                            "value": search_value,
+                            "optional": True,
+                        },
                     ],
                     "requires_auth": True,
                     "priority": len(scenarios) + 1,
@@ -2015,6 +2307,8 @@ def _build_design_focus(
 
 
 def _architecture_style(preset_key: str, app_type: str, scene: str) -> str:
+    if preset_key == "power_dispatch":
+        return "control_tower"
     if preset_key == "logistics":
         return "dispatch_flow"
     if preset_key == "supply_chain_finance":
@@ -2037,6 +2331,8 @@ def _build_project_dna(
     experience_blueprint: dict,
     visual_profile: dict,
     app_type: str,
+    core_entities: list[str] | None = None,
+    raw_user_request: dict | None = None,
 ) -> dict:
     return {
         "preset_key": preset.key,
@@ -2048,7 +2344,9 @@ def _build_project_dna(
         "interaction_tone": experience_blueprint.get("tone", ""),
         "visual_anchor": visual_profile.get("name", ""),
         "architecture_style": _architecture_style(preset.key, app_type, scene),
-        "domain_entities": list(preset.core_entities[:5]),
+        "domain_entities": list((core_entities or preset.core_entities)[:5]),
+        "source_of_truth": "raw_user_request",
+        "raw_user_request": dict(raw_user_request or {}),
     }
 
 
@@ -2088,11 +2386,16 @@ def build_task_profile(
     product_name: str,
     version: str | None = None,
     industry: str | None = None,
+    notes: str | None = None,
     prd_summary: dict | None = None,
 ) -> dict:
     preset = _select_preset(keyword, product_name, industry)
     version = version or DEFAULT_VERSION
     prd_summary = prd_summary or {}
+    raw_user_request = dict(
+        prd_summary.get("raw_user_request")
+        or _build_raw_user_request(keyword, product_name, industry, notes)
+    )
     app_type = _infer_app_type(keyword, product_name, industry, prd_summary)
     product_code = _product_code(keyword, product_name)
     preset_modules = _preset_modules_for_product(preset, product_code)
@@ -2101,10 +2404,26 @@ def build_task_profile(
         module_titles = [module["title"] for module in preset_modules]
     page_routes = list(prd_summary.get("required_pages") or [])
     roles = list(prd_summary.get("user_roles") or []) or list(preset.user_roles)
+    core_entities = [
+        str(item).strip()
+        for item in (prd_summary.get("core_entities") or [])
+        if str(item).strip()
+    ] or list(preset.core_entities)
     focus_terms = _split_terms(keyword, product_name, industry or "", *module_titles)[:6]
     topic_label = _topic_label(keyword, product_name)
-    scene = _compose_scene(keyword or product_name, product_name, industry, module_titles, preset)
-    industry_scope = _compose_industry_scope(keyword, industry, preset, focus_terms)
+    scene = _clean_phrase(str(prd_summary.get("scene") or "")) or _compose_scene(
+        keyword or product_name,
+        product_name,
+        industry,
+        module_titles,
+        preset,
+    )
+    industry_scope = _clean_phrase(str(prd_summary.get("industry_scope") or "")) or _compose_industry_scope(
+        keyword,
+        industry,
+        preset,
+        focus_terms,
+    )
     experience_blueprint = _pick_experience_blueprint(product_code, preset.key)
     visual_profile = _build_visual_profile(product_code, preset.key, app_type, experience_blueprint)
 
@@ -2158,12 +2477,15 @@ def build_task_profile(
         experience_blueprint=experience_blueprint,
         visual_profile=visual_profile,
         app_type=app_type,
+        core_entities=core_entities,
+        raw_user_request=raw_user_request,
     )
 
     created_date = datetime.now().strftime("%Y年%m月%d日")
     profile = {
         "keyword": keyword,
         "product_name": product_name,
+        "raw_user_request": raw_user_request,
         "topic_label": topic_label,
         "preset_key": preset.key,
         "app_type": app_type,
@@ -2198,8 +2520,9 @@ def build_task_profile(
         "visual_profile": visual_profile,
         "project_dna": project_dna,
         "differentiation_hint": (
-            f"当前任务优先体现{preset.name}领域特征，页面、截图与说明书围绕"
-            f"{'、'.join(focus_terms[:3]) or product_name}展开，不复用通用综合运营骨架。"
+            "当前任务必须以 raw_user_request 中的原始用户输入为唯一主题源，"
+            f"页面、截图与说明书围绕{'、'.join(focus_terms[:3]) or product_name}展开；"
+            "平台画像仅用于补充结构与运行约束，不得改写行业、模块主线或产品定位。"
         ),
         "nav_items": [
             {"path": "/dashboard", "label": "首页", "icon": "📊", "code": _nav_code("/dashboard", "首页", 1)},
@@ -2213,16 +2536,22 @@ def build_task_profile(
                 for idx, module in enumerate(profile_modules)
             ],
         ],
-        "core_entities": preset.core_entities,
+        "core_entities": core_entities,
         "focus_terms": focus_terms,
     }
     return profile
 
 
-def build_plan_seed(keyword: str, product_name: str, industry: str | None = None) -> dict:
+def build_plan_seed(
+    keyword: str,
+    product_name: str,
+    industry: str | None = None,
+    notes: str | None = None,
+) -> dict:
     keyword = _clean_phrase(str(keyword or ""))
     product_name = _clean_phrase(str(product_name or ""))
     industry = _clean_phrase(str(industry or "")) or None
+    raw_user_request = _build_raw_user_request(keyword, product_name, industry, notes)
     preset = _select_preset(keyword, product_name, industry)
     app_type = _infer_app_type(keyword, product_name, industry)
     product_code = _product_code(keyword, product_name)
@@ -2242,8 +2571,12 @@ def build_plan_seed(keyword: str, product_name: str, industry: str | None = None
         experience_blueprint=blueprint,
         visual_profile=visual_profile,
         app_type=app_type,
+        core_entities=list(preset.core_entities[:5]),
+        raw_user_request=raw_user_request,
     )
     return {
+        "raw_user_request": raw_user_request,
+        "source_of_truth": "raw_user_request",
         "app_type": app_type,
         "preset_key": preset.key,
         "preset_name": preset.name,
@@ -2258,8 +2591,9 @@ def build_plan_seed(keyword: str, product_name: str, industry: str | None = None
         "visual_profile": visual_profile,
         "project_dna": seed_dna,
         "differentiation_hint": (
-            f"当前任务优先体现{preset.name}领域特征，页面与模块命名围绕"
-            f"{'、'.join(focus_terms[:3]) or product_name}展开，不使用通用综合运营套板。"
+            "必须优先遵循 raw_user_request 中的原始用户输入；"
+            f"平台仅建议围绕{'、'.join(focus_terms[:3]) or product_name}组织模块与页面，"
+            "不得私自改写行业、主题或产品定位。"
         ),
     }
 

@@ -28,6 +28,7 @@ import {
   getTaskScreenshots,
   getExportDownload,
   getTaskBundleDownload,
+  getTaskStreamUrl,
   retryTask,
   cancelTask,
 } from '@/api/client';
@@ -65,6 +66,7 @@ export default function TaskDetail() {
   const [screenshotsError, setScreenshotsError] = useState<string | null>(null);
   const dashboardRequestSeq = useRef(0);
   const supportingRequestSeq = useRef(0);
+  const realtimeRefreshTimer = useRef<number | null>(null);
 
   const fetchSupportingData = useCallback(async () => {
     if (!taskId) return;
@@ -127,9 +129,58 @@ export default function TaskDetail() {
     await fetchSupportingData();
   }, [fetchDashboardData, fetchSupportingData]);
 
+  const scheduleRealtimeRefresh = useCallback((includeSupporting = false) => {
+    if (realtimeRefreshTimer.current !== null) {
+      window.clearTimeout(realtimeRefreshTimer.current);
+    }
+    realtimeRefreshTimer.current = window.setTimeout(() => {
+      void fetchDashboardData(true);
+      if (includeSupporting) {
+        void fetchSupportingData();
+      }
+      realtimeRefreshTimer.current = null;
+    }, includeSupporting ? 250 : 400);
+  }, [fetchDashboardData, fetchSupportingData]);
+
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  useEffect(() => {
+    if (!taskId) return;
+
+    const source = new EventSource(getTaskStreamUrl(taskId));
+    const onStatus = () => {
+      scheduleRealtimeRefresh(false);
+    };
+    const onTaskEvent = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { event_type?: string };
+        const shouldRefreshSupporting = Boolean(
+          payload.event_type?.includes('capture')
+          || payload.event_type?.includes('publish')
+          || payload.event_type?.includes('completed')
+          || payload.event_type?.includes('failed')
+        );
+        scheduleRealtimeRefresh(shouldRefreshSupporting);
+      } catch {
+        scheduleRealtimeRefresh(false);
+      }
+    };
+
+    source.addEventListener('status', onStatus);
+    source.addEventListener('task_event', onTaskEvent);
+
+    return () => {
+      if (realtimeRefreshTimer.current !== null) {
+        window.clearTimeout(realtimeRefreshTimer.current);
+        realtimeRefreshTimer.current = null;
+      }
+      source.removeEventListener('status', onStatus);
+      source.removeEventListener('task_event', onTaskEvent);
+      source.close();
+    };
+  }, [taskId, scheduleRealtimeRefresh]);
 
   useEffect(() => {
     const status = dashboard?.task.status;

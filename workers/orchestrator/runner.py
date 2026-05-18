@@ -127,6 +127,18 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                 task.status = next_status.value
                 task.current_stage = next_status.value
                 await service.mark_build_running(build, stage_name.value)
+                await service.log_event(
+                    task_id=task.id,
+                    build_id=build.id,
+                    event_type="stage_started",
+                    title=f"{stage_name.value} 阶段开始",
+                    detail=f"任务进入 {stage_name.value}，正在执行 {next_status.value}",
+                    payload_json={
+                        "stage_name": stage_name.value,
+                        "attempt_no": sr.attempt_no,
+                        "status": next_status.value,
+                    },
+                )
                 await db.flush()
 
                 try:
@@ -138,9 +150,32 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                     result = await STAGE_HANDLERS[stage_name](context)
                     if result.success:
                         await service.complete_stage_run(sr)
+                        await service.log_event(
+                            task_id=task.id,
+                            build_id=build.id,
+                            event_type="stage_succeeded",
+                            title=f"{stage_name.value} 阶段完成",
+                            detail=f"{stage_name.value} 已完成，准备进入下一阶段",
+                            payload_json={
+                                "stage_name": stage_name.value,
+                                "attempt_no": sr.attempt_no,
+                                "metadata": result.metadata or {},
+                            },
+                        )
                     else:
                         await service.fail_stage_run(sr, result.error or "unknown error")
                         await service.mark_build_failed(build, result.error or "unknown error")
+                        await service.log_event(
+                            task_id=task.id,
+                            build_id=build.id,
+                            event_type="stage_failed",
+                            title=f"{stage_name.value} 阶段失败",
+                            detail=result.error or "unknown error",
+                            payload_json={
+                                "stage_name": stage_name.value,
+                                "attempt_no": sr.attempt_no,
+                            },
+                        )
                         await service.mark_failed(task, result.error or "unknown error")
                         await db.commit()
                         return
@@ -148,6 +183,17 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                     logger.exception(f"Stage {stage_name.value} failed")
                     await service.fail_stage_run(sr, str(e))
                     await service.mark_build_failed(build, str(e))
+                    await service.log_event(
+                        task_id=task.id,
+                        build_id=build.id,
+                        event_type="stage_failed",
+                        title=f"{stage_name.value} 阶段异常",
+                        detail=str(e),
+                        payload_json={
+                            "stage_name": stage_name.value,
+                            "attempt_no": sr.attempt_no,
+                        },
+                    )
                     await service.mark_failed(task, str(e))
                     await db.commit()
                     return

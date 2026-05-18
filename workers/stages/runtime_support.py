@@ -140,7 +140,7 @@ async def execute_capture_flow(
     create_artifact: Callable[..., Awaitable],
     db_factory,
     sleep_fn: Callable[[float], Awaitable[None]],
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     from app.services.capture import PlaywrightCapture
     from app.services.runtime import SandboxRuntime
 
@@ -213,4 +213,21 @@ async def execute_capture_flow(
     )
 
     success_count = sum(1 for item in results if item.success)
-    return len(results), success_count
+    essential_titles = _collect_missing_essential_titles(capture_manifest, results)
+    return len(results), success_count, essential_titles
+
+
+def _collect_missing_essential_titles(capture_manifest: dict, results: list) -> list[str]:
+    results_by_id = {str(item.scenario_id): item for item in results}
+    missing_titles: list[str] = []
+    for scenario in capture_manifest.get("scenarios", []):
+        title = str(scenario.get("title", scenario.get("id", ""))).strip()
+        scenario_id = str(scenario.get("id", "")).strip()
+        if not title or not scenario_id:
+            continue
+        if "筛选结果" in title or "-filtered-" in scenario_id or scenario_id.endswith("-filtered"):
+            continue
+        result = results_by_id.get(scenario_id)
+        if result is None or not result.success or not getattr(result, "image_path", ""):
+            missing_titles.append(title)
+    return missing_titles

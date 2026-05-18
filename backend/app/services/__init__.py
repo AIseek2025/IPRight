@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,28 @@ from app.models.db import Build, StageRun, Task, TaskEvent
 class TaskService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def log_event(
+        self,
+        *,
+        task_id: uuid.UUID,
+        build_id: uuid.UUID | None = None,
+        event_type: str,
+        title: str,
+        detail: str | None = None,
+        payload_json: dict[str, Any] | None = None,
+    ) -> TaskEvent:
+        event = TaskEvent(
+            task_id=task_id,
+            build_id=build_id,
+            event_type=event_type,
+            title=title,
+            detail=detail,
+            payload_json=payload_json,
+        )
+        self.db.add(event)
+        await self.db.flush()
+        return event
 
     async def transition(self, task: Task, target: TopLevelStatus) -> None:
         old_status = task.status
@@ -131,24 +154,22 @@ class TaskService:
         task.status = TopLevelStatus.FAILED.value
         task.current_stage = TopLevelStatus.FAILED.value
         task.updated_at = datetime.utcnow()
-        event = TaskEvent(
+        await self.log_event(
             task_id=task.id,
+            build_id=task.active_build_id,
             event_type="task_failed",
             title=f"任务失败: {task.product_name}",
             detail=reason,
         )
-        self.db.add(event)
-        await self.db.flush()
 
     async def mark_completed(self, task: Task) -> None:
         task.status = TopLevelStatus.COMPLETED.value
         task.current_stage = TopLevelStatus.COMPLETED.value
         task.updated_at = datetime.utcnow()
-        event = TaskEvent(
+        await self.log_event(
             task_id=task.id,
+            build_id=task.active_build_id,
             event_type="task_completed",
             title=f"任务完成: {task.product_name}",
             detail="所有阶段已完成，导出文件可下载",
         )
-        self.db.add(event)
-        await self.db.flush()

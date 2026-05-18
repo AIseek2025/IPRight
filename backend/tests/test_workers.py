@@ -19,6 +19,7 @@ from workers.orchestrator.runner import (
     STAGE_HANDLERS,
 )
 from workers.stages.build_support import (
+    _synthesize_app_tsx,
     build_codegen_batches,
     build_codegen_requirements,
     generate_task_app_code,
@@ -27,6 +28,7 @@ from workers.stages.build_support import (
     normalize_prd_summary_with_plan_seed,
     prepare_seed_application,
     repair_invalid_core_files,
+    repair_invalid_module_pages,
 )
 from workers.stages.handlers import (
     _load_prd_summary,
@@ -34,6 +36,7 @@ from workers.stages.handlers import (
     _derive_run_ports,
     run_plan_stage,
     run_build_stage,
+    run_capture_stage,
     run_compose_manual_stage,
     run_compose_code_book_stage,
 )
@@ -47,36 +50,124 @@ from workers.stages.generated_frontend import (
     _render_login_page,
     _render_module_page,
 )
+from workers.stages.runtime_support import _collect_missing_essential_titles
 from app.services.runtime import SandboxRuntime
 from app.services.capture import PlaywrightCapture
+from app.services.document.manual import OPTIONAL_MANUAL_MODULES
 
 
 class TestStageHandlers:
     """Unit tests for individual stage handler functions."""
 
     def test_plan_stage_returns_valid_result(self):
+        from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
         import asyncio
+        from app.core.config import settings
+        from app.services.llm import LLMResponse
+
+        task_id = str(uuid.uuid4())
 
         mock_session = AsyncMock()
         mock_session.add = MagicMock()
+        mock_session.get = AsyncMock(
+            return_value=SimpleNamespace(
+                id=uuid.UUID(task_id),
+                keyword="电力调度平台",
+                product_name="电力调度平台",
+                version="V1.0",
+                industry="电网调度",
+                notes="围绕真实电网调度业务设计",
+            )
+        )
         mock_session_factory = MagicMock()
         mock_session_scope = AsyncMock()
         mock_session_scope.__aenter__.return_value = mock_session
         mock_session_factory.return_value.return_value = mock_session_scope
 
+        class FakeLLM:
+            async def generate_prd(self, **kwargs):
+                return LLMResponse(
+                    success=True,
+                    structured={
+                        "prd_markdown": "# PRD",
+                        "work_order_markdown": "# Work Order",
+                        "prd_summary": {
+                            "app_type": "admin_web",
+                            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测"],
+                            "required_pages": ["/login", "/dashboard", "/grid-overview", "/load-dispatch"],
+                            "user_roles": ["管理员", "调度长", "值班调度员"],
+                            "scene": "电网运行监视、负荷调度与检修协同",
+                            "industry_scope": "电网调度",
+                            "core_entities": ["电网线路", "变电站", "调度指令"],
+                        },
+                    },
+                )
+
+        from app.services import llm as llm_module
+
         async def _run():
             ctx = StageContext(
-                task_id=str(uuid.uuid4()),
+                task_id=task_id,
                 build_id=str(uuid.uuid4()),
                 db_factory=mock_session_factory,
             )
             result = await run_plan_stage(ctx)
             return result
 
-        result = asyncio.run(_run())
-        assert isinstance(result, StageResult)
-        assert result.success
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "WORKSPACE_ROOT", str(Path.cwd() / ".tmp_test_workspace"))
+            mp.setattr(llm_module, "get_llm_client", lambda: FakeLLM())
+            result = asyncio.run(_run())
+            assert isinstance(result, StageResult)
+            assert result.success
+
+    def test_plan_stage_fails_without_template_fallback_when_llm_unavailable(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        import asyncio
+        from app.core.config import settings
+        from app.services.llm import LLMResponse
+
+        task_id = str(uuid.uuid4())
+        mock_session = AsyncMock()
+        mock_session.add = MagicMock()
+        mock_session.get = AsyncMock(
+            return_value=SimpleNamespace(
+                id=uuid.UUID(task_id),
+                keyword="电力调度平台",
+                product_name="电力调度平台",
+                version="V1.0",
+                industry="电网调度",
+                notes=None,
+            )
+        )
+        mock_session_factory = MagicMock()
+        mock_session_scope = AsyncMock()
+        mock_session_scope.__aenter__.return_value = mock_session
+        mock_session_factory.return_value.return_value = mock_session_scope
+
+        class BrokenLLM:
+            async def generate_prd(self, **kwargs):
+                return LLMResponse(success=False, error="llm offline")
+
+        from app.services import llm as llm_module
+
+        async def _run():
+            ctx = StageContext(
+                task_id=task_id,
+                build_id=str(uuid.uuid4()),
+                db_factory=mock_session_factory,
+            )
+            return await run_plan_stage(ctx)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "WORKSPACE_ROOT", str(Path.cwd() / ".tmp_test_workspace"))
+            mp.setattr(llm_module, "get_llm_client", lambda: BrokenLLM())
+            result = asyncio.run(_run())
+
+        assert result.success is False
+        assert "PRD generation unavailable" in result.error
 
     def test_load_prd_summary_reads_saved_summary(self, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -108,6 +199,11 @@ class TestStageHandlers:
             "development_background": "新的开发背景",
             "technical_feature_bullets": ["特点一", "特点二"],
             "role_permissions": {"管理员": "可查看全部模块"},
+            "selected_optional_modules": [
+                OPTIONAL_MANUAL_MODULES[0]["key"],
+                OPTIONAL_MANUAL_MODULES[3]["key"],
+                "invalid_optional_key",
+            ],
             "module_overrides": [
                 {
                     "title": "采购管理",
@@ -131,6 +227,10 @@ class TestStageHandlers:
         assert merged["development_background"] == "新的开发背景"
         assert merged["technical_feature_bullets"] == ["特点一", "特点二"]
         assert merged["role_permissions"]["管理员"] == "可查看全部模块"
+        assert merged["selected_optional_modules"] == [
+            OPTIONAL_MANUAL_MODULES[0]["key"],
+            OPTIONAL_MANUAL_MODULES[3]["key"],
+        ]
         assert merged["modules"][0]["description"] == "新的模块描述"
         assert merged["modules"][0]["primary_action"] == "新建采购事项"
         assert screenshots[0]["caption"] == "图1 采购管理首页"
@@ -257,6 +357,9 @@ class TestStageHandlers:
             "frontend/src/App.tsx",
             "frontend/src/pages/Login.tsx",
             "frontend/src/pages/Dashboard.tsx",
+            "frontend/src/services/api.ts",
+            "frontend/src/types/constants.ts",
+            "frontend/src/types/models.ts",
         ]
         assert "frontend/src/pages/OrdersPage.tsx" in requirements["required_files"]
         assert "frontend/src/pages/CustomersPage.tsx" in requirements["required_files"]
@@ -264,8 +367,14 @@ class TestStageHandlers:
         assert requirements["app_type"] == "desktop_client"
         assert requirements["visual_profile"]["name"] == "graphite_client"
         assert batches[0]["name"] == "core"
-        assert batches[1]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
-        assert batches[2]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
+        assert batches[1]["name"] == "support"
+        assert batches[1]["required_files"] == [
+            "frontend/src/services/api.ts",
+            "frontend/src/types/constants.ts",
+            "frontend/src/types/models.ts",
+        ]
+        assert batches[2]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
+        assert batches[3]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
         assert batches[0]["requirements"]["app_type"] == "desktop_client"
         assert batches[0]["requirements"]["experience_blueprint"]["name"] == "command_hub"
         assert batches[0]["requirements"]["visual_profile"]["name"] == "graphite_client"
@@ -273,24 +382,62 @@ class TestStageHandlers:
         assert batches[0]["requirements"]["project_dna"]["module_signature"] == ["运单调度中心", "线路监控台"]
         assert batches[0]["requirements"]["topic_label"] == "智慧物流调度台"
 
-    def test_plan_seed_normalization_resets_drifting_media_modules(self):
+    def test_plan_seed_normalization_preserves_llm_modules_and_routes(self):
         plan_seed = {
             "preset_key": "media",
             "core_modules": ["短剧内容管理", "创作者与演员管理", "广告投放管理", "排期管理", "播放数据统计"],
             "required_pages": ["/login", "/dashboard", "/series", "/actors", "/campaigns", "/schedules", "/statistics"],
             "user_roles": ["超级管理员", "内容审核员", "运营编辑"],
+            "core_entities": ["剧集", "演员"],
+            "raw_user_request": {"keyword": "短剧平台", "product_name": "短剧平台"},
+            "scene": "内容编排与投放协同",
+            "industry_scope": "内容平台",
         }
         prd_summary = {
             "app_type": "admin_web",
             "core_modules": ["剧集管理", "剧集审核", "演员管理", "排期管理", "数据统计"],
             "required_pages": ["/login", "/dashboard", "/series", "/series", "/actors", "/schedules", "/statistics"],
             "user_roles": ["超级管理员", "内容审核员", "运营编辑"],
+            "scene": "短剧内容编排与审核",
+            "industry_scope": "短剧内容平台",
+            "core_entities": ["剧集", "评论", "演员"],
+        }
+
+        normalized = normalize_prd_summary_with_plan_seed(prd_summary, plan_seed)
+
+        assert normalized["core_modules"] == prd_summary["core_modules"]
+        assert normalized["required_pages"] == ["/login", "/dashboard", "/series", "/actors", "/schedules", "/statistics"]
+        assert normalized["scene"] == "短剧内容编排与审核"
+        assert normalized["industry_scope"] == "短剧内容平台"
+        assert normalized["raw_user_request"] == plan_seed["raw_user_request"]
+        assert normalized["source_of_truth"] == "raw_user_request"
+
+    def test_plan_seed_normalization_only_fills_missing_fields(self):
+        plan_seed = {
+            "preset_key": "power_dispatch",
+            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测", "检修工作票中心"],
+            "required_pages": ["/login", "/dashboard", "/grid-overview", "/load-dispatch", "/generation-plans", "/transmission-lines", "/work-tickets"],
+            "user_roles": ["管理员", "调度长", "值班调度员"],
+            "core_entities": ["电网线路", "变电站"],
+            "raw_user_request": {"keyword": "电力调度平台", "product_name": "电力调度平台"},
+            "scene": "电网运行监视、负荷调度、检修协同与故障处置",
+            "industry_scope": "电网调度",
+        }
+        prd_summary = {
+            "app_type": "",
+            "core_modules": [],
+            "required_pages": [],
+            "user_roles": [],
         }
 
         normalized = normalize_prd_summary_with_plan_seed(prd_summary, plan_seed)
 
         assert normalized["core_modules"] == plan_seed["core_modules"]
         assert normalized["required_pages"] == plan_seed["required_pages"]
+        assert normalized["user_roles"] == plan_seed["user_roles"]
+        assert normalized["core_entities"] == plan_seed["core_entities"]
+        assert normalized["scene"] == plan_seed["scene"]
+        assert normalized["industry_scope"] == plan_seed["industry_scope"]
 
     def test_hydrate_missing_files_from_template_skips_llm_required_frontend_pages(self, tmp_path):
         app_root = tmp_path / "app"
@@ -378,6 +525,50 @@ export default function Login() {
         assert "指挥仪表盘" in repaired["frontend/src/pages/Dashboard.tsx"]
         assert "ipright_demo_auth" in repaired["frontend/src/pages/Login.tsx"]
 
+    def test_repair_invalid_core_files_rejects_unknown_page_imports(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { Route, Routes } from 'react-router-dom';
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import AlarmsPage from './pages/AlarmsPage';
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login onLogin={() => undefined} />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/dispatch" element={<AlarmsPage title={APP_PROFILE.product_name} />} />
+    </Routes>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section>指挥仪表盘 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={
+                "modules": [
+                    {"route": "/dispatch", "key": "dispatch"},
+                ]
+            },
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_accepts_dashboard_with_real_widgets_without_fixed_title(self, tmp_path):
         app_root = tmp_path / "app"
         repaired, invalid_paths = repair_invalid_core_files(
@@ -421,6 +612,78 @@ export default function Login() {
         assert invalid_paths == []
         assert "ReactECharts" in repaired["frontend/src/pages/Dashboard.tsx"]
 
+    def test_repair_invalid_core_files_rejects_inline_module_shell_app(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { Routes, Route } from 'react-router-dom';
+import { APP_PROFILE } from './generated/appProfile';
+const ModuleShell = ({ title }) => <div>{title}</div>;
+const RecordsPage = () => <ModuleShell title="授信主体管理" />;
+export default function App() {
+  return <Routes><Route path="/credit-subjects" element={<RecordsPage />} /></Routes>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }) {
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+            },
+            profile={
+                "modules": [
+                    {"route": "/credit-subjects", "key": "credit-subjects"},
+                ]
+            },
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rewrites_pages_without_profile_data(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import React from 'react';
+const mockData = [{ id: 'AN-001', owner: '张风控' }];
+export default function WorkflowPage() {
+  return <div>风险指标体系与模型管理</div>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "新增预警规则",
+                    "filter_placeholder": "搜索分析主题 / 负责人 / 风险维度",
+                    "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                    "rows": [
+                        ["AN-202605-017", "新能源债券组合压力测试", "市场风险", "风险分析师"],
+                    ],
+                    "highlights": ["支持指标版本管理", "支持风险结论留痕"],
+                    "description": "用于管理风险模型与分析结论。",
+                    "page_variant": "insight",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        workflow_text = repaired["frontend/src/pages/WorkflowPage.tsx"]
+        assert "generated/appProfile" in workflow_text
+        assert "新能源债券组合压力测试" in workflow_text
+        assert "mockData" not in workflow_text
+
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
         profile = {
@@ -432,13 +695,16 @@ export default function Login() {
 
         assert not (app_root / "frontend/src/App.tsx").exists()
         assert not (app_root / "frontend/src/pages").exists()
+        assert not (app_root / "frontend/src/services/api.ts").exists()
+        assert not (app_root / "frontend/src/types/constants.ts").exists()
+        assert not (app_root / "frontend/src/types/models.ts").exists()
         assert (app_root / "frontend/src/generated/appProfile.ts").exists()
         assert (app_root / "frontend/src/font.css").exists()
         assert (app_root / "frontend/src/App.css").exists()
         assert "import './font.css';" in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
         assert (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
 
-    def test_generate_task_app_code_fails_when_core_batch_fails(self, tmp_path, monkeypatch):
+    def test_generate_task_app_code_self_heals_core_and_support_when_llm_fails(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
         app_root = tmp_path / "app"
@@ -478,15 +744,22 @@ export default function Login() {
 
         report, error = asyncio.run(_run())
         assert report is not None
-        assert error is not None
-        assert "missing or invalid LLM-generated core frontend files" in error
-        assert report["invalid_core_paths"] == [
+        assert error is None
+        assert report["repaired_core_paths"] == [
             "frontend/src/App.tsx",
             "frontend/src/pages/Dashboard.tsx",
             "frontend/src/pages/Login.tsx",
         ]
-        assert report["batches"][-1]["generated_paths"] == []
-        assert report["batches"][-1]["error"]
+        assert report["repaired_support_paths"] == [
+            "frontend/src/services/api.ts",
+            "frontend/src/types/constants.ts",
+            "frontend/src/types/models.ts",
+        ]
+        assert report["template_ui_fallback_used"] is True
+        assert (app_root / "frontend/src/App.tsx").exists()
+        assert (app_root / "frontend/src/pages/Login.tsx").exists()
+        assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
+        assert (app_root / "frontend/src/services/api.ts").exists()
 
     def test_generate_task_app_code_retries_missing_core_files(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -535,6 +808,18 @@ export default function Login() {
                         }
                     )
                 if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return {}; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '测试系统'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
+                        }
+                    )
+                if required == (
                     "frontend/src/pages/Login.tsx",
                     "frontend/src/pages/Dashboard.tsx",
                 ):
@@ -561,10 +846,19 @@ export default function Login() {
         report, error = asyncio.run(_run())
         assert error is None
         assert report is not None
-        assert ("frontend/src/App.tsx", "frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in llm.calls
+        assert (
+            "frontend/src/App.tsx",
+            "frontend/src/pages/Login.tsx",
+            "frontend/src/pages/Dashboard.tsx",
+        ) in llm.calls
+        assert (
+            "frontend/src/services/api.ts",
+            "frontend/src/types/constants.ts",
+            "frontend/src/types/models.ts",
+        ) in llm.calls
         assert ("frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in llm.calls
         assert ("frontend/src/pages/Dashboard.tsx",) in llm.calls
-        assert report["generated_file_count"] == 3
+        assert report["generated_file_count"] == 6
 
     def test_generate_task_app_code_retries_invalid_core_files(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -620,6 +914,18 @@ export default function Login() {
                         }
                     )
                 if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return {}; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '测试系统'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
+                        }
+                    )
+                if required == (
                     "frontend/src/App.tsx",
                     "frontend/src/pages/Dashboard.tsx",
                 ):
@@ -642,7 +948,16 @@ export default function Login() {
         assert error is None
         assert report is not None
         assert [call["required_files"] for call in llm.calls] == [
-            ("frontend/src/App.tsx", "frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx"),
+            (
+                "frontend/src/App.tsx",
+                "frontend/src/pages/Login.tsx",
+                "frontend/src/pages/Dashboard.tsx",
+            ),
+            (
+                "frontend/src/services/api.ts",
+                "frontend/src/types/constants.ts",
+                "frontend/src/types/models.ts",
+            ),
             ("frontend/src/App.tsx", "frontend/src/pages/Dashboard.tsx"),
         ]
         assert llm.calls[-1]["validation_hints"]
@@ -654,6 +969,110 @@ export default function Login() {
         assert (app_root / "frontend/src/App.tsx").exists()
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
+
+    def test_generate_task_app_code_structurally_repairs_persistently_invalid_app(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "供应链金融平台",
+            "scene": "核心企业信用监控",
+            "industry_scope": "供应链金融",
+            "user_roles": ["管理员", "风控经理"],
+            "modules": [
+                {
+                    "title": "授信主体",
+                    "key": "credit-subjects",
+                    "route": "/credit-subjects",
+                    "description": "查看核心企业授信主体档案",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V3.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == (
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>坏壳层</div>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Statistic Card</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true, data: { token: 'demo-token', user: { name: 'admin', role: '管理员' } } }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '供应链金融平台'; export const APP_VERSION = 'V3.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { token: string; user: { name: string; role: string; }; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/CreditSubjectsPage.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/CreditSubjectsPage.tsx": "export default function CreditSubjectsPage(){ return <div>授信主体页面</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>仍然坏掉的 App</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Card</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "export default function App(){ return <div>继续无效</div>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert report["repaired_core_paths"] == ["frontend/src/App.tsx"]
+        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_structural_fallback")
+        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "APP_PROFILE" in app_text
+        assert "/credit-subjects" in app_text
+        assert "CreditSubjectsPage" in app_text
 
     def test_runtime_captures_early_exit_logs(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -1080,6 +1499,27 @@ const css = `
         capture._cleanup_failed_capture(str(image_path))
         assert image_path.exists() is False
 
+    def test_capture_usable_login_screenshot_accepts_small_but_meaningful_image(self, tmp_path, monkeypatch):
+        capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir=str(tmp_path))
+        image_path = tmp_path / "login-page.png"
+        image_path.write_bytes(b"x" * 1200)
+
+        async def _meaningful(*_args, **_kwargs):
+            return True
+
+        monkeypatch.setattr(capture, "_has_meaningful_content", _meaningful)
+
+        ok = asyncio.run(
+            capture._is_usable_capture(
+                object(),
+                str(image_path),
+                route="/login",
+                title="登录页",
+                expected_markers=["登录", "用户名", "密码"],
+            )
+        )
+        assert ok is True
+
     def test_capture_css_forces_cjk_font_stack_on_all_elements(self):
         capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
         payload: dict[str, str] = {}
@@ -1143,6 +1583,32 @@ const css = `
         page = _Page()
         asyncio.run(capture._trigger_search_submit(page, "搜索"))
         assert page.clicked[0] == 'button:has-text("查询")'
+
+    def test_capture_execute_action_skips_optional_fill_input_warning(self, monkeypatch, caplog):
+        capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
+
+        class _Page:
+            async def wait_for_timeout(self, ms: int):
+                return None
+
+        async def _never_fill(*args, **kwargs):
+            return False
+
+        async def _stabilize(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(capture, "_fill_input_field", _never_fill)
+        monkeypatch.setattr(capture, "_stabilize_page", _stabilize)
+
+        with caplog.at_level("WARNING"):
+            asyncio.run(
+                capture._execute_action(
+                    _Page(),
+                    {"action": "fill_input", "target": "搜索", "value": "量化平台", "optional": True},
+                )
+            )
+
+        assert "Unable to locate input field for target: 搜索" not in caplog.text
 
     def test_render_font_css_prefers_horizontal_cjk_layout(self):
         css = _render_font_css()
@@ -1297,6 +1763,7 @@ def test_run_build_stage_writes_codegen_report_on_codegen_failure(tmp_path, monk
 
     mock_session = AsyncMock()
     mock_session.get.return_value = _Task()
+    mock_session.add = MagicMock()
     mock_session_factory = MagicMock()
     mock_session_scope = AsyncMock()
     mock_session_scope.__aenter__.return_value = mock_session
@@ -1342,3 +1809,80 @@ def test_run_build_stage_writes_codegen_report_on_codegen_failure(tmp_path, monk
     report = report_path.read_text(encoding="utf-8")
     assert "invalid_core_paths" in report
     assert "frontend/src/App.tsx" in report
+
+
+def test_run_capture_stage_fails_when_essential_pages_are_missing(tmp_path, monkeypatch):
+    async def _fake_execute_capture_flow(**_kwargs):
+        return 10, 1, ["系统首页", "授信主体管理"]
+
+    async def _fake_log_task_progress(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("workers.stages.handlers._load_manifest", lambda _task_id, name: {"scenarios": []} if name == "capture_manifest" else {})
+    monkeypatch.setattr("workers.stages.handlers.reset_screenshots_dir", lambda _task_id: str(tmp_path / "screenshots"))
+    monkeypatch.setattr("workers.stages.handlers.workspace_path", lambda _task_id: str(tmp_path / "workspace"))
+    monkeypatch.setattr("workers.stages.handlers.artifacts_dir", lambda _task_id: str(tmp_path / "artifacts"))
+    monkeypatch.setattr("workers.stages.handlers.execute_capture_flow", _fake_execute_capture_flow)
+    monkeypatch.setattr("workers.stages.handlers._log_task_progress", _fake_log_task_progress)
+
+    async def _run():
+        ctx = StageContext(task_id="task-1", build_id="build-1", db_factory=lambda: None)
+        return await run_capture_stage(ctx)
+
+    result = asyncio.run(_run())
+    assert result.success is False
+    assert result.error == "核心页面截图失败: 系统首页、授信主体管理"
+    assert result.metadata["missing_essential_titles"] == ["系统首页", "授信主体管理"]
+
+
+def test_collect_missing_essential_titles_marks_failed_or_missing_core_pages():
+    class Result:
+        def __init__(self, scenario_id: str, success: bool, image_path: str):
+            self.scenario_id = scenario_id
+            self.success = success
+            self.image_path = image_path
+
+    capture_manifest = {
+        "scenarios": [
+            {"id": "login-page", "title": "登录页", "route": "/login"},
+            {"id": "dashboard", "title": "系统首页", "route": "/dashboard"},
+            {"id": "records", "title": "授信主体管理", "route": "/records"},
+            {"id": "records-filtered-1", "title": "授信主体管理筛选结果", "route": "/records"},
+        ]
+    }
+    results = [
+        Result("login-page", True, "/tmp/login-page.png"),
+        Result("dashboard", False, ""),
+    ]
+
+    missing = _collect_missing_essential_titles(capture_manifest, results)
+
+    assert missing == ["系统首页", "授信主体管理"]
+
+
+def test_synthesize_app_tsx_keeps_valid_jsx_style_object_syntax():
+    profile = {
+        "product_name": "投资风险评估预警平台",
+        "scene": "面向投资风险监控与预警处置的业务平台",
+        "app_type": "admin_web",
+        "modules": [
+            {
+                "key": "records",
+                "route": "/records",
+                "title": "多源数据接入与治理",
+                "description": "用于承接多源数据治理与查询。",
+            }
+        ],
+    }
+    generated_files = {
+        "frontend/src/pages/RecordsPage.tsx": "export default function RecordsPage(){ return <div>ok</div>; }"
+    }
+
+    content = _synthesize_app_tsx(profile, generated_files)
+
+    assert "style={{ minHeight: '100vh'" in content
+    assert "style={ minHeight: '100vh'" not in content
+    assert "style={{ padding: 20, background: '#f5f7fa' }}" in content
+    assert "onLogin={() => {" in content
+    assert "        }}\n      />" in content
+    assert "onClick={({ key }) => navigate(String(key))}" in content

@@ -56,7 +56,7 @@ def test_manual_excludes_removed_sections_and_text():
     assert "👥 用户管理" not in joined
     assert "部署维护说明" not in joined
     assert "部署说明" not in joined
-    assert "运行维护说明" not in joined
+    assert "运行维护说明" in joined
     assert "数据与材料管理说明" not in joined
     assert "常见问题" not in joined
 
@@ -174,8 +174,49 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
     assert "典型应用场景" in joined
     assert "数据组织与结果输出说明" in joined
+    assert "产品开发与技术实现说明" in joined
+    assert "模块实现拆解" in joined
+    assert "实施交付与验收说明" in joined
+    assert "交互与版式策略" in joined
+    assert "页面研发补充说明" in joined
+    assert "安全、审计与运维说明" in joined
     assert "FastAPI" in joined
     assert "React" in joined
+
+
+def test_manual_renders_only_selected_optional_modules():
+    selected = [
+        "data_and_output",
+        "development_details",
+        "security_and_maintenance",
+        "version_evolution_and_change_management",
+    ]
+    profile = {
+        "selected_optional_modules": selected,
+        "modules": [
+            {
+                "title": "风险评估中心",
+                "primary_action": "发起评估",
+                "description": "用于执行评估任务。",
+                "table_headers": ["评估编号", "评估对象", "状态", "更新时间"],
+                "rows": [["PG-2026-001", "债券组合A", "评估中", "2026-05-18 10:00"]],
+            }
+        ],
+        "user_roles": ["管理员", "风控专员"],
+    }
+    gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0", profile=profile)
+    gen.generate_full(
+        prd_summary={"user_roles": profile["user_roles"]},
+        screenshots_meta=[{"page_title": "风险评估中心", "caption": "图1 风险评估中心", "image_path": "", "elements": ["风险评估中心", "发起评估"]}],
+    )
+    joined = "\n".join(p.text for p in gen.doc.paragraphs)
+    assert "数据组织与结果输出说明" in joined
+    assert "产品开发与技术实现说明" in joined
+    assert "安全、审计与运维说明" in joined
+    assert "版本演进与变更管理说明" in joined
+    assert "核心业务对象详解" not in joined
+    assert "实施交付与验收说明" not in joined
+    assert "附录与补充说明" not in joined
 
 
 def test_application_form_can_generate_required_fields():
@@ -343,6 +384,10 @@ def test_task_profile_pads_screenshot_scenarios_when_module_count_is_small():
     assert len(profile["screenshot_scenarios"]) >= 10
     assert any(item["id"].startswith("users-filtered-") for item in profile["screenshot_scenarios"])
     assert any(item["title"].endswith("筛选结果") for item in profile["screenshot_scenarios"])
+    filtered = next(item for item in profile["screenshot_scenarios"] if item["id"].startswith("users-filtered-"))
+    assert filtered["actions"][1]["action"] == "fill_input"
+    assert filtered["actions"][1]["target"] == "搜索"
+    assert filtered["actions"][1]["optional"] is True
 
 
 def test_task_profile_rebuilds_content_for_new_title_and_modules():
@@ -434,6 +479,61 @@ def test_task_profile_distinguishes_logistics_and_supply_chain_finance_presets()
     ]
     assert logistics["project_dna"]["architecture_style"] == "dispatch_flow"
     assert finance["project_dna"]["architecture_style"] == "risk_grid"
+
+
+def test_task_profile_distinguishes_power_dispatch_from_logistics():
+    power = build_task_profile(
+        keyword="电力调度平台",
+        product_name="电力调度平台",
+        version="V1.0",
+        industry="电网调度",
+    )
+
+    assert power["preset_key"] == "power_dispatch"
+    assert [item["title"] for item in power["modules"][:5]] == [
+        "电网运行总览",
+        "负荷调度中心",
+        "发电计划协同",
+        "输变线路监测",
+        "检修工作票中心",
+    ]
+    assert "电网运行监视" in power["scene"]
+    assert power["project_dna"]["architecture_style"] == "control_tower"
+    joined = json.dumps(power, ensure_ascii=False)
+    assert "运单调度中心" not in joined
+    assert "仓配协同台" not in joined
+    assert "签收回单中心" not in joined
+
+
+def test_task_profile_prefers_prd_summary_semantics_over_platform_defaults():
+    profile = build_task_profile(
+        keyword="电力调度平台",
+        product_name="电力调度平台",
+        version="V1.0",
+        industry="电网调度",
+        notes="重点关注调度令、检修工作票和停复电联动",
+        prd_summary={
+            "core_modules": ["主网态势总览", "调度指令中心", "停复电协同", "检修工作票台"],
+            "required_pages": ["/login", "/dashboard", "/grid", "/dispatch-orders", "/restoration", "/tickets"],
+            "user_roles": ["值班长", "调度员", "检修协调员"],
+            "scene": "主网运行监视、调度指令下发与停复电协同",
+            "industry_scope": "电网调度与检修协同",
+            "core_entities": ["调度令", "工作票", "停复电任务"],
+            "raw_user_request": {
+                "keyword": "电力调度平台",
+                "product_name": "电力调度平台",
+                "industry": "电网调度",
+                "notes": "重点关注调度令、检修工作票和停复电联动",
+            },
+        },
+    )
+
+    assert [item["title"] for item in profile["modules"][:4]] == ["主网态势总览", "调度指令中心", "停复电协同", "检修工作票台"]
+    assert profile["scene"] == "主网运行监视、调度指令下发与停复电协同"
+    assert profile["industry_scope"] == "电网调度与检修协同"
+    assert profile["core_entities"] == ["调度令", "工作票", "停复电任务"]
+    assert profile["raw_user_request"]["notes"] == "重点关注调度令、检修工作票和停复电联动"
+    assert profile["project_dna"]["source_of_truth"] == "raw_user_request"
 
 
 def test_task_profile_visual_profile_aligns_with_top_tabs_blueprint():
