@@ -161,7 +161,6 @@ def _module_theme(module: dict) -> dict:
     }
     return mapping.get(route, {"accent": "#1677ff", "soft": "#eff6ff", "strong": "#1d4ed8"})
 
-
 def _route_copy(route: str, module_code: str | None = None) -> dict:
     route = (route or "").strip()
     route_key = route or "/module"

@@ -649,7 +649,7 @@ export default function Login({ onLogin }) {
 
         assert "frontend/src/App.tsx" in invalid_paths
 
-    def test_repair_invalid_module_pages_rewrites_pages_without_profile_data(self):
+    def test_repair_invalid_module_pages_reports_invalid_outputs_without_template_rewrite(self):
         generated_files = {
             "frontend/src/pages/WorkflowPage.tsx": """
 import React from 'react';
@@ -682,9 +682,8 @@ export default function WorkflowPage() {
 
         assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
         workflow_text = repaired["frontend/src/pages/WorkflowPage.tsx"]
-        assert "generated/appProfile" in workflow_text
-        assert "新能源债券组合压力测试" in workflow_text
-        assert "mockData" not in workflow_text
+        assert "mockData" in workflow_text
+        assert "新能源债券组合压力测试" not in workflow_text
 
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
@@ -1038,7 +1037,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/CreditSubjectsPage.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/CreditSubjectsPage.tsx": "export default function CreditSubjectsPage(){ return <div>授信主体页面</div>; }",
+                            "frontend/src/pages/CreditSubjectsPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function CreditSubjectsPage(){ return <section><h1>授信主体</h1><div>{APP_PROFILE.product_name}</div></section>; }",
                         }
                     )
                 if required == (
@@ -1075,6 +1074,121 @@ export default function WorkflowPage() {
         assert "APP_PROFILE" in app_text
         assert "/credit-subjects" in app_text
         assert "CreditSubjectsPage" in app_text
+
+    def test_generate_task_app_code_retries_invalid_module_pages(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "风险监测平台",
+            "scene": "围绕债券组合风控监测和预警处置进行分析",
+            "industry_scope": "金融风控",
+            "user_roles": ["管理员", "风险分析师"],
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "新增预警规则",
+                    "filter_placeholder": "搜索分析主题 / 负责人 / 风险维度",
+                    "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                    "rows": [
+                        ["AN-202605-017", "新能源债券组合压力测试", "市场风险", "风险分析师"],
+                    ],
+                    "highlights": ["支持指标版本管理", "支持风险结论留痕"],
+                    "description": "用于管理风险模型与分析结论。",
+                    "page_variant": "insight",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            def __init__(self):
+                self.calls = []
+
+            async def generate_app_code(self, _prd, _wo, requirements):
+                self.calls.append(
+                    {
+                        "required_files": tuple(requirements["required_files"]),
+                        "validation_hints": list(requirements.get("validation_hints", [])),
+                        "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
+                    }
+                )
+                required = tuple(requirements["required_files"])
+                if required == (
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import WorkflowPage from './pages/WorkflowPage'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/workflow' element={<WorkflowPage title={APP_PROFILE.product_name} />} /></Routes>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '风险监测平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/WorkflowPage.tsx",):
+                    if not requirements.get("invalid_module_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/pages/WorkflowPage.tsx": "const mockData = [{ id: '1' }]; export default function WorkflowPage(){ return <div>风险指标体系与模型管理</div>; }",
+                            }
+                        )
+                    return _Resp(
+                        {
+                            "frontend/src/pages/WorkflowPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function WorkflowPage(){ return <section><header>风险指标体系与模型管理 {APP_PROFILE.product_name}</header><button>新增预警规则</button><div>搜索分析主题 / 负责人 / 风险维度</div><table><thead><tr><th>分析编号</th><th>分析主题</th><th>统计维度</th><th>负责人</th></tr></thead><tbody><tr><td>AN-202605-017</td><td>新能源债券组合压力测试</td><td>市场风险</td><td>风险分析师</td></tr></tbody></table></section>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert report is not None
+        retry_call = next(call for call in llm.calls if call["invalid_module_previews"])
+        assert retry_call["required_files"] == ("frontend/src/pages/WorkflowPage.tsx",)
+        assert retry_call["validation_hints"]
+        assert "frontend/src/pages/WorkflowPage.tsx" in retry_call["invalid_module_previews"]
+        retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry")
+        assert retry_batch["generated_paths"] == ["frontend/src/pages/WorkflowPage.tsx"]
+        page_text = (app_root / "frontend/src/pages/WorkflowPage.tsx").read_text(encoding="utf-8")
+        assert "新能源债券组合压力测试" in page_text
+        assert "mockData" not in page_text
 
     def test_runtime_captures_early_exit_logs(self, tmp_path):
         workspace = tmp_path / "workspace"

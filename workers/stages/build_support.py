@@ -12,7 +12,6 @@ from workers.stages.generated_frontend import (
     _render_dashboard_page,
     _render_frontend_app,
     _render_login_page,
-    _render_module_page,
     _write_task_specific_app,
     sync_frontend_dependencies,
 )
@@ -604,7 +603,7 @@ def repair_invalid_module_pages(
     profile: dict,
 ) -> tuple[dict[str, str], list[str]]:
     repaired = dict(generated_files)
-    repaired_paths: list[str] = []
+    invalid_paths: list[str] = []
 
     for module in profile.get("modules", []):
         component_name = f"{_camel_name(module.get('route', module['key']))}Page"
@@ -630,10 +629,9 @@ def repair_invalid_module_pages(
         )
         if is_valid:
             continue
-        repaired[relative_path] = _render_module_page(module)
-        repaired_paths.append(relative_path)
+        invalid_paths.append(relative_path)
 
-    return repaired, repaired_paths
+    return repaired, invalid_paths
 
 
 def _preview_generated_content(content: str, limit: int = 320) -> str:
@@ -679,6 +677,54 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
         hints.append(
             "Login.tsx 必须包含中文登录表单，并通过 onLogin、handleSubmit 或 localStorage(ipright_demo_auth) 完成登录态写入。"
         )
+    return hints
+
+
+def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> list[str]:
+    hints: list[str] = []
+    modules_by_path: dict[str, dict] = {}
+    for module in profile.get("modules", []):
+        component_name = f"{_camel_name(module.get('route', module['key']))}Page"
+        relative_path = f"frontend/src/pages/{component_name}.tsx"
+        modules_by_path[relative_path] = module
+
+    for relative_path in invalid_paths:
+        module = modules_by_path.get(relative_path)
+        if not module:
+            continue
+        title = str(module.get("title") or module.get("key") or relative_path).strip()
+        route = str(module.get("route") or "").strip()
+        page_variant = str(module.get("page_variant") or "records").strip()
+        table_headers = [str(item).strip() for item in list(module.get("table_headers", []))[:5] if str(item).strip()]
+        row_tokens = [
+            str(cell).strip()
+            for row in list(module.get("rows", []))[:2]
+            for cell in list(row)[:4]
+            if str(cell).strip()
+        ]
+        highlights = [str(item).strip() for item in list(module.get("highlights", []))[:3] if str(item).strip()]
+        primary_action = str(module.get("primary_action") or "").strip()
+        filter_placeholder = str(module.get("filter_placeholder") or "").strip()
+
+        hints.append(
+            f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 或 ../../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
+        )
+        if route:
+            hints.append(f"{relative_path} 必须围绕路由 {route} 的业务语境组织页面内容，不得复用其他模块页面。")
+        hints.append(
+            f"{relative_path} 必须体现 page_variant={page_variant} 对应的信息组织方式，并根据本模块主题自主设计正文布局，不能套用统一后台骨架。"
+        )
+        if table_headers or row_tokens:
+            hints.append(
+                f"{relative_path} 必须直接复用任务样例数据；至少覆盖这些字段/样例中的大部分："
+                + "、".join([*table_headers, *row_tokens][:8])
+            )
+        if primary_action or filter_placeholder or highlights:
+            module_traits = [item for item in [primary_action, filter_placeholder, *highlights] if item]
+            hints.append(
+                f"{relative_path} 需要把当前模块的主操作、筛选入口和信息重点落到页面中："
+                + "、".join(module_traits[:6])
+            )
     return hints
 
 
@@ -1016,15 +1062,143 @@ async def generate_task_app_code(
             "App code generation failed: missing or invalid LLM-generated core frontend files: "
             + ", ".join(invalid_core_paths)
         )
-    generated_files, repaired_module_paths = repair_invalid_module_pages(generated_files, profile)
+    generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
+    if invalid_module_paths and batches:
+        llm = get_llm_client()
+        for attempt_no in range(1, 3):
+            invalid_module_previews = {
+                relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
+                for relative_path in invalid_module_paths
+            }
+            retry_requirements = {
+                **{
+                    key: value
+                    for key, value in codegen_requirements.items()
+                    if key != "module_pages"
+                },
+                "required_files": list(invalid_module_paths),
+                "module_pages": _select_module_pages_for_files(codegen_requirements, invalid_module_paths),
+                "validation_hints": _build_module_validation_hints(profile, invalid_module_paths),
+                "invalid_module_previews": invalid_module_previews,
+            }
+            if progress_callback is not None:
+                await progress_callback(
+                    {
+                        "phase": "attempt_started",
+                        "batch": "module_invalid_retry",
+                        "attempt": attempt_no,
+                        "required_files": list(retry_requirements["required_files"]),
+                        "required_file_count": len(retry_requirements["required_files"]),
+                    }
+                )
+            codegen_resp = await llm.generate_app_code(prd_content, work_order_content, retry_requirements)
+            if not codegen_resp.success or not codegen_resp.structured:
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_failed",
+                            "batch": "module_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(retry_requirements["required_files"]),
+                            "generated_paths": [],
+                            "pending_files": list(retry_requirements["required_files"]),
+                            "error": codegen_resp.error or "unknown error",
+                        }
+                    )
+                batch_reports.append(
+                    {
+                        "batch": "module_invalid_retry",
+                        "attempt": attempt_no,
+                        "required_files": list(invalid_module_paths),
+                        "generated_paths": [],
+                        "fallback_to_template": True,
+                        "error": codegen_resp.error or "unknown error",
+                    }
+                )
+                continue
+            batch_files = codegen_resp.structured.get("files", {})
+            if not isinstance(batch_files, dict):
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_failed",
+                            "batch": "module_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(retry_requirements["required_files"]),
+                            "generated_paths": [],
+                            "pending_files": list(retry_requirements["required_files"]),
+                            "error": "files payload missing",
+                        }
+                    )
+                batch_reports.append(
+                    {
+                        "batch": "module_invalid_retry",
+                        "attempt": attempt_no,
+                        "required_files": list(invalid_module_paths),
+                        "generated_paths": [],
+                        "fallback_to_template": True,
+                        "error": "files payload missing",
+                    }
+                )
+                continue
+            regenerated_paths: list[str] = []
+            for relative_path, content in batch_files.items():
+                if relative_path in invalid_module_paths and content:
+                    generated_files[relative_path] = str(content)
+                    regenerated_paths.append(relative_path)
+            generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
+            if progress_callback is not None:
+                await progress_callback(
+                    {
+                        "phase": "attempt_completed",
+                        "batch": "module_invalid_retry",
+                        "attempt": attempt_no,
+                        "required_files": list(retry_requirements["required_files"]),
+                        "generated_paths": sorted(regenerated_paths),
+                        "pending_files": list(invalid_module_paths),
+                        "fallback_to_template": bool(invalid_module_paths),
+                    }
+                )
+            batch_reports.append(
+                {
+                    "batch": "module_invalid_retry",
+                    "attempt": attempt_no,
+                    "required_files": list(retry_requirements["required_files"]),
+                    "generated_paths": sorted(regenerated_paths),
+                    "fallback_to_template": bool(invalid_module_paths),
+                    "error": (
+                        "still invalid after retry: " + ", ".join(invalid_module_paths)
+                        if invalid_module_paths
+                        else None
+                    ),
+                }
+            )
+            if not invalid_module_paths:
+                break
+    if invalid_module_paths:
+        invalid_module_previews = {
+            relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
+            for relative_path in invalid_module_paths
+        }
+        return _build_codegen_report(
+            repaired_core_paths=sorted(repaired_core_paths),
+            repaired_module_paths=[],
+            repaired_support_paths=sorted(repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            invalid_module_paths=invalid_module_paths,
+            invalid_module_previews=invalid_module_previews,
+        ), (
+            "App code generation failed: missing or invalid LLM-generated module frontend files: "
+            + ", ".join(invalid_module_paths)
+        )
     generated_files = normalize_generated_frontend_files(generated_files)
     applied, apply_error = apply_generated_code_bundle(app_root, generated_files, codegen_requirements["required_files"])
     if not applied:
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
-            repaired_module_paths=sorted(repaired_module_paths),
+            repaired_module_paths=[],
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
             apply_error=apply_error,
         ), f"App code generation failed: {apply_error}"
 
@@ -1032,7 +1206,7 @@ async def generate_task_app_code(
 
     return _build_codegen_report(
         repaired_core_paths=sorted(repaired_core_paths),
-        repaired_module_paths=sorted(repaired_module_paths),
+        repaired_module_paths=[],
         repaired_support_paths=sorted(repaired_support_paths),
-        template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
+        template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
     ), None
