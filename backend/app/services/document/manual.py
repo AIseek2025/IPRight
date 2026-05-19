@@ -27,15 +27,15 @@ OPTIONAL_MANUAL_MODULES = [
     {"key": "business_object_details", "title": "核心业务对象详解", "description": "围绕关键对象、字段口径和业务关系做更细说明。"},
     {"key": "interface_and_data_flow", "title": "接口协同与数据流转说明", "description": "说明页面、服务和数据链路之间的承接关系。"},
     {"key": "development_details", "title": "产品开发与技术实现说明", "description": "说明前后端分层、工件流转和模块实现拆解。"},
-    {"key": "delivery_and_acceptance", "title": "实施交付与验收说明", "description": "说明实施阶段划分、交付物和验收关注点。"},
-    {"key": "test_and_quality_plan", "title": "测试策略与质量保障说明", "description": "说明功能测试、截图质量和文档一致性检查策略。"},
-    {"key": "training_and_rollout", "title": "培训推广与上线准备说明", "description": "说明培训组织、上线准备和持续推广建议。"},
+    {"key": "delivery_and_acceptance", "title": "实施交付与验收说明", "description": "说明实施阶段划分、交付物构成和交付核对内容。"},
+    {"key": "test_and_quality_plan", "title": "测试策略与质量保障说明", "description": "说明功能核查、截图质量和文档一致性控制内容。"},
+    {"key": "training_and_rollout", "title": "培训推广与上线准备说明", "description": "说明培训组织方式、上线准备内容和持续使用支撑机制。"},
     {"key": "security_and_maintenance", "title": "安全、审计与运维说明", "description": "说明权限控制、日志留痕和运行维护重点。"},
-    {"key": "appendix", "title": "附录与补充说明", "description": "补充术语、维护记录和模块延展建议。"},
+    {"key": "appendix", "title": "附录与补充说明", "description": "补充术语、维护记录和模块扩展信息。"},
     {"key": "data_governance_and_caliber", "title": "数据治理与口径控制说明", "description": "说明字段口径、数据治理、样例数据和统一命名规则。"},
     {"key": "implementation_milestones_and_collaboration", "title": "项目实施里程碑与角色协同矩阵", "description": "说明项目阶段拆解、角色协同和关键里程碑。"},
     {"key": "operations_checklist_and_incident_response", "title": "运维巡检与异常处置清单", "description": "说明日常巡检项、异常分类和处置流程。"},
-    {"key": "version_evolution_and_change_management", "title": "版本演进与变更管理说明", "description": "说明版本迭代、变更登记和材料同步策略。"},
+    {"key": "version_evolution_and_change_management", "title": "版本演进与变更管理说明", "description": "说明版本迭代、变更登记和材料同步机制。"},
 ]
 
 
@@ -219,7 +219,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 f"若该模块需要承接“{primary_action}”等关键动作，实施阶段应重点验证角色权限、状态流转、列表结果和导出内容是否与业务规则一致。"
             ),
             self._sanitize_doc_text(
-                f"培训与验收时，通常由{roles or '管理员、业务主管、业务专员'}分别从配置维护、日常处理和结果复核角度检查该模块，确保上线后可以直接支撑真实工作流程。"
+                f"在系统使用与交付过程中，{roles or '管理员、业务主管、业务专员'}通常分别从配置维护、日常处理和结果复核角度参与该模块的使用与确认，使页面能够稳定支撑真实工作流程。"
             ),
         ]
 
@@ -229,10 +229,10 @@ class SoftwareManualGenerator(WordTemplateBase):
         checks = "、".join(headers[:4]) if headers else "模块标题、筛选条件、列表结果、状态反馈"
         return [
             self._sanitize_doc_text(
-                f"{title}在验收时，应重点核对{checks}等关键内容是否与业务规则保持一致，并确认页面中的主操作、回显信息和说明书图注能够相互对应。"
+                f"{title}在交付核对过程中，{checks}等关键内容需要与业务规则保持一致，页面中的主操作、回显信息和说明书图注之间也需要形成对应关系。"
             ),
             self._sanitize_doc_text(
-                f"若{title}承接正式业务处理，建议在验收记录中补充样例数据、处理结果、责任角色和时间信息，确保后续培训、运维和审计都有据可依。"
+                f"若{title}承接正式业务处理，相关记录通常会同时保留样例数据、处理结果、责任角色和时间信息，以支撑后续运维、审计和材料归档。"
             ),
             self._sanitize_doc_text(
                 f"模块上线后还应持续关注字段口径变更、列表状态演进和导出格式调整，避免页面、截图和交付文档出现信息漂移。"
@@ -354,7 +354,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 f"{title}在实际运行中常见的异常包括筛选结果为空、状态回显不一致、关键字段缺失、角色权限不足或操作反馈不明确。页面说明中应提前提示这些风险点，帮助使用人员快速判断当前页面是否符合预期。"
             ),
             self._sanitize_doc_text(
-                f"在实施和运维过程中，建议针对{title}建立固定巡检项，包括页面标题、筛选入口、表格字段、主操作按钮、状态标签、时间信息和截图内容是否齐全，以便在问题出现时快速定位。"
+                f"在实施和运维过程中，{title}通常配套固定巡检项，包括页面标题、筛选入口、表格字段、主操作按钮、状态标签、时间信息和截图内容是否齐全，以便在问题出现时快速定位。"
             ),
             self._sanitize_doc_text(
                 f"若页面需要作为说明书截图来源，还应在验收时同步检查页面布局稳定性、中文字体显示、数据样例完整性和图注对应关系，避免页面可运行但截图材料不可用的情况再次发生。"
@@ -725,10 +725,10 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "当用户在不同模块间切换时，系统应保证这些对象的编号、主题、状态和责任信息不会发生语义漂移，使培训、实施和后续版本迭代都能基于同一套对象定义推进。"
             )
         )
-        self.add_title("对象口径治理建议", level=2)
+        self.add_title("对象口径治理说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "建议在项目实施阶段同步建立对象口径表，明确对象名称、主键字段、状态枚举、责任角色、更新时间和归档位置。这样既能提升说明书的可读性，也能减少后续接口联调、截图校验和正式交付时的反复解释。"
+                "项目实施过程中通常同步建立对象口径表，用于明确对象名称、主键字段、状态枚举、责任角色、更新时间和归档位置。该口径表既支撑说明书正文，也支撑接口联调、截图校验和正式交付时的统一表述。"
             )
         )
 
@@ -756,10 +756,10 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "因此，在系统设计中必须把工件流转看作正式开发的一部分，而不是附属产物。只有工件链路清晰，才能在出现异常时通过时间线、阶段日志和工件内容快速定位根因。"
             )
         )
-        self.add_title("一致性控制建议", level=2)
+        self.add_title("一致性控制说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "建议围绕模块名称、页面路由、字段标题、样例数据、截图标题和导出文件名称建立一致性检查。每次版本变更时，只要其中任一环节发生调整，就应同步更新页面、说明书和验收清单，避免线上页面与正式材料脱节。"
+                "系统围绕模块名称、页面路由、字段标题、样例数据、截图标题和导出文件名称建立一致性控制。版本变化涉及上述任一内容时，页面、说明书和交付清单会同步更新，避免运行页面与正式材料脱节。"
             )
         )
 
@@ -771,10 +771,10 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "测试范围应覆盖登录入口、首页概览、模块页面、关键路由跳转、主操作反馈、截图采集、说明书生成、源码文档生成以及整包下载等交付全链路能力。对于真实产品交付，不宜只验证页面能打开，还应验证页面展示内容是否真正反映业务语义。"
             )
         )
-        self.add_title("功能测试建议", level=2)
+        self.add_title("功能核查内容", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "功能测试应重点检查模块标题、筛选区、表格字段、样例数据、按钮文案、状态标签和导出行为。若任何一个模块仍残留占位内容、假数据或与产品主题无关的行业语义，都应视为功能不达标。"
+                "功能核查内容覆盖模块标题、筛选区、表格字段、样例数据、按钮文案、状态标签和导出行为。若任何一个模块仍残留占位内容、假数据或与产品主题无关的行业语义，则页面内容与当前产品主题不一致。"
             )
         )
         self.add_title("文档一致性测试", level=2)
@@ -796,10 +796,10 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def generate_training_and_rollout(self) -> None:
         self.add_title("培训推广与上线准备说明", level=1)
-        self.add_title("培训分层建议", level=2)
+        self.add_title("培训分层说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"建议围绕{'、'.join(self._role_profiles()[:4])}等角色设计差异化培训内容。管理角色重点理解首页看板、权限边界与结果汇总，执行角色重点掌握筛选、录入、处理和导出操作，复核角色重点关注状态流转、结果校验和材料归档。"
+                f"系统培训内容围绕{'、'.join(self._role_profiles()[:4])}等角色进行分层组织。管理角色重点理解首页看板、权限边界与结果汇总，执行角色重点掌握筛选、录入、处理和导出操作，复核角色重点关注状态流转、结果校验和材料归档。"
             )
         )
         self.add_title("上线准备项", level=2)
@@ -808,15 +808,15 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "上线前应完成账号准备、角色映射、默认演示数据确认、模块路由检查、截图与说明书校验、导出链路核查以及版本信息留档。只有同时满足运行、展示和文档交付三方面要求，才适合进入正式上线窗口。"
             )
         )
-        self.add_title("推广与持续使用建议", level=2)
+        self.add_title("推广与持续使用说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "系统投入使用后，建议以说明书和截图清单为培训底稿，结合真实页面开展场景化演示。对于首次接触系统的使用单位，可从登录、首页、核心模块、导出结果四条主线组织推广材料，帮助用户快速建立整体认知。"
+                "系统投入使用后，说明书和截图清单共同构成培训底稿，并结合真实页面开展场景化演示。对于首次接触系统的使用单位，培训材料通常围绕登录、首页、核心模块和导出结果四条主线组织，帮助使用角色快速建立整体认知。"
             )
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                "在持续使用阶段，建议按月或按版本整理页面变更、字段调整、模块新增和说明书更新点，使培训资料与当前系统始终保持同步，不让文档成为过时附件。"
+                "在持续使用阶段，页面变更、字段调整、模块新增和说明书更新点会按月份或版本维度整理，使培训资料与当前系统保持同步，避免文档脱离实际页面。"
             )
         )
 
@@ -828,17 +828,17 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "本文档中的“模块”通常指具备独立页面入口和业务职责的功能单元；“工件”指任务在执行过程中生成并可复核的中间或最终产物；“交付物”指说明书、源码文档、申请表、截图材料和下载包等正式对外交付内容。"
             )
         )
-        self.add_title("维护记录建议", level=2)
+        self.add_title("维护记录说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "建议在后续版本中维护变更记录表，记录每次版本迭代涉及的模块、字段、截图、导出物和说明书章节变动情况。这样既便于产品团队回顾，也便于客户方在正式验收时快速理解版本差异。"
+                "后续版本通常维护变更记录表，用于记录每次版本迭代涉及的模块、字段、截图、导出物和说明书章节变化。该记录既便于内部回顾，也便于交付阶段理解版本差异。"
             )
         )
         self.add_title("模块补充清单", level=2)
         for module in self._module_profiles():
             self.add_paragraph(
                 self._sanitize_doc_text(
-                    f"{module.get('title', '当前模块')}：建议补充字段口径、责任角色、主操作入口、状态流转、导出结果和培训要点等内容，作为后续版本迭代与项目复盘的长期参考。"
+                    f"{module.get('title', '当前模块')}：附录中补充字段口径、责任角色、主操作入口、状态流转、导出结果和培训要点等信息，用于后续版本迭代与项目复盘时统一参考。"
                 )
             )
 
@@ -852,7 +852,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"对于{self.product_name}这类真实业务产品，建议在项目实施早期同步建立字段口径表，明确字段定义、来源系统、更新频率、展示位置和归档用途，从源头减少页面、截图和说明书之间的语义偏差。"
+                f"对于{self.product_name}这类真实业务产品，项目实施早期通常同步建立字段口径表，明确字段定义、来源系统、更新频率、展示位置和归档用途，从源头减少页面、截图和说明书之间的语义偏差。"
             )
         )
         self.add_title("样例数据与页面一致性", level=2)
@@ -864,13 +864,13 @@ class SoftwareManualGenerator(WordTemplateBase):
         for module in self._module_profiles()[:6]:
             self.add_paragraph(
                 self._sanitize_doc_text(
-                    f"{module.get('title', '当前模块')}建议重点核对模块标题、表格字段、筛选条件、主操作入口和结果回显是否与截图图注、页面说明和导出材料保持一致。"
+                    f"{module.get('title', '当前模块')}对应模块标题、表格字段、筛选条件、主操作入口和结果回显，需要与截图图注、页面说明和导出材料保持一致。"
                 )
             )
 
     def generate_implementation_milestones_and_collaboration(self) -> None:
         self.add_title("项目实施里程碑与角色协同矩阵", level=1)
-        self.add_title("实施里程碑建议", level=2)
+        self.add_title("实施里程碑说明", level=2)
         milestones = [
             "完成需求确认、业务对象梳理和角色职责对齐",
             "完成页面结构设计、模块顺序确认和字段口径冻结",
@@ -905,7 +905,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         ]
         for idx, item in enumerate(checklist, start=1):
             self.add_paragraph(f"{idx}. {item}")
-        self.add_title("异常处置建议", level=2)
+        self.add_title("异常处置说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
                 "若运行中发现页面缺页、截图缺失、说明书章节异常、导出文件不一致或任务长时间停留在单阶段，应优先结合阶段日志、工件落盘时间、运行清单和截图清单定位问题来源，再执行定点修复。"
@@ -919,10 +919,10 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def generate_version_evolution_and_change_management(self) -> None:
         self.add_title("版本演进与变更管理说明", level=1)
-        self.add_title("版本演进建议", level=2)
+        self.add_title("版本演进说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"{self.product_name}在后续版本演进中，建议优先围绕模块新增、字段调整、角色变化、截图更新和说明书章节同步建立变更记录，确保版本差异可以被客户、实施人员和交付人员快速理解。"
+                f"{self.product_name}在后续版本演进中，会围绕模块新增、字段调整、角色变化、截图更新和说明书章节同步建立变更记录，确保版本差异可以被实施人员和交付人员快速理解。"
             )
         )
         self.add_paragraph(
@@ -1017,15 +1017,15 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "在真实交付过程中，这种数据联动方式可以减少前端页面、截图材料和文档正文之间的语义漂移，提升验收、培训和后续维护的一致性。"
             )
         )
-        self.add_title("研发测试与验收建议", level=2)
+        self.add_title("研发测试与验收情况", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "建议在研发阶段同步执行页面可访问性检查、关键路由检查、截图质量检查、说明书结构检查和导出物一致性检查。只有页面真实渲染了模块字段和样例数据，截图与说明书才能真正反映软件成品质量。"
+                "系统研发阶段同步覆盖页面可访问性检查、关键路由检查、截图质量检查、说明书结构检查和导出物一致性检查。只有页面真实渲染模块字段和样例数据，截图与说明书才能准确反映软件成品质量。"
             )
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                "验收时应重点核对模块标题、列表字段、数据样例、截图数量、图注描述、角色权限说明和导出文件名称是否一致，并结合时间线日志确认每个阶段都完成了预期工作。"
+                "系统交付核对内容覆盖模块标题、列表字段、数据样例、截图数量、图注描述、角色权限说明和导出文件名称，并结合时间线日志确认各阶段产物均已完成。"
             )
         )
 
@@ -1039,13 +1039,13 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"对于{self.product_name}这类真实业务产品，建议在需求确认阶段就把主题对象、角色职责、模块顺序、字段口径和导出材料要求整理清楚，减少后续页面和文档反复返工。"
+                f"对于{self.product_name}这类真实业务产品，需求确认阶段会同步整理主题对象、角色职责、模块顺序、字段口径和导出材料要求，从而减少后续页面和文档返工。"
             )
         )
-        self.add_title("培训与上线建议", level=2)
+        self.add_title("培训与上线说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"上线前建议围绕{'、'.join(self._role_profiles()[:4])}等角色开展分角色培训，分别说明首页看板、模块入口、关键字段、主操作、异常反馈和结果导出方式，使不同岗位都能够按照各自职责进入系统开展工作。"
+                f"上线前会围绕{'、'.join(self._role_profiles()[:4])}等角色开展分角色培训，分别说明首页看板、模块入口、关键字段、主操作、异常反馈和结果导出方式，使不同岗位都能够按照各自职责进入系统开展工作。"
             )
         )
         self.add_paragraph(
@@ -1053,7 +1053,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "培训资料应与说明书、截图和真实页面保持一致，避免培训话术与系统实际界面不一致。对于需要正式申报、归档或交付的软件产品，还应同步整理源码文档、申请表、版本信息和下载包。"
             )
         )
-        self.add_title("交付物清单建议", level=2)
+        self.add_title("交付物清单说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
                 "标准交付物通常包括运行中的应用页面、页面截图清单、软件说明书、源码文档、申请表、运行清单、项目画像和发布包。若客户需要正式验收材料，还可补充阶段日志、截图质量记录和版本说明。"
@@ -1064,10 +1064,10 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "验收环节应把截图数量、说明书页数、关键章节完整度和导出包可下载性作为硬指标；只有同时满足页面可运行、内容可复核和材料可归档，才算真正完成交付。"
             )
         )
-        self.add_title("后续迭代建议", level=2)
+        self.add_title("后续迭代说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "后续版本迭代时，建议先更新项目画像中的模块语义、字段示例和角色分工，再同步更新页面、截图和说明书。这样可以保证版本升级不仅体现在代码中，也能完整反映到交付文档与培训材料中。"
+                "后续版本迭代时，项目画像中的模块语义、字段示例和角色分工会先完成同步更新，随后再更新页面、截图和说明书，从而保证版本变化不仅体现在代码中，也完整反映到交付文档与培训材料中。"
             )
         )
 
@@ -1093,7 +1093,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                "在版本迭代过程中，建议优先核对模块标题、字段口径、页面路由、截图数量、说明书页数和导出物一致性，确保软件功能、技术说明和交付内容保持同步更新。"
+                "在版本迭代过程中，模块标题、字段口径、页面路由、截图数量、说明书页数和导出物一致性会被同步核对，以确保软件功能、技术说明和交付内容保持同步更新。"
             )
         )
 

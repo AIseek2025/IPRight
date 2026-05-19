@@ -59,6 +59,13 @@ def test_manual_excludes_removed_sections_and_text():
     assert "运行维护说明" in joined
     assert "数据与材料管理说明" not in joined
     assert "常见问题" not in joined
+    assert "研发测试与验收建议" not in joined
+    assert "功能测试建议" not in joined
+    assert "培训与上线建议" not in joined
+    assert "交付物清单建议" not in joined
+    assert "后续迭代建议" not in joined
+    assert "建议在研发阶段同步执行" not in joined
+    assert "验收时应重点核对" not in joined
 
 
 def test_manual_normalizes_spacing_and_ui_symbols():
@@ -538,7 +545,7 @@ def test_task_profile_prefers_prd_summary_semantics_over_platform_defaults():
     assert profile["project_dna"]["source_of_truth"] == "raw_user_request"
 
 
-def test_task_profile_visual_profile_aligns_with_top_tabs_blueprint():
+def test_task_profile_visual_profile_uses_non_sidebar_blueprint():
     profile = build_task_profile(
         keyword="物流调度管理后台",
         product_name="物流调度管理后台",
@@ -552,11 +559,16 @@ def test_task_profile_visual_profile_aligns_with_top_tabs_blueprint():
     )
 
     for payload in (profile, seed):
-        assert payload["experience_blueprint"]["navigation_variant"] == "top_tabs"
+        assert payload["experience_blueprint"]["navigation_variant"] in {"top_tabs", "indexed", "sectioned"}
         assert "sidebar" not in payload["visual_profile"]["name"]
-        assert payload["visual_profile"]["chrome_treatment"] == "top_tabs"
-        assert "顶部" in payload["visual_profile"]["layout_signal"]
-        assert "左侧栏" in payload["visual_profile"]["layout_signal"]
+        expected_treatment = {
+            "top_tabs": "top_tabs",
+            "indexed": "indexed_topbar",
+            "sectioned": "sectioned_header",
+        }[payload["experience_blueprint"]["navigation_variant"]]
+        assert payload["visual_profile"]["chrome_treatment"] == expected_treatment
+        assert any(token in payload["visual_profile"]["layout_signal"] for token in ("顶部", "分段", "索引"))
+        assert "避免左侧竖栏后台" in payload["visual_profile"]["layout_signal"]
 
 
 def test_architecture_diagram_changes_with_project_profile():
