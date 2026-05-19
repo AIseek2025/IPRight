@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import uuid
@@ -30,6 +31,7 @@ from workers.stages.build_support import (
     repair_invalid_core_files,
     repair_invalid_module_pages,
 )
+from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
 from workers.stages.handlers import (
     _load_prd_summary,
     _merge_manual_llm_content,
@@ -1108,10 +1110,37 @@ export default function WorkflowPage() {
         assert '"@fontsource/noto-sans-sc": "latest"' in updated
         assert '"antd": "^5.15.0"' in updated
         assert '"@ant-design/icons": "^5.3.0"' in updated
-        assert '"@ant-design/pro-components": "^2.8.6"' in updated
         assert '"dayjs": "^1.11.0"' in updated
+
+    def test_sync_frontend_dependencies_only_keeps_used_optional_packages(self, tmp_path):
+        frontend_root = tmp_path / "frontend"
+        src_root = frontend_root / "src"
+        src_root.mkdir(parents=True, exist_ok=True)
+        package_json = frontend_root / "package.json"
+        package_json.write_text(
+            json.dumps(
+                {
+                    "dependencies": {
+                        "react": "^18.3.0",
+                        "@ant-design/pro-components": "^2.8.6",
+                        "echarts": "^5.5.0",
+                        "echarts-for-react": "^3.0.2",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_root / "Dashboard.tsx").write_text(
+            "import ReactECharts from 'echarts-for-react';\nexport default function Dashboard(){ return <div />; }\n",
+            encoding="utf-8",
+        )
+
+        sync_frontend_dependencies(str(frontend_root))
+
+        updated = package_json.read_text(encoding="utf-8")
         assert '"echarts": "^5.5.0"' in updated
         assert '"echarts-for-react": "^3.0.2"' in updated
+        assert '"@ant-design/pro-components"' not in updated
 
     def test_ensure_backend_dependencies_adds_pyjwt(self, tmp_path):
         backend_root = tmp_path / "backend"

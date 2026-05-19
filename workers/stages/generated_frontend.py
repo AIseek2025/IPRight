@@ -23,6 +23,70 @@ def _write_json(path: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+_CORE_FRONTEND_DEPENDENCIES = {
+    "@fontsource/noto-sans-sc": "latest",
+    "@ant-design/icons": "^5.3.0",
+    "antd": "^5.15.0",
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.0",
+}
+
+_OPTIONAL_FRONTEND_DEPENDENCIES = {
+    "@ant-design/pro-components": "^2.8.6",
+    "echarts": "^5.5.0",
+    "echarts-for-react": "^3.0.2",
+}
+
+
+def _iter_frontend_source_imports(frontend_root: str) -> set[str]:
+    src_root = Path(frontend_root) / "src"
+    if not src_root.exists():
+        return set()
+
+    imports: set[str] = set()
+    import_re = re.compile(r"""(?:from|import)\s+['"](?P<module>[^'"]+)['"]""")
+    for source_path in src_root.rglob("*"):
+        if source_path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+            continue
+        content = source_path.read_text(encoding="utf-8")
+        for match in import_re.finditer(content):
+            imports.add(match.group("module"))
+    return imports
+
+
+def sync_frontend_dependencies(frontend_root: str) -> None:
+    package_json_path = Path(frontend_root) / "package.json"
+    if not package_json_path.exists():
+        return
+
+    package_json = json.loads(package_json_path.read_text(encoding="utf-8"))
+    dependencies = package_json.setdefault("dependencies", {})
+    for name, version in _CORE_FRONTEND_DEPENDENCIES.items():
+        dependencies.setdefault(name, version)
+
+    imported_modules = _iter_frontend_source_imports(frontend_root)
+    needs_pro_components = "@ant-design/pro-components" in imported_modules
+    needs_echarts_for_react = "echarts-for-react" in imported_modules
+    needs_echarts = needs_echarts_for_react or "echarts" in imported_modules
+
+    if needs_pro_components:
+        dependencies.setdefault("@ant-design/pro-components", _OPTIONAL_FRONTEND_DEPENDENCIES["@ant-design/pro-components"])
+    else:
+        dependencies.pop("@ant-design/pro-components", None)
+
+    if needs_echarts:
+        dependencies.setdefault("echarts", _OPTIONAL_FRONTEND_DEPENDENCIES["echarts"])
+    else:
+        dependencies.pop("echarts", None)
+
+    if needs_echarts_for_react:
+        dependencies.setdefault("echarts-for-react", _OPTIONAL_FRONTEND_DEPENDENCIES["echarts-for-react"])
+    else:
+        dependencies.pop("echarts-for-react", None)
+
+    _write_json(str(package_json_path), package_json)
+
+
 def _ensure_frontend_dependencies(frontend_root: str) -> None:
     package_json_path = os.path.join(frontend_root, "package.json")
     if not os.path.exists(package_json_path):
@@ -30,14 +94,8 @@ def _ensure_frontend_dependencies(frontend_root: str) -> None:
     with open(package_json_path, "r", encoding="utf-8") as f:
         package_json = json.load(f)
     dependencies = package_json.setdefault("dependencies", {})
-    dependencies.setdefault("@fontsource/noto-sans-sc", "latest")
-    dependencies.setdefault("@ant-design/icons", "^5.3.0")
-    dependencies.setdefault("@ant-design/pro-components", "^2.8.6")
-    dependencies.setdefault("antd", "^5.15.0")
-    dependencies.setdefault("axios", "^1.6.0")
-    dependencies.setdefault("dayjs", "^1.11.0")
-    dependencies.setdefault("echarts", "^5.5.0")
-    dependencies.setdefault("echarts-for-react", "^3.0.2")
+    for name, version in _CORE_FRONTEND_DEPENDENCIES.items():
+        dependencies.setdefault(name, version)
     _write_json(package_json_path, package_json)
 
 
@@ -1075,6 +1133,9 @@ def _ensure_main_imports_font_css(frontend_root: str) -> None:
 def _write_task_specific_app(frontend_root: str, backend_root: str, profile: dict) -> None:
     _ensure_frontend_dependencies(frontend_root)
     _ensure_backend_dependencies(backend_root)
+    package_lock_path = Path(frontend_root) / "package-lock.json"
+    if package_lock_path.exists():
+        package_lock_path.unlink()
     _write_text(os.path.join(frontend_root, "src", "generated", "appProfile.ts"), build_frontend_profile_source(profile))
     _write_text(os.path.join(frontend_root, "src", "font.css"), _render_font_css())
     _write_text(os.path.join(frontend_root, "src", "App.css"), _render_app_css())

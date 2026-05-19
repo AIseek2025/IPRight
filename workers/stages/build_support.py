@@ -11,6 +11,7 @@ from workers.stages.generated_frontend import (
     _camel_name,
     _render_module_page,
     _write_task_specific_app,
+    sync_frontend_dependencies,
 )
 
 FRONTEND_UI_FONT_STACK = "'IPRight CJK', 'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif"
@@ -1316,6 +1317,8 @@ async def generate_task_app_code(
             template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
             apply_error=apply_error,
         ), f"App code generation failed: {apply_error}"
+
+    sync_frontend_dependencies(os.path.join(app_root, "frontend"))
 
     return _build_codegen_report(
         repaired_core_paths=sorted(repaired_core_paths),
