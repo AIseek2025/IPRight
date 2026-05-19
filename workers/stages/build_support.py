@@ -29,6 +29,7 @@ _FRONTEND_FONT_MATCH_TOKENS = (
 )
 _FONT_FAMILY_PROP_RE = re.compile(r"fontFamily\s*:\s*(?P<value>`[^`]*`|'[^'\n]*'|\"[^\"\n]*\")")
 _FONT_FAMILY_CSS_RE = re.compile(r"(font-family\s*:\s*)(?P<value>[^;]+)(;)", re.IGNORECASE)
+_MODULE_INVALID_RETRY_BATCH_SIZE = 2
 
 
 def _write_text(path: str, content: str) -> None:
@@ -54,6 +55,15 @@ def _select_module_pages_for_files(requirements: dict, required_files: list[str]
         page
         for page in requirements.get("module_pages", [])
         if page.get("file_path") in required_files
+    ]
+
+
+def _chunk_required_files(required_files: list[str], chunk_size: int) -> list[list[str]]:
+    if chunk_size <= 0:
+        return [list(required_files)]
+    return [
+        list(required_files[index:index + chunk_size])
+        for index in range(0, len(required_files), chunk_size)
     ]
 
 
@@ -1066,113 +1076,117 @@ async def generate_task_app_code(
     if invalid_module_paths and batches:
         llm = get_llm_client()
         for attempt_no in range(1, 3):
-            invalid_module_previews = {
-                relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
-                for relative_path in invalid_module_paths
-            }
-            retry_requirements = {
-                **{
-                    key: value
-                    for key, value in codegen_requirements.items()
-                    if key != "module_pages"
-                },
-                "required_files": list(invalid_module_paths),
-                "module_pages": _select_module_pages_for_files(codegen_requirements, invalid_module_paths),
-                "validation_hints": _build_module_validation_hints(profile, invalid_module_paths),
-                "invalid_module_previews": invalid_module_previews,
-            }
-            if progress_callback is not None:
-                await progress_callback(
-                    {
-                        "phase": "attempt_started",
-                        "batch": "module_invalid_retry",
-                        "attempt": attempt_no,
-                        "required_files": list(retry_requirements["required_files"]),
-                        "required_file_count": len(retry_requirements["required_files"]),
-                    }
-                )
-            codegen_resp = await llm.generate_app_code(prd_content, work_order_content, retry_requirements)
-            if not codegen_resp.success or not codegen_resp.structured:
+            retry_chunks = _chunk_required_files(invalid_module_paths, _MODULE_INVALID_RETRY_BATCH_SIZE)
+            for required_chunk in retry_chunks:
+                invalid_module_previews = {
+                    relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
+                    for relative_path in required_chunk
+                }
+                retry_requirements = {
+                    **{
+                        key: value
+                        for key, value in codegen_requirements.items()
+                        if key != "module_pages"
+                    },
+                    "required_files": list(required_chunk),
+                    "module_pages": _select_module_pages_for_files(codegen_requirements, required_chunk),
+                    "validation_hints": _build_module_validation_hints(profile, required_chunk),
+                    "invalid_module_previews": invalid_module_previews,
+                }
                 if progress_callback is not None:
                     await progress_callback(
                         {
-                            "phase": "attempt_failed",
+                            "phase": "attempt_started",
                             "batch": "module_invalid_retry",
                             "attempt": attempt_no,
                             "required_files": list(retry_requirements["required_files"]),
+                            "required_file_count": len(retry_requirements["required_files"]),
+                        }
+                    )
+                codegen_resp = await llm.generate_app_code(prd_content, work_order_content, retry_requirements)
+                if not codegen_resp.success or not codegen_resp.structured:
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": "module_invalid_retry",
+                                "attempt": attempt_no,
+                                "required_files": list(retry_requirements["required_files"]),
+                                "generated_paths": [],
+                                "pending_files": list(required_chunk),
+                                "error": codegen_resp.error or "unknown error",
+                            }
+                        )
+                    batch_reports.append(
+                        {
+                            "batch": "module_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(required_chunk),
                             "generated_paths": [],
-                            "pending_files": list(retry_requirements["required_files"]),
+                            "fallback_to_template": True,
                             "error": codegen_resp.error or "unknown error",
                         }
                     )
-                batch_reports.append(
-                    {
-                        "batch": "module_invalid_retry",
-                        "attempt": attempt_no,
-                        "required_files": list(invalid_module_paths),
-                        "generated_paths": [],
-                        "fallback_to_template": True,
-                        "error": codegen_resp.error or "unknown error",
-                    }
-                )
-                continue
-            batch_files = codegen_resp.structured.get("files", {})
-            if not isinstance(batch_files, dict):
+                    continue
+                batch_files = codegen_resp.structured.get("files", {})
+                if not isinstance(batch_files, dict):
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": "module_invalid_retry",
+                                "attempt": attempt_no,
+                                "required_files": list(retry_requirements["required_files"]),
+                                "generated_paths": [],
+                                "pending_files": list(required_chunk),
+                                "error": "files payload missing",
+                            }
+                        )
+                    batch_reports.append(
+                        {
+                            "batch": "module_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(required_chunk),
+                            "generated_paths": [],
+                            "fallback_to_template": True,
+                            "error": "files payload missing",
+                        }
+                    )
+                    continue
+                regenerated_paths: list[str] = []
+                for relative_path, content in batch_files.items():
+                    if relative_path in required_chunk and content:
+                        generated_files[relative_path] = str(content)
+                        regenerated_paths.append(relative_path)
+                generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
                 if progress_callback is not None:
                     await progress_callback(
                         {
-                            "phase": "attempt_failed",
+                            "phase": "attempt_completed",
                             "batch": "module_invalid_retry",
                             "attempt": attempt_no,
                             "required_files": list(retry_requirements["required_files"]),
-                            "generated_paths": [],
-                            "pending_files": list(retry_requirements["required_files"]),
-                            "error": "files payload missing",
+                            "generated_paths": sorted(regenerated_paths),
+                            "pending_files": list(invalid_module_paths),
+                            "fallback_to_template": bool(invalid_module_paths),
                         }
                     )
                 batch_reports.append(
                     {
-                        "batch": "module_invalid_retry",
-                        "attempt": attempt_no,
-                        "required_files": list(invalid_module_paths),
-                        "generated_paths": [],
-                        "fallback_to_template": True,
-                        "error": "files payload missing",
-                    }
-                )
-                continue
-            regenerated_paths: list[str] = []
-            for relative_path, content in batch_files.items():
-                if relative_path in invalid_module_paths and content:
-                    generated_files[relative_path] = str(content)
-                    regenerated_paths.append(relative_path)
-            generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
-            if progress_callback is not None:
-                await progress_callback(
-                    {
-                        "phase": "attempt_completed",
                         "batch": "module_invalid_retry",
                         "attempt": attempt_no,
                         "required_files": list(retry_requirements["required_files"]),
                         "generated_paths": sorted(regenerated_paths),
-                        "pending_files": list(invalid_module_paths),
                         "fallback_to_template": bool(invalid_module_paths),
+                        "error": (
+                            "still invalid after retry: " + ", ".join(invalid_module_paths)
+                            if invalid_module_paths
+                            else None
+                        ),
                     }
                 )
-            batch_reports.append(
-                {
-                    "batch": "module_invalid_retry",
-                    "attempt": attempt_no,
-                    "required_files": list(retry_requirements["required_files"]),
-                    "generated_paths": sorted(regenerated_paths),
-                    "fallback_to_template": bool(invalid_module_paths),
-                    "error": (
-                        "still invalid after retry: " + ", ".join(invalid_module_paths)
-                        if invalid_module_paths
-                        else None
-                    ),
-                }
-            )
+                if not invalid_module_paths:
+                    break
             if not invalid_module_paths:
                 break
     if invalid_module_paths:

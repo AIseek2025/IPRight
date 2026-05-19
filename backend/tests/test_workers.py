@@ -797,7 +797,12 @@ export default function WorkflowPage() {
 
             async def generate_app_code(self, _prd, _wo, requirements):
                 required = tuple(requirements["required_files"])
-                self.calls.append(required)
+                self.calls.append(
+                    {
+                        "required_files": required,
+                        "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
+                    }
+                )
                 if required == (
                     "frontend/src/App.tsx",
                     "frontend/src/pages/Login.tsx",
@@ -847,18 +852,19 @@ export default function WorkflowPage() {
         report, error = asyncio.run(_run())
         assert error is None
         assert report is not None
+        required_calls = [call["required_files"] for call in llm.calls]
         assert (
             "frontend/src/App.tsx",
             "frontend/src/pages/Login.tsx",
             "frontend/src/pages/Dashboard.tsx",
-        ) in llm.calls
+        ) in required_calls
         assert (
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
-        ) in llm.calls
-        assert ("frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in llm.calls
-        assert ("frontend/src/pages/Dashboard.tsx",) in llm.calls
+        ) in required_calls
+        assert ("frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in required_calls
+        assert ("frontend/src/pages/Dashboard.tsx",) in required_calls
         assert report["generated_file_count"] == 6
 
     def test_generate_task_app_code_retries_invalid_core_files(self, tmp_path, monkeypatch):
@@ -1189,6 +1195,152 @@ export default function WorkflowPage() {
         page_text = (app_root / "frontend/src/pages/WorkflowPage.tsx").read_text(encoding="utf-8")
         assert "新能源债券组合压力测试" in page_text
         assert "mockData" not in page_text
+
+    def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "冷链履约协同平台",
+            "scene": "围绕跨境冷链采购、库存和预警联动进行协同",
+            "industry_scope": "物流供应链",
+            "user_roles": ["采购专员", "库存主管"],
+            "modules": [
+                {
+                    "title": "采购协同",
+                    "key": "purchases",
+                    "route": "/purchases",
+                    "primary_action": "发起采购协同",
+                    "filter_placeholder": "搜索采购单 / 供应商 / 港口",
+                    "table_headers": ["采购单号", "供应商", "港口", "状态"],
+                    "rows": [["PO-001", "海丰冷链", "洋山港", "待提货"]],
+                    "highlights": ["记录跨境提货状态"],
+                    "description": "管理采购与提货协同。",
+                    "page_variant": "records",
+                },
+                {
+                    "title": "库存监控",
+                    "key": "inventory",
+                    "route": "/inventory",
+                    "primary_action": "登记温区批次",
+                    "filter_placeholder": "搜索批次 / 仓库 / 箱号",
+                    "table_headers": ["批次号", "仓库", "温区", "可用量"],
+                    "rows": [["LOT-009", "前海保税仓", "-18C", "128箱"]],
+                    "highlights": ["展示温区占用趋势"],
+                    "description": "监控库存温区与批次。",
+                    "page_variant": "insight",
+                },
+                {
+                    "title": "异常预警",
+                    "key": "alerts",
+                    "route": "/alerts",
+                    "primary_action": "登记异常处置",
+                    "filter_placeholder": "搜索预警编号 / 异常类型",
+                    "table_headers": ["预警编号", "异常类型", "责任人", "状态"],
+                    "rows": [["AL-301", "温控波动", "李调度", "处理中"]],
+                    "highlights": ["串联异常处置时序"],
+                    "description": "跟踪履约异常与处置。",
+                    "page_variant": "timeline",
+                },
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            def __init__(self):
+                self.calls = []
+
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                self.calls.append(
+                    {
+                        "required_files": required,
+                        "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
+                    }
+                )
+                if required == (
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PurchasesPage from './pages/PurchasesPage'; import InventoryPage from './pages/InventoryPage'; import AlertsPage from './pages/AlertsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/purchases' element={<PurchasesPage />} /><Route path='/inventory' element={<InventoryPage />} /><Route path='/alerts' element={<AlertsPage />} /></Routes>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '冷链履约协同平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if not requirements.get("invalid_module_previews"):
+                    files = {
+                        path: f"const mockData = [{{ id: '{idx}' }}]; export default function Page(){{ return <div>{path}</div>; }}"
+                        for idx, path in enumerate(required, start=1)
+                    }
+                    return _Resp(files)
+
+                files = {}
+                for path in required:
+                    if path.endswith("PurchasesPage.tsx"):
+                        files[path] = "import { APP_PROFILE } from '../generated/appProfile'; export default function PurchasesPage(){ return <section><h1>采购协同</h1><div>{APP_PROFILE.product_name}</div><button>发起采购协同</button><table><tbody><tr><td>PO-001</td><td>海丰冷链</td><td>洋山港</td><td>待提货</td></tr></tbody></table></section>; }"
+                    elif path.endswith("InventoryPage.tsx"):
+                        files[path] = "import { APP_PROFILE } from '../generated/appProfile'; export default function InventoryPage(){ return <section><h1>库存监控</h1><div>{APP_PROFILE.product_name}</div><button>登记温区批次</button><table><tbody><tr><td>LOT-009</td><td>前海保税仓</td><td>-18C</td><td>128箱</td></tr></tbody></table></section>; }"
+                    elif path.endswith("AlertsPage.tsx"):
+                        files[path] = "import { APP_PROFILE } from '../generated/appProfile'; export default function AlertsPage(){ return <section><h1>异常预警</h1><div>{APP_PROFILE.product_name}</div><button>登记异常处置</button><table><tbody><tr><td>AL-301</td><td>温控波动</td><td>李调度</td><td>处理中</td></tr></tbody></table></section>; }"
+                return _Resp(files)
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        retry_calls = [
+            call["required_files"]
+            for call in llm.calls
+            if call["invalid_module_previews"]
+        ]
+        assert retry_calls == [
+            ("frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"),
+            ("frontend/src/pages/AlertsPage.tsx",),
+        ]
+        retry_batches = [batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry"]
+        assert [batch["required_files"] for batch in retry_batches] == [
+            ["frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"],
+            ["frontend/src/pages/AlertsPage.tsx"],
+        ]
+        assert "mockData" not in (app_root / "frontend/src/pages/PurchasesPage.tsx").read_text(encoding="utf-8")
+        assert "mockData" not in (app_root / "frontend/src/pages/InventoryPage.tsx").read_text(encoding="utf-8")
+        assert "mockData" not in (app_root / "frontend/src/pages/AlertsPage.tsx").read_text(encoding="utf-8")
 
     def test_runtime_captures_early_exit_logs(self, tmp_path):
         workspace = tmp_path / "workspace"
