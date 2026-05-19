@@ -502,6 +502,11 @@ def repair_invalid_core_files(
         for module in profile.get("modules", [])
         if str(module.get("route", "")).strip()
     ]
+    app_type = str(profile.get("app_type") or "admin_web")
+    blueprint = profile.get("experience_blueprint") or {}
+    visual_profile = profile.get("visual_profile") or {}
+    navigation_variant = str(blueprint.get("navigation_variant") or "").strip()
+    chrome_treatment = str(visual_profile.get("chrome_treatment") or "").strip()
     requires_route_shell = bool(expected_module_imports or expected_module_routes)
     allowed_page_imports = {"Login", "Dashboard", *expected_module_imports}
     required_page_import_lines = [
@@ -522,12 +527,31 @@ def repair_invalid_core_files(
         )
         return any(name not in allowed_page_imports for name in imported_pages)
 
+    def _uses_disallowed_unified_sidebar(content: str) -> bool:
+        if app_type == "desktop_client":
+            return False
+        if navigation_variant not in {"top_tabs", "indexed", "sectioned"} and chrome_treatment not in {
+            "top_tabs",
+            "indexed_topbar",
+            "sectioned_header",
+        }:
+            return False
+        sidebar_tokens = [
+            "Sider",
+            "theme=\"dark\"",
+            "mode=\"inline\"",
+            "左侧深色竖向导航",
+            "左侧导航",
+        ]
+        return _contains_any(content, sidebar_tokens)
+
     validators = {
         "frontend/src/App.tsx": lambda content: (
             "PlaceholderPage" not in content
             and "模块开发中" not in content
             and "ModuleShell" not in content
             and not _references_unknown_page_import(content)
+            and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
             and (
@@ -637,6 +661,16 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
                 + ", ".join(module_routes)
             )
         hints.append("App.tsx 不得输出 PlaceholderPage、'模块开发中' 或统一后台占位壳层。")
+        navigation_variant = str((profile.get("experience_blueprint") or {}).get("navigation_variant") or "").strip()
+        chrome_treatment = str((profile.get("visual_profile") or {}).get("chrome_treatment") or "").strip()
+        if navigation_variant or chrome_treatment:
+            hints.append(
+                "App.tsx 必须落实当前任务指定的壳层方向，navigation_variant="
+                + (navigation_variant or "unknown")
+                + "，chrome_treatment="
+                + (chrome_treatment or "unknown")
+                + "；不得回退为统一左侧深色竖栏后台。"
+            )
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
         hints.append(
             "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
