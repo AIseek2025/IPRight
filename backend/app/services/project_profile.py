@@ -639,7 +639,7 @@ def _seed_index(seed: str, modulo: int) -> int:
     return int(hashlib.md5(seed.encode("utf-8")).hexdigest()[:8], 16) % modulo
 
 
-def _pick_experience_blueprint(product_code: str, preset_key: str) -> dict:
+def _pick_experience_blueprint(product_code: str, preset_key: str, design_seed: str = "") -> dict:
     blueprints = [
         {
             "name": "command_hub",
@@ -668,8 +668,35 @@ def _pick_experience_blueprint(product_code: str, preset_key: str) -> dict:
             "shell_layout_hint": "顶部标题区 + 分段导航 + 协同工作区，可按模块使用二级面板，不要默认整站左侧固定竖栏",
             "tone": "强调岗位协同、分区工作台与任务闭环",
         },
+        {
+            "name": "signal_gallery",
+            "login_variant": "spotlight",
+            "dashboard_variant": "insight",
+            "module_variants": ["insight", "workspace", "operations"],
+            "navigation_variant": "top_tabs",
+            "shell_layout_hint": "顶部信号导航 + 横向概览条 + 画廊式主内容区，不要回退为统一后台侧栏",
+            "tone": "强调专题焦点、关键信号与模块分镜展示",
+        },
+        {
+            "name": "studio_matrix",
+            "login_variant": "briefing",
+            "dashboard_variant": "workspace",
+            "module_variants": ["workspace", "insight", "records"],
+            "navigation_variant": "indexed",
+            "shell_layout_hint": "顶部索引区 + 右侧摘要栏 + 分析工作台，不要回退为同一套模块列表页面",
+            "tone": "强调专题分镜、摘要索引与操作面板并置",
+        },
+        {
+            "name": "mission_sections",
+            "login_variant": "workspace",
+            "dashboard_variant": "command",
+            "module_variants": ["operations", "records", "workspace"],
+            "navigation_variant": "sectioned",
+            "shell_layout_hint": "标题区 + 章节导航 + 任务面板式工作区，避免复用统一左侧深色竖栏",
+            "tone": "强调任务主线、章节切换与分区执行面板",
+        },
     ]
-    return blueprints[_seed_index(f"{product_code}|{preset_key}", len(blueprints))]
+    return blueprints[_seed_index(f"{product_code}|{preset_key}|{design_seed}", len(blueprints))]
 
 
 def _normalize_app_type(value: str | None) -> str | None:
@@ -743,6 +770,7 @@ def _build_visual_profile(
     preset_key: str,
     app_type: str,
     experience_blueprint: dict | None = None,
+    design_seed: str = "",
 ) -> dict:
     blueprint = experience_blueprint or {}
     navigation_variant = str(blueprint.get("navigation_variant") or "").strip()
@@ -909,10 +937,26 @@ def _build_visual_profile(
         candidates = sectioned_profiles
     else:
         candidates = default_web_profiles
-    profile = dict(candidates[_seed_index(f"{product_code}|{preset_key}|{app_type}|{navigation_variant}", len(candidates))])
+    profile = dict(candidates[_seed_index(f"{product_code}|{preset_key}|{app_type}|{navigation_variant}|{design_seed}", len(candidates))])
     if shell_layout_hint:
         profile.setdefault("layout_signal", shell_layout_hint)
     return profile
+
+
+def _build_design_seed(
+    keyword: str,
+    product_name: str,
+    industry: str | None,
+    notes: str | None,
+    raw_user_request: dict | None = None,
+) -> str:
+    parts: list[str] = [keyword, product_name, industry or "", notes or ""]
+    if raw_user_request:
+        try:
+            parts.append(json.dumps(raw_user_request, ensure_ascii=False, sort_keys=True))
+        except TypeError:
+            parts.append(str(raw_user_request))
+    return "|".join(part.strip() for part in parts if str(part).strip())
 
 
 def _module_kind(title: str) -> str:
@@ -2424,8 +2468,9 @@ def build_task_profile(
         preset,
         focus_terms,
     )
-    experience_blueprint = _pick_experience_blueprint(product_code, preset.key)
-    visual_profile = _build_visual_profile(product_code, preset.key, app_type, experience_blueprint)
+    design_seed = _build_design_seed(keyword, product_name, industry, notes, raw_user_request)
+    experience_blueprint = _pick_experience_blueprint(product_code, preset.key, design_seed)
+    visual_profile = _build_visual_profile(product_code, preset.key, app_type, experience_blueprint, design_seed)
 
     profile_modules = []
     for idx, title in enumerate(module_titles):
@@ -2492,6 +2537,7 @@ def build_task_profile(
         "version": version,
         "short_name": _short_name(product_name, preset.short_name),
         "product_code": product_code,
+        "design_seed": design_seed,
         "scene": scene,
         "software_category": preset.software_category,
         "industry_scope": industry_scope,
@@ -2559,8 +2605,9 @@ def build_plan_seed(
     module_titles = [module["title"] for module in preset_modules[:5]]
     scene = _compose_scene(keyword or product_name, product_name, industry, module_titles, preset)
     focus_terms = _split_terms(keyword, product_name, industry or "", *module_titles)[:5]
-    blueprint = _pick_experience_blueprint(product_code, preset.key)
-    visual_profile = _build_visual_profile(product_code, preset.key, app_type, blueprint)
+    design_seed = _build_design_seed(keyword, product_name, industry, notes, raw_user_request)
+    blueprint = _pick_experience_blueprint(product_code, preset.key, design_seed)
+    visual_profile = _build_visual_profile(product_code, preset.key, app_type, blueprint, design_seed)
     seed_dna = _build_project_dna(
         keyword=keyword,
         product_name=product_name,
@@ -2589,6 +2636,7 @@ def build_plan_seed(
         "focus_terms": focus_terms,
         "experience_blueprint": blueprint,
         "visual_profile": visual_profile,
+        "design_seed": design_seed,
         "project_dna": seed_dna,
         "differentiation_hint": (
             "必须优先遵循 raw_user_request 中的原始用户输入；"
@@ -2629,6 +2677,8 @@ def build_frontend_profile_source(profile: dict) -> str:
         "  dashboard_metrics: { title: string; value: string; color: string }[];\n"
         "  nav_items: { path: string; label: string; icon: string; code: string }[];\n"
         "  modules: ModuleProfile[];\n"
+        "  focus_terms?: string[];\n"
+        "  design_seed?: string;\n"
         "  visual_profile?: Record<string, string>;\n"
         "  project_dna?: Record<string, unknown>;\n"
         "  differentiation_hint?: string;\n"

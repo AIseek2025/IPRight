@@ -908,6 +908,9 @@ export default function App() {{
   const location = useLocation();
   const isDesktopClient = APP_PROFILE.app_type === 'desktop_client';
   const visualProfile = APP_PROFILE.visual_profile || {{}};
+  const chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'));
+  const currentLabel = navAliases[location.pathname] || '系统首页';
+  const focusTerms = Array.isArray(APP_PROFILE.focus_terms) ? APP_PROFILE.focus_terms.slice(0, 4) : [];
 
   const handleLogin = () => {{
     localStorage.setItem(AUTH_KEY, 'true');
@@ -925,141 +928,364 @@ export default function App() {{
     return <Login onLogin={{handleLogin}} />;
   }}
 
+  const routes = (
+    <Routes>
+{routes_block}
+    </Routes>
+  );
+
   return (
     <div style={{{{ minHeight: '100vh', background: (visualProfile.shell_background as string) || '#f8fafc', fontFamily: uiFont }}}}>
       {{isDesktopClient ? (
-        <header style={{{{
-          height: 54,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 16px 0 18px',
-          background: (visualProfile.nav_background as string) || '#111827',
-          color: (visualProfile.nav_text as string) || '#fff',
-          borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
-        }}}}>
-          <div style={{{{ display: 'flex', alignItems: 'center', gap: 12 }}}}>
-            <div style={{{{ display: 'flex', gap: 6, alignItems: 'center' }}}}>
-              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fb7185', display: 'inline-block' }}}} />
-              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }}}} />
-              <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }}}} />
+        <>
+          <header style={{{{
+            height: 54,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 16px 0 18px',
+            background: (visualProfile.nav_background as string) || '#111827',
+            color: (visualProfile.nav_text as string) || '#fff',
+            borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
+          }}}}>
+            <div style={{{{ display: 'flex', alignItems: 'center', gap: 12 }}}}>
+              <div style={{{{ display: 'flex', gap: 6, alignItems: 'center' }}}}>
+                <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fb7185', display: 'inline-block' }}}} />
+                <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }}}} />
+                <span style={{{{ width: 10, height: 10, borderRadius: '50%', background: '#4ade80', display: 'inline-block' }}}} />
+              </div>
+              <div style={{{{ fontWeight: 700 }}}}>{{APP_PROFILE.product_name}}</div>
+              <div style={{{{ fontSize: 12, opacity: 0.78 }}}}>桌面客户端工作台</div>
             </div>
-            <div style={{{{ fontWeight: 700 }}}}>{{APP_PROFILE.product_name}}</div>
-            <div style={{{{ fontSize: 12, opacity: 0.78 }}}}>桌面客户端工作台</div>
-          </div>
-          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
-            <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.08)', fontSize: 12 }}}}>
-              {{APP_PROFILE.version}}
-            </div>
-            <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(37, 99, 235, 0.22)', fontSize: 12, color: '#dbeafe' }}}}>
-              {{APP_PROFILE.short_name}}
-            </div>
-          </div>
-        </header>
-      ) : null}}
-      {{isDesktopClient ? (
-        <section style={{{{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 16,
-          padding: '12px 18px',
-          background: '#f8fafc',
-          borderBottom: '1px solid rgba(203, 213, 225, 0.8)',
-        }}}}>
-          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}}}>
-            <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#dbeafe', color: '#1d4ed8', fontWeight: 700, fontSize: 12 }}}}>
-              当前模块 {{navAliases[location.pathname] || '系统首页'}}
-            </span>
-            <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#e2e8f0', color: '#334155', fontSize: 12 }}}}>
-              {{APP_PROFILE.scene}}
-            </span>
-          </div>
-          <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
-            <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>刷新视图</button>
-            <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', fontFamily: uiFont }}}}>打开工作区</button>
-          </div>
-        </section>
-      ) : null}}
-      <div style={{{{ display: 'flex', minHeight: isDesktopClient ? 'calc(100vh - 102px)' : '100vh' }}}}>
-      <nav style={{{{
-        width: isDesktopClient ? 268 : 296,
-        minWidth: isDesktopClient ? 268 : 296,
-        background: (visualProfile.nav_background as string) || '#0f172a',
-        color: (visualProfile.nav_text as string) || '#fff',
-        padding: isDesktopClient ? 16 : 20,
-        borderRight: isDesktopClient ? '1px solid rgba(148, 163, 184, 0.18)' : 'none',
-        writingMode: 'horizontal-tb',
-        textOrientation: 'mixed',
-      }}}}>
-        <div style={{{{ marginBottom: 24 }}}}>
-          {{isDesktopClient ? (
-            <div style={{{{ marginBottom: 14, padding: '8px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', fontSize: 12, letterSpacing: 1.1 }}}}>
-              桌面客户端工作台
-            </div>
-          ) : null}}
-          <div style={{{{
-            fontSize: 20,
-            fontWeight: 700,
-            marginBottom: 8,
-            lineHeight: 1.45,
-            writingMode: 'horizontal-tb',
-            textOrientation: 'mixed',
-            wordBreak: 'keep-all',
-            overflowWrap: 'break-word',
-            whiteSpace: 'normal',
-          }}}}>{{APP_PROFILE.product_name}}</div>
-          <div style={{{{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '6px 10px', borderRadius: 999, background: 'rgba(22, 119, 255, 0.18)', color: '#dbeafe', fontWeight: 700 }}}}>
-            <span>当前版本</span>
-            <span>{{APP_PROFILE.version}}</span>
-          </div>
-          <div style={{{{ marginBottom: 10, fontSize: 12, color: '#93c5fd', letterSpacing: 1.4 }}}}>{{APP_PROFILE.short_name}}</div>
-          <div style={{{{ fontSize: 13, lineHeight: 1.7, color: '#cbd5e1' }}}}>{{APP_PROFILE.scene}}</div>
-        </div>
-        {{APP_PROFILE.nav_items.map((item) => (
-          <div
-            key={{item.path}}
-            onClick={{() => navigate(item.path)}}
-            style={{{{
-              padding: '10px 14px',
-              cursor: 'pointer',
-              borderRadius: 10,
-              background: location.pathname === item.path ? ((visualProfile.accent as string) || '#1677ff') : 'transparent',
-              marginBottom: 8,
-              color: (visualProfile.nav_text as string) || '#fff',
-            }}}}
-          >
-            <div style={{{{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}}}>
-              <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}}}>
-                <span style={{{{ width: 20, textAlign: 'center', flexShrink: 0 }}}}>{{item.icon}}</span>
-                <div style={{{{ minWidth: 0 }}}}>
-                  <div style={{{{
-                    fontWeight: 600,
-                    lineHeight: 1.45,
-                    writingMode: 'horizontal-tb',
-                    textOrientation: 'mixed',
-                    wordBreak: 'keep-all',
-                    overflowWrap: 'break-word',
-                    whiteSpace: 'normal',
-                  }}}}>{{navAliases[item.path] || item.label || '功能页面'}}</div>
-                </div>
+            <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
+              <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.08)', fontSize: 12 }}}}>
+                {{APP_PROFILE.version}}
+              </div>
+              <div style={{{{ padding: '6px 10px', borderRadius: 999, background: 'rgba(37, 99, 235, 0.22)', fontSize: 12, color: '#dbeafe' }}}}>
+                {{APP_PROFILE.short_name}}
               </div>
             </div>
+          </header>
+          <section style={{{{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            padding: '12px 18px',
+            background: '#f8fafc',
+            borderBottom: '1px solid rgba(203, 213, 225, 0.8)',
+          }}}}>
+            <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}}}>
+              <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#dbeafe', color: '#1d4ed8', fontWeight: 700, fontSize: 12 }}}}>
+                当前模块 {{currentLabel}}
+              </span>
+              <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#e2e8f0', color: '#334155', fontSize: 12 }}}}>
+                {{APP_PROFILE.scene}}
+              </span>
+            </div>
+            <div style={{{{ display: 'flex', alignItems: 'center', gap: 10 }}}}>
+              <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>刷新视图</button>
+              <button type="button" style={{{{ padding: '8px 12px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', fontFamily: uiFont }}}}>打开工作区</button>
+            </div>
+          </section>
+          <div style={{{{ display: 'flex', minHeight: 'calc(100vh - 102px)' }}}}>
+            <nav style={{{{
+              width: 268,
+              minWidth: 268,
+              background: (visualProfile.nav_background as string) || '#0f172a',
+              color: (visualProfile.nav_text as string) || '#fff',
+              padding: 16,
+              borderRight: '1px solid rgba(148, 163, 184, 0.18)',
+              writingMode: 'horizontal-tb',
+              textOrientation: 'mixed',
+            }}}}>
+              <div style={{{{ marginBottom: 24 }}}}>
+                <div style={{{{ marginBottom: 14, padding: '8px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', fontSize: 12, letterSpacing: 1.1 }}}}>
+                  桌面客户端工作台
+                </div>
+                <div style={{{{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  marginBottom: 8,
+                  lineHeight: 1.45,
+                  writingMode: 'horizontal-tb',
+                  textOrientation: 'mixed',
+                  wordBreak: 'keep-all',
+                  overflowWrap: 'break-word',
+                  whiteSpace: 'normal',
+                }}}}>{{APP_PROFILE.product_name}}</div>
+                <div style={{{{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '6px 10px', borderRadius: 999, background: 'rgba(22, 119, 255, 0.18)', color: '#dbeafe', fontWeight: 700 }}}}>
+                  <span>当前版本</span>
+                  <span>{{APP_PROFILE.version}}</span>
+                </div>
+                <div style={{{{ marginBottom: 10, fontSize: 12, color: '#93c5fd', letterSpacing: 1.4 }}}}>{{APP_PROFILE.short_name}}</div>
+                <div style={{{{ fontSize: 13, lineHeight: 1.7, color: '#cbd5e1' }}}}>{{APP_PROFILE.scene}}</div>
+              </div>
+              {{APP_PROFILE.nav_items.map((item) => (
+                <div
+                  key={{item.path}}
+                  onClick={{() => navigate(item.path)}}
+                  style={{{{
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                    borderRadius: 10,
+                    background: location.pathname === item.path ? ((visualProfile.accent as string) || '#1677ff') : 'transparent',
+                    marginBottom: 8,
+                    color: (visualProfile.nav_text as string) || '#fff',
+                  }}}}
+                >
+                  <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}}}>
+                    <span style={{{{ width: 20, textAlign: 'center', flexShrink: 0 }}}}>{{item.icon}}</span>
+                    <div style={{{{
+                      fontWeight: 600,
+                      lineHeight: 1.45,
+                      writingMode: 'horizontal-tb',
+                      textOrientation: 'mixed',
+                      wordBreak: 'keep-all',
+                      overflowWrap: 'break-word',
+                      whiteSpace: 'normal',
+                    }}}}>{{navAliases[item.path] || item.label || '功能页面'}}</div>
+                  </div>
+                </div>
+              ))}}
+              <div
+                onClick={{handleLogout}}
+                style={{{{ padding: '10px 14px', cursor: 'pointer', borderRadius: 10, marginTop: 24, color: '#fda4af', border: '1px solid rgba(253, 164, 175, 0.3)' }}}}
+              >
+                退出登录
+              </div>
+            </nav>
+            <main style={{{{ flex: 1, padding: 18 }}}}>{{routes}}</main>
           </div>
-        ))}}
-        <div
-          onClick={{handleLogout}}
-          style={{{{ padding: '10px 14px', cursor: 'pointer', borderRadius: 10, marginTop: 24, color: '#fda4af', border: '1px solid rgba(253, 164, 175, 0.3)' }}}}
-        >
-          退出登录
-        </div>
-      </nav>
-      <main style={{{{ flex: 1, padding: isDesktopClient ? 18 : 24 }}}}>
-        <Routes>
-{routes_block}
-        </Routes>
-      </main>
-      </div>
+        </>
+      ) : chromeTreatment === 'indexed_topbar' ? (
+        <>
+          <header style={{{{
+            padding: '20px 28px 14px',
+            background: (visualProfile.panel_background as string) || '#ffffff',
+            borderBottom: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+          }}}}>
+            <div style={{{{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'flex-start' }}}}>
+              <div>
+                <div style={{{{ display: 'inline-flex', padding: '6px 12px', borderRadius: 999, background: (visualProfile.soft as string) || '#eff6ff', color: (visualProfile.strong as string) || '#1d4ed8', fontWeight: 700, marginBottom: 12 }}}}>
+                  索引导航视图
+                </div>
+                <div style={{{{ fontSize: 28, fontWeight: 700, color: '#0f172a' }}}}>{{APP_PROFILE.product_name}}</div>
+                <div style={{{{ marginTop: 8, color: '#475569', lineHeight: 1.8, maxWidth: 920 }}}}>{{APP_PROFILE.scene}}</div>
+              </div>
+              <button type="button" onClick={{handleLogout}} style={{{{ padding: '10px 14px', borderRadius: 12, border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`, background: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>
+                退出登录
+              </button>
+            </div>
+            <div style={{{{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 10 }}}}>
+              {{APP_PROFILE.nav_items.map((item) => (
+                <button
+                  key={{item.path}}
+                  type="button"
+                  onClick={{() => navigate(item.path)}}
+                  style={{{{
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '10px 14px',
+                    borderRadius: 12,
+                    background: location.pathname === item.path ? ((visualProfile.accent as string) || '#2563eb') : ((visualProfile.soft as string) || '#eff6ff'),
+                    color: location.pathname === item.path ? '#fff' : ((visualProfile.strong as string) || '#1d4ed8'),
+                    fontWeight: 700,
+                    fontFamily: uiFont,
+                  }}}}
+                >
+                  {{navAliases[item.path] || item.label}}
+                </button>
+              ))}}
+            </div>
+          </header>
+          <div style={{{{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 20, padding: 24 }}}}>
+            <main style={{{{
+              minHeight: 'calc(100vh - 180px)',
+              padding: 20,
+              borderRadius: 20,
+              background: (visualProfile.panel_background as string) || '#ffffff',
+              boxShadow: '0 10px 30px rgba(15, 23, 42, 0.06)',
+              border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+            }}}}>
+              {{routes}}
+            </main>
+            <aside style={{{{ display: 'grid', gap: 16, alignContent: 'start' }}}}>
+              <section style={{{{
+                padding: 18,
+                borderRadius: 18,
+                background: 'linear-gradient(160deg, rgba(255,255,255,0.95), rgba(255,255,255,0.82))',
+                border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+              }}}}>
+                <div style={{{{ color: '#64748b', fontSize: 12, letterSpacing: 1.2 }}}}>当前索引</div>
+                <div style={{{{ marginTop: 8, fontSize: 24, fontWeight: 700, color: '#0f172a' }}}}>{{currentLabel}}</div>
+                <div style={{{{ marginTop: 10, color: '#475569', lineHeight: 1.7 }}}}>{{APP_PROFILE.industry_scope}}</div>
+              </section>
+              <section style={{{{
+                padding: 18,
+                borderRadius: 18,
+                background: (visualProfile.panel_background as string) || '#ffffff',
+                border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+              }}}}>
+                <div style={{{{ color: '#64748b', fontSize: 12, letterSpacing: 1.2 }}}}>任务焦点</div>
+                <div style={{{{ display: 'grid', gap: 10, marginTop: 14 }}}}>
+                  {{(focusTerms.length ? focusTerms : [APP_PROFILE.short_name, APP_PROFILE.version, currentLabel]).map((term) => (
+                    <div key={{term}} style={{{{ padding: '10px 12px', borderRadius: 12, background: (visualProfile.soft as string) || '#eff6ff', color: (visualProfile.strong as string) || '#1d4ed8', fontWeight: 700 }}}}>
+                      {{term}}
+                    </div>
+                  ))}}
+                </div>
+              </section>
+            </aside>
+          </div>
+        </>
+      ) : chromeTreatment === 'sectioned_header' ? (
+        <>
+          <header style={{{{
+            padding: '22px 28px',
+            background: (visualProfile.nav_background as string) || '#111827',
+            color: (visualProfile.nav_text as string) || '#fff',
+          }}}}>
+            <div style={{{{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'flex-start' }}}}>
+              <div>
+                <div style={{{{ fontSize: 28, fontWeight: 700 }}}}>{{APP_PROFILE.product_name}}</div>
+                <div style={{{{ marginTop: 8, lineHeight: 1.8, maxWidth: 920, opacity: 0.86 }}}}>{{APP_PROFILE.scene}}</div>
+              </div>
+              <button type="button" onClick={{handleLogout}} style={{{{ padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(255,255,255,0.08)', color: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>
+                退出登录
+              </button>
+            </div>
+          </header>
+          <div style={{{{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 18, padding: 22 }}}}>
+            <aside style={{{{ display: 'grid', gap: 14, alignContent: 'start' }}}}>
+              {{APP_PROFILE.nav_items.map((item) => (
+                <div
+                  key={{item.path}}
+                  onClick={{() => navigate(item.path)}}
+                  style={{{{
+                    cursor: 'pointer',
+                    padding: '16px 16px 14px',
+                    borderRadius: 18,
+                    background: location.pathname === item.path ? ((visualProfile.soft as string) || '#eff6ff') : '#ffffff',
+                    border: `1px solid ${{location.pathname === item.path ? ((visualProfile.accent as string) || '#2563eb') + '44' : ((visualProfile.panel_border as string) || '#dbe3ef')}}`,
+                    boxShadow: location.pathname === item.path ? '0 10px 24px rgba(15, 23, 42, 0.06)' : 'none',
+                  }}}}
+                >
+                  <div style={{{{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}}}>
+                    <span>{{item.icon}}</span>
+                    <strong style={{{{ color: '#0f172a' }}}}>{{navAliases[item.path] || item.label}}</strong>
+                  </div>
+                  <div style={{{{ color: '#475569', lineHeight: 1.7 }}}}>
+                    {{item.path === '/dashboard' ? APP_PROFILE.scene : `${{navAliases[item.path] || item.label}}围绕当前产品模块展开。`}}
+                  </div>
+                </div>
+              ))}}
+            </aside>
+            <main style={{{{ display: 'grid', gap: 16, alignContent: 'start' }}}}>
+              <section style={{{{
+                padding: 18,
+                borderRadius: 18,
+                background: 'linear-gradient(135deg, rgba(255,255,255,0.98), rgba(255,255,255,0.84))',
+                border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+              }}}}>
+                <div style={{{{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}}}>
+                  <span style={{{{ padding: '6px 10px', borderRadius: 999, background: (visualProfile.soft as string) || '#eff6ff', color: (visualProfile.strong as string) || '#1d4ed8', fontWeight: 700 }}}}>当前章节 {{currentLabel}}</span>
+                  <span style={{{{ padding: '6px 10px', borderRadius: 999, background: '#ffffff', border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`, color: '#475569' }}}}>{{APP_PROFILE.short_name}}</span>
+                </div>
+                <div style={{{{ color: '#475569', lineHeight: 1.8 }}}}>{{APP_PROFILE.industry_scope}}</div>
+              </section>
+              <section style={{{{
+                minHeight: 'calc(100vh - 220px)',
+                padding: 20,
+                borderRadius: 20,
+                background: (visualProfile.panel_background as string) || '#ffffff',
+                border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+                boxShadow: '0 10px 30px rgba(15, 23, 42, 0.06)',
+              }}}}>
+                {{routes}}
+              </section>
+            </main>
+          </div>
+        </>
+      ) : (
+        <>
+          <header style={{{{
+            padding: '18px 26px 16px',
+            background: (visualProfile.nav_background as string) || '#0f172a',
+            color: (visualProfile.nav_text as string) || '#fff',
+          }}}}>
+            <div style={{{{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'flex-start' }}}}>
+              <div>
+                <div style={{{{ display: 'inline-flex', padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.12)', fontWeight: 700, marginBottom: 12 }}}}>
+                  顶部导航工作台
+                </div>
+                <div style={{{{ fontSize: 28, fontWeight: 700 }}}}>{{APP_PROFILE.product_name}}</div>
+                <div style={{{{ marginTop: 8, lineHeight: 1.8, maxWidth: 920, opacity: 0.88 }}}}>{{APP_PROFILE.scene}}</div>
+              </div>
+              <button type="button" onClick={{handleLogout}} style={{{{ padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(255,255,255,0.08)', color: '#fff', cursor: 'pointer', fontFamily: uiFont }}}}>
+                退出登录
+              </button>
+            </div>
+            <div style={{{{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16 }}}}>
+              {{APP_PROFILE.nav_items.map((item) => (
+                <button
+                  key={{item.path}}
+                  type="button"
+                  onClick={{() => navigate(item.path)}}
+                  style={{{{
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '10px 14px',
+                    borderRadius: 12,
+                    background: location.pathname === item.path ? '#ffffff' : 'rgba(255,255,255,0.12)',
+                    color: location.pathname === item.path ? ((visualProfile.strong as string) || '#1d4ed8') : '#ffffff',
+                    fontWeight: 700,
+                    fontFamily: uiFont,
+                  }}}}
+                >
+                  {{navAliases[item.path] || item.label}}
+                </button>
+              ))}}
+            </div>
+          </header>
+          <section style={{{{
+            margin: '18px 24px 0',
+            padding: '18px 20px',
+            borderRadius: 18,
+            background: `linear-gradient(135deg, ${{(visualProfile.soft as string) || '#eff6ff'}} 0%, rgba(255,255,255,0.92) 72%)`,
+            border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+          }}}}>
+            <div style={{{{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'flex-start' }}}}>
+              <div>
+                <div style={{{{ color: '#64748b', fontSize: 12, letterSpacing: 1.2 }}}}>当前视图</div>
+                <div style={{{{ marginTop: 8, fontSize: 24, fontWeight: 700, color: '#0f172a' }}}}>{{currentLabel}}</div>
+                <div style={{{{ marginTop: 8, color: '#475569', lineHeight: 1.8 }}}}>{{APP_PROFILE.industry_scope}}</div>
+              </div>
+              <div style={{{{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' }}}}>
+                {{(focusTerms.length ? focusTerms : [APP_PROFILE.short_name, APP_PROFILE.version]).map((term) => (
+                  <span key={{term}} style={{{{ padding: '8px 12px', borderRadius: 999, background: '#ffffff', border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`, color: '#334155' }}}}>
+                    {{term}}
+                  </span>
+                ))}}
+              </div>
+            </div>
+          </section>
+          <main style={{{{
+            padding: 24,
+          }}}}>
+            <div style={{{{
+              minHeight: 'calc(100vh - 250px)',
+              padding: 20,
+              borderRadius: 20,
+              background: (visualProfile.panel_background as string) || '#ffffff',
+              border: `1px solid ${{(visualProfile.panel_border as string) || '#dbe3ef'}}`,
+              boxShadow: '0 10px 30px rgba(15, 23, 42, 0.06)',
+            }}}}>
+              {{routes}}
+            </div>
+          </main>
+        </>
+      )}}
     </div>
   );
 }}

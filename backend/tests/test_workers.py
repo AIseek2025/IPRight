@@ -1647,7 +1647,7 @@ const css = `
         assert "'Noto Sans SC'" in css
         assert "input, button, textarea, select" in css
 
-    def test_render_frontend_app_uses_wider_horizontal_sidebar(self):
+    def test_render_frontend_app_defaults_to_top_tabs_shell(self):
         profile = {
             "product_name": "AI股票量化投资平台",
             "version": "V1.0",
@@ -1668,10 +1668,10 @@ const css = `
             ],
         }
         app_code = _render_frontend_app(profile)
-        assert "width: isDesktopClient ? 268 : 296" in app_code
-        assert "minWidth: isDesktopClient ? 268 : 296" in app_code
-        assert "writingMode: 'horizontal-tb'" in app_code
-        assert "wordBreak: 'keep-all'" in app_code
+        assert "chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'))" in app_code
+        assert "顶部导航工作台" in app_code
+        assert "当前视图" in app_code
+        assert "focusTerms" in app_code
 
     def test_render_login_page_has_nonempty_right_panel(self):
         page_code = _render_login_page()
@@ -2137,7 +2137,6 @@ def test_synthesize_app_tsx_keeps_valid_jsx_style_object_syntax():
 
     assert "style={{ minHeight: '100vh'" in content
     assert "style={ minHeight: '100vh'" not in content
-    assert "style={{ padding: 20, background: '#f5f7fa' }}" in content
-    assert "onLogin={() => {" in content
-    assert "        }}\n      />" in content
-    assert "onClick={({ key }) => navigate(String(key))}" in content
+    assert "chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'))" in content
+    assert "if (!loggedIn) {" in content
+    assert "<Login onLogin={handleLogin} />" in content
