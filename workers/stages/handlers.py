@@ -410,8 +410,65 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     app_root = os.path.join(workspace_path(ctx.task_id), "app")
     prepare_seed_application(app_root, profile)
     codegen_report_data: dict | None = None
+
+    async def _log_codegen_progress(event: dict) -> None:
+        phase = event.get("phase")
+        batch = str(event.get("batch") or "unknown")
+        attempt = event.get("attempt")
+        required_file_count = int(event.get("required_file_count") or len(event.get("required_files") or []))
+        generated_paths = list(event.get("generated_paths") or [])
+        pending_files = list(event.get("pending_files") or [])
+        error = event.get("error")
+
+        if phase == "batch_started":
+            await _log_task_progress(
+                ctx,
+                event_type="stage_progress",
+                title=f"代码生成批次开始: {batch}",
+                detail=f"准备生成 {required_file_count} 个文件，进入 {batch} 批次",
+                payload_json=event,
+            )
+            return
+
+        if phase == "attempt_started":
+            await _log_task_progress(
+                ctx,
+                event_type="stage_progress",
+                title=f"代码生成尝试 #{attempt}: {batch}",
+                detail=f"正在为 {batch} 批次生成 {required_file_count} 个文件",
+                payload_json=event,
+            )
+            return
+
+        if phase == "attempt_failed":
+            await _log_task_progress(
+                ctx,
+                event_type="stage_progress",
+                title=f"代码生成待重试 #{attempt}: {batch}",
+                detail=f"{batch} 批次本轮未拿到有效结果，待补齐 {len(pending_files)} 个文件；原因: {error or 'unknown error'}",
+                payload_json=event,
+            )
+            return
+
+        if phase == "attempt_completed":
+            await _log_task_progress(
+                ctx,
+                event_type="stage_progress",
+                title=f"代码生成结果 #{attempt}: {batch}",
+                detail=(
+                    f"{batch} 批次本轮生成 {len(generated_paths)} 个文件"
+                    + (f"，仍待补齐 {len(pending_files)} 个文件" if pending_files else "，本批次已补齐")
+                ),
+                payload_json=event,
+            )
+
     try:
-        codegen_report_data, codegen_error = await generate_task_app_code(app_root, prd_root, profile)
+        codegen_report_data, codegen_error = await generate_task_app_code(
+            app_root,
+            prd_root,
+            profile,
+            progress_callback=_log_codegen_progress,
+        )
         if codegen_error:
             if codegen_report_data:
                 _write_manifest(ctx.task_id, "app_codegen_report", codegen_report_data)

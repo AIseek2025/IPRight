@@ -139,7 +139,7 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                         "status": next_status.value,
                     },
                 )
-                await db.flush()
+                await db.commit()
 
                 try:
                     context = StageContext(

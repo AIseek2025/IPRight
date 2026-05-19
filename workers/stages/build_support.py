@@ -989,6 +989,7 @@ async def generate_task_app_code(
     app_root: str,
     prd_root: str,
     profile: dict,
+    progress_callback=None,
 ) -> tuple[dict | None, str | None]:
     from app.services.llm import get_llm_client
 
@@ -1013,6 +1014,16 @@ async def generate_task_app_code(
             if not pending_files:
                 continue
 
+            if progress_callback is not None:
+                await progress_callback(
+                    {
+                        "phase": "batch_started",
+                        "batch": batch["name"],
+                        "required_files": list(pending_files),
+                        "required_file_count": len(pending_files),
+                    }
+                )
+
             for attempt_no in range(1, 4):
                 current_required_files = list(pending_files)
                 batch_requirements = dict(batch["requirements"])
@@ -1023,8 +1034,31 @@ async def generate_task_app_code(
                         current_required_files,
                     )
 
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_started",
+                            "batch": batch["name"],
+                            "attempt": attempt_no,
+                            "required_files": list(current_required_files),
+                            "required_file_count": len(current_required_files),
+                        }
+                    )
+
                 codegen_resp = await llm.generate_app_code(prd_content, work_order_content, batch_requirements)
                 if not codegen_resp.success or not codegen_resp.structured:
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": batch["name"],
+                                "attempt": attempt_no,
+                                "required_files": list(current_required_files),
+                                "generated_paths": [],
+                                "pending_files": list(current_required_files),
+                                "error": codegen_resp.error or "unknown error",
+                            }
+                        )
                     batch_reports.append(
                         {
                             "batch": batch["name"],
@@ -1039,6 +1073,18 @@ async def generate_task_app_code(
 
                 batch_files = codegen_resp.structured.get("files", {})
                 if not isinstance(batch_files, dict):
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": batch["name"],
+                                "attempt": attempt_no,
+                                "required_files": list(current_required_files),
+                                "generated_paths": [],
+                                "pending_files": list(current_required_files),
+                                "error": "files payload missing",
+                            }
+                        )
                     batch_reports.append(
                         {
                             "batch": batch["name"],
@@ -1062,6 +1108,18 @@ async def generate_task_app_code(
                     for relative_path in current_required_files
                     if not generated_files.get(relative_path)
                 ]
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_completed",
+                            "batch": batch["name"],
+                            "attempt": attempt_no,
+                            "required_files": list(current_required_files),
+                            "generated_paths": sorted(generated_paths),
+                            "pending_files": list(pending_files),
+                            "fallback_to_template": bool(pending_files),
+                        }
+                    )
                 batch_reports.append(
                     {
                         "batch": batch["name"],
@@ -1115,8 +1173,30 @@ async def generate_task_app_code(
                 retry_requirements["required_files"] = list(invalid_core_paths)
                 retry_requirements["validation_hints"] = _build_core_validation_hints(profile, invalid_core_paths)
                 retry_requirements["invalid_core_previews"] = invalid_core_previews
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_started",
+                            "batch": "core_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(retry_requirements["required_files"]),
+                            "required_file_count": len(retry_requirements["required_files"]),
+                        }
+                    )
                 codegen_resp = await llm.generate_app_code(prd_content, work_order_content, retry_requirements)
                 if not codegen_resp.success or not codegen_resp.structured:
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": "core_invalid_retry",
+                                "attempt": attempt_no,
+                                "required_files": list(retry_requirements["required_files"]),
+                                "generated_paths": [],
+                                "pending_files": list(retry_requirements["required_files"]),
+                                "error": codegen_resp.error or "unknown error",
+                            }
+                        )
                     batch_reports.append(
                         {
                             "batch": "core_invalid_retry",
@@ -1130,6 +1210,18 @@ async def generate_task_app_code(
                     continue
                 batch_files = codegen_resp.structured.get("files", {})
                 if not isinstance(batch_files, dict):
+                    if progress_callback is not None:
+                        await progress_callback(
+                            {
+                                "phase": "attempt_failed",
+                                "batch": "core_invalid_retry",
+                                "attempt": attempt_no,
+                                "required_files": list(retry_requirements["required_files"]),
+                                "generated_paths": [],
+                                "pending_files": list(retry_requirements["required_files"]),
+                                "error": "files payload missing",
+                            }
+                        )
                     batch_reports.append(
                         {
                             "batch": "core_invalid_retry",
@@ -1147,6 +1239,18 @@ async def generate_task_app_code(
                         generated_files[relative_path] = str(content)
                         regenerated_paths.append(relative_path)
                 generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
+                if progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "attempt_completed",
+                            "batch": "core_invalid_retry",
+                            "attempt": attempt_no,
+                            "required_files": list(retry_requirements["required_files"]),
+                            "generated_paths": sorted(regenerated_paths),
+                            "pending_files": list(invalid_core_paths),
+                            "fallback_to_template": bool(invalid_core_paths),
+                        }
+                    )
                 batch_reports.append(
                     {
                         "batch": "core_invalid_retry",

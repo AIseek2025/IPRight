@@ -1811,6 +1811,232 @@ def test_run_build_stage_writes_codegen_report_on_codegen_failure(tmp_path, monk
     assert "frontend/src/App.tsx" in report
 
 
+def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
+    import workers.stages.build_support as build_support
+
+    app_root = tmp_path / "app"
+    prd_root = tmp_path / "prd"
+    prd_root.mkdir(parents=True, exist_ok=True)
+    (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+    (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+    profile = {
+        "product_name": "盲盒平台",
+        "scene": "门店扫码抽取盲盒并完成订单履约",
+        "industry_scope": "零售",
+        "user_roles": ["总部运营", "门店管理员"],
+        "modules": [],
+        "focus_terms": [],
+        "core_entities": [],
+        "experience_blueprint": {},
+        "dashboard_metrics": [],
+        "version": "V1.0",
+    }
+    prepare_seed_application(str(app_root), profile)
+
+    class _Resp:
+        def __init__(self, files):
+            self.success = True
+            self.structured = {"files": files}
+            self.error = None
+
+    class _LLM:
+        async def generate_app_code(self, _prd, _wo, requirements):
+            required = tuple(requirements["required_files"])
+            if required == (
+                "frontend/src/App.tsx",
+                "frontend/src/pages/Login.tsx",
+                "frontend/src/pages/Dashboard.tsx",
+            ):
+                return _Resp(
+                    {
+                        "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; export default function App(){ return <Routes><Route path='/' element={<div>盲盒平台</div>} /></Routes>; }",
+                        "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
+                        "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                    }
+                )
+            if required == (
+                "frontend/src/services/api.ts",
+                "frontend/src/types/constants.ts",
+                "frontend/src/types/models.ts",
+            ):
+                return _Resp(
+                    {
+                        "frontend/src/services/api.ts": "export async function request(){ return {}; }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '盲盒平台';",
+                        "frontend/src/types/models.ts": "export interface Demo { id: string }",
+                    }
+                )
+            return _Resp({})
+
+    llm = _LLM()
+    monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+    monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+    progress_events = []
+
+    async def _record_progress(event):
+        progress_events.append(event)
+
+    async def _run():
+        return await generate_task_app_code(str(app_root), str(prd_root), profile, progress_callback=_record_progress)
+
+    report, error = asyncio.run(_run())
+    assert error is None
+    assert report is not None
+    phases = [event["phase"] for event in progress_events]
+    assert "batch_started" in phases
+    assert "attempt_started" in phases
+    assert "attempt_completed" in phases
+    assert any(event["batch"] == "core" and event["phase"] == "batch_started" for event in progress_events)
+
+
+def test_stage_started_event_is_committed_before_stage_handler_runs():
+    from unittest.mock import AsyncMock, MagicMock
+    from app.models.db import Build, Task
+    from app.services import TaskService
+    from workers.orchestrator import runner as runner_module
+
+    task_id = uuid.uuid4()
+    build_id = uuid.uuid4()
+    task = Task(
+        id=task_id,
+        keyword="盲盒平台",
+        product_name="盲盒平台",
+        version="V1.0",
+        status=TopLevelStatus.QUEUED.value,
+        current_stage=TopLevelStatus.QUEUED.value,
+        active_build_id=build_id,
+    )
+    build = Build(
+        id=build_id,
+        task_id=task_id,
+        build_no=1,
+        status=StageStatus.QUEUED.value,
+        trigger_type="create",
+        current_stage="plan",
+    )
+
+    task_events = []
+    committed_events = []
+    commit_log = []
+    stage_assertions = {"called": False}
+
+    original_create_stage_run = TaskService.create_stage_run
+    original_mark_build_running = TaskService.mark_build_running
+    original_log_event = TaskService.log_event
+    original_complete_stage_run = TaskService.complete_stage_run
+    original_mark_build_completed = TaskService.mark_build_completed
+    original_mark_completed = TaskService.mark_completed
+
+    class FakeSession:
+        async def get(self, model, pk):
+            if model is Task and pk == task_id:
+                return task
+            if model is Build and pk == build_id:
+                return build
+            return None
+
+        async def refresh(self, _obj):
+            return None
+
+        async def commit(self):
+            commit_log.append(
+                [
+                    (event.event_type, event.title, event.detail)
+                    for event in task_events
+                ]
+            )
+            committed_events[:] = list(task_events)
+
+        async def flush(self):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("execute should not be called in this test")
+
+        def add(self, obj):
+            if isinstance(obj, type("X", (), {})):
+                pass
+
+    fake_session = FakeSession()
+
+    class FakeFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return fake_session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_create_stage_run(self, build_obj, stage_name):
+        return type("SR", (), {"attempt_no": 1, "status": StageStatus.RUNNING.value, "stage_name": stage_name})()
+
+    async def fake_mark_build_running(self, build_obj, stage_name):
+        build_obj.status = StageStatus.RUNNING.value
+        build_obj.current_stage = stage_name
+
+    async def fake_log_event(self, **kwargs):
+        event = type(
+            "LoggedEvent",
+            (),
+            {
+                "event_type": kwargs["event_type"],
+                "title": kwargs["title"],
+                "detail": kwargs.get("detail"),
+                "payload_json": kwargs.get("payload_json"),
+            },
+        )()
+        task_events.append(event)
+        return event
+
+    async def fake_complete_stage_run(self, _sr):
+        return None
+
+    async def fake_mark_build_completed(self, build_obj):
+        build_obj.status = TopLevelStatus.COMPLETED.value
+        build_obj.current_stage = TopLevelStatus.COMPLETED.value
+
+    async def fake_mark_completed(self, task_obj):
+        task_obj.status = TopLevelStatus.COMPLETED.value
+        task_obj.current_stage = TopLevelStatus.COMPLETED.value
+
+    async def fake_stage_handler(_ctx):
+        stage_assertions["called"] = True
+        assert any(event[0] == "stage_started" and event[1] == "plan 阶段开始" for event in committed_events)
+        assert task.status == TopLevelStatus.PLANNING.value
+        assert build.status == StageStatus.RUNNING.value
+        return StageResult(success=True, metadata={})
+
+    stage_name = StageName.PLAN
+    previous_handler = runner_module.STAGE_HANDLERS[stage_name]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_module, "get_session_factory", lambda: FakeFactory())
+        mp.setattr(TaskService, "create_stage_run", fake_create_stage_run)
+        mp.setattr(TaskService, "mark_build_running", fake_mark_build_running)
+        mp.setattr(TaskService, "log_event", fake_log_event)
+        mp.setattr(TaskService, "complete_stage_run", fake_complete_stage_run)
+        mp.setattr(TaskService, "mark_build_completed", fake_mark_build_completed)
+        mp.setattr(TaskService, "mark_completed", fake_mark_completed)
+        runner_module.STAGE_HANDLERS[stage_name] = fake_stage_handler
+        try:
+            asyncio.run(runner_module._async_run_pipeline(task_id, build_id))
+        finally:
+            runner_module.STAGE_HANDLERS[stage_name] = previous_handler
+            TaskService.create_stage_run = original_create_stage_run
+            TaskService.mark_build_running = original_mark_build_running
+            TaskService.log_event = original_log_event
+            TaskService.complete_stage_run = original_complete_stage_run
+            TaskService.mark_build_completed = original_mark_build_completed
+            TaskService.mark_completed = original_mark_completed
+
+    assert stage_assertions["called"] is True
+    assert any(any(event[0] == "stage_started" for event in batch) for batch in commit_log)
+
+
 def test_run_capture_stage_fails_when_essential_pages_are_missing(tmp_path, monkeypatch):
     async def _fake_execute_capture_flow(**_kwargs):
         return 10, 1, ["系统首页", "授信主体管理"]
