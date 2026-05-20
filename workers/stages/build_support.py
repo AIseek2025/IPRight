@@ -675,6 +675,16 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
                 + (chrome_treatment or "unknown")
                 + "；不得回退为统一左侧深色竖栏后台。"
             )
+        if navigation_variant == "indexed" or chrome_treatment == "indexed_topbar":
+            hints.append(
+                "当前任务要求 indexed/indexed_topbar 壳层：App.tsx 必须使用顶部索引导航、顶部切换条或顶部主导航，并配合右侧摘要栏/概览区；禁止使用 Layout.Sider、Menu mode=\"inline\"、theme=\"dark\" 或任何左侧深色竖向导航实现。"
+            )
+        shell_layout_hint = str((profile.get("experience_blueprint") or {}).get("shell_layout_hint") or "").strip()
+        if shell_layout_hint:
+            hints.append(
+                "App.tsx 必须落实该壳层描述，不得自行回退到通用后台模板："
+                + shell_layout_hint
+            )
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
         hints.append(
             "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
