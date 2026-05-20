@@ -929,6 +929,7 @@ export default function WorkflowPage() {
                     {
                         "required_files": tuple(requirements["required_files"]),
                         "validation_hints": list(requirements.get("validation_hints", [])),
+                        "invalid_core_previews": dict(requirements.get("invalid_core_previews", {})),
                     }
                 )
                 required = tuple(requirements["required_files"])
@@ -956,13 +957,15 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Dashboard from './pages/Dashboard'; export default function App(){ return <Routes><Route path='/' element={<Dashboard />} /><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
                         }
                     )
@@ -989,13 +992,23 @@ export default function WorkflowPage() {
                 "frontend/src/types/constants.ts",
                 "frontend/src/types/models.ts",
             ),
-            ("frontend/src/App.tsx", "frontend/src/pages/Dashboard.tsx"),
+            ("frontend/src/App.tsx",),
+            ("frontend/src/pages/Dashboard.tsx",),
         ]
-        assert llm.calls[-1]["validation_hints"]
-        retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry")
-        assert retry_batch["generated_paths"] == [
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Dashboard.tsx",
+        retry_calls = [call for call in llm.calls if call["invalid_core_previews"]]
+        assert [call["required_files"] for call in retry_calls] == [
+            ("frontend/src/App.tsx",),
+            ("frontend/src/pages/Dashboard.tsx",),
+        ]
+        assert all(call["validation_hints"] for call in retry_calls)
+        retry_batches = [batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry"]
+        assert [batch["required_files"] for batch in retry_batches] == [
+            ["frontend/src/App.tsx"],
+            ["frontend/src/pages/Dashboard.tsx"],
+        ]
+        assert [batch["generated_paths"] for batch in retry_batches] == [
+            ["frontend/src/App.tsx"],
+            ["frontend/src/pages/Dashboard.tsx"],
         ]
         assert (app_root / "frontend/src/App.tsx").exists()
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
