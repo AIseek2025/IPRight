@@ -194,13 +194,16 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
     if not codegen_requirements.get("required_files"):
         return []
     core_required_files = list(codegen_requirements.get("core_required_files", []))
-    route_shell_files = [
-        "frontend/src/App.tsx",
-        "frontend/src/pages/Login.tsx",
-        "frontend/src/pages/Dashboard.tsx",
+    support_core_files = [
+        path
+        for path in core_required_files
+        if path
+        not in {
+            "frontend/src/App.tsx",
+            "frontend/src/pages/Login.tsx",
+            "frontend/src/pages/Dashboard.tsx",
+        }
     ]
-    primary_core_files = [path for path in route_shell_files if path in core_required_files]
-    support_core_files = [path for path in core_required_files if path not in primary_core_files]
     common_requirements = {
         "raw_user_request": codegen_requirements.get("raw_user_request", {}),
         "app_type": codegen_requirements.get("app_type", "admin_web"),
@@ -219,17 +222,43 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
         "project_dna": codegen_requirements.get("project_dna", {}),
         "differentiation_hint": codegen_requirements.get("differentiation_hint", ""),
     }
-    batches = [
-        {
-            "name": "core",
-            "required_files": primary_core_files,
-            "requirements": {
-                **common_requirements,
-                "required_files": primary_core_files,
-                "module_pages": list(codegen_requirements.get("module_pages", [])),
-            },
-        }
-    ]
+    batches = []
+    if "frontend/src/App.tsx" in core_required_files:
+        batches.append(
+            {
+                "name": "core",
+                "required_files": ["frontend/src/App.tsx"],
+                "requirements": {
+                    **common_requirements,
+                    "required_files": ["frontend/src/App.tsx"],
+                    "module_pages": list(codegen_requirements.get("module_pages", [])),
+                },
+            }
+        )
+    if "frontend/src/pages/Login.tsx" in core_required_files:
+        batches.append(
+            {
+                "name": "core_login",
+                "required_files": ["frontend/src/pages/Login.tsx"],
+                "requirements": {
+                    **common_requirements,
+                    "required_files": ["frontend/src/pages/Login.tsx"],
+                    "module_pages": [],
+                },
+            }
+        )
+    if "frontend/src/pages/Dashboard.tsx" in core_required_files:
+        batches.append(
+            {
+                "name": "core_dashboard",
+                "required_files": ["frontend/src/pages/Dashboard.tsx"],
+                "requirements": {
+                    **common_requirements,
+                    "required_files": ["frontend/src/pages/Dashboard.tsx"],
+                    "module_pages": [],
+                },
+            }
+        )
     if support_core_files:
         batches.append(
             {

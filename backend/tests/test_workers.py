@@ -368,14 +368,19 @@ class TestStageHandlers:
         assert requirements["app_type"] == "desktop_client"
         assert requirements["visual_profile"]["name"] == "graphite_client"
         assert batches[0]["name"] == "core"
-        assert batches[1]["name"] == "support"
-        assert batches[1]["required_files"] == [
+        assert batches[0]["required_files"] == ["frontend/src/App.tsx"]
+        assert batches[1]["name"] == "core_login"
+        assert batches[1]["required_files"] == ["frontend/src/pages/Login.tsx"]
+        assert batches[2]["name"] == "core_dashboard"
+        assert batches[2]["required_files"] == ["frontend/src/pages/Dashboard.tsx"]
+        assert batches[3]["name"] == "support"
+        assert batches[3]["required_files"] == [
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
-        assert batches[2]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
-        assert batches[3]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
+        assert batches[4]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
+        assert batches[5]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
         assert batches[0]["requirements"]["app_type"] == "desktop_client"
         assert batches[0]["requirements"]["experience_blueprint"]["name"] == "command_hub"
         assert batches[0]["requirements"]["visual_profile"]["name"] == "graphite_client"
@@ -827,14 +832,22 @@ export default function WorkflowPage() {
                         "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
                     }
                 )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "export default function App(){ return <div>APP_PROFILE.product_name</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                         }
                     )
                 if required == (
@@ -847,21 +860,6 @@ export default function WorkflowPage() {
                             "frontend/src/services/api.ts": "export async function request(){ return {}; } export const api = { login: async () => ({ success: true }) };",
                             "frontend/src/types/constants.ts": "export const APP_NAME = '测试系统'; export const APP_VERSION = 'V1.0';",
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
-                        }
-                    )
-                if required == (
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
-                        }
-                    )
-                if required == ("frontend/src/pages/Dashboard.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                         }
                     )
                 return _Resp({})
@@ -877,18 +875,14 @@ export default function WorkflowPage() {
         assert error is None
         assert report is not None
         required_calls = [call["required_files"] for call in llm.calls]
-        assert (
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Login.tsx",
-            "frontend/src/pages/Dashboard.tsx",
-        ) in required_calls
+        assert ("frontend/src/App.tsx",) in required_calls
+        assert ("frontend/src/pages/Login.tsx",) in required_calls
+        assert ("frontend/src/pages/Dashboard.tsx",) in required_calls
         assert (
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ) in required_calls
-        assert ("frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in required_calls
-        assert ("frontend/src/pages/Dashboard.tsx",) in required_calls
         assert report["generated_file_count"] == 6
 
     def test_generate_task_app_code_retries_invalid_core_files(self, tmp_path, monkeypatch):
@@ -933,15 +927,33 @@ export default function WorkflowPage() {
                     }
                 )
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Dashboard from './pages/Dashboard'; export default function App(){ return <Routes><Route path='/' element={<Dashboard />} /><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
+                            }
+                        )
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "export default function App(){ return <div>调度工作台</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
+                            }
+                        )
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页 调度工作台</div>; }",
                         }
                     )
@@ -957,18 +969,6 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == ("frontend/src/App.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Dashboard from './pages/Dashboard'; export default function App(){ return <Routes><Route path='/' element={<Dashboard />} /><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
-                        }
-                    )
-                if required == ("frontend/src/pages/Dashboard.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
-                        }
-                    )
                 return _Resp({})
 
         llm = _LLM()
@@ -982,11 +982,9 @@ export default function WorkflowPage() {
         assert error is None
         assert report is not None
         assert [call["required_files"] for call in llm.calls] == [
-            (
-                "frontend/src/App.tsx",
-                "frontend/src/pages/Login.tsx",
-                "frontend/src/pages/Dashboard.tsx",
-            ),
+            ("frontend/src/App.tsx",),
+            ("frontend/src/pages/Login.tsx",),
+            ("frontend/src/pages/Dashboard.tsx",),
             (
                 "frontend/src/services/api.ts",
                 "frontend/src/types/constants.ts",
@@ -1053,15 +1051,21 @@ export default function WorkflowPage() {
         class _LLM:
             async def generate_app_code(self, _prd, _wo, requirements):
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>坏壳层</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Statistic Card</div>; }",
                         }
                     )
@@ -1083,13 +1087,9 @@ export default function WorkflowPage() {
                             "frontend/src/pages/CreditSubjectsPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function CreditSubjectsPage(){ return <section><h1>授信主体</h1><div>{APP_PROFILE.product_name}</div></section>; }",
                         }
                     )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/pages/Dashboard.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>仍然坏掉的 App</div>; }",
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Card</div>; }",
                         }
                     )
@@ -1174,15 +1174,21 @@ export default function WorkflowPage() {
                     }
                 )
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import WorkflowPage from './pages/WorkflowPage'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/workflow' element={<WorkflowPage title={APP_PROFILE.product_name} />} /></Routes>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                         }
                     )
@@ -1310,15 +1316,21 @@ export default function WorkflowPage() {
                         "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
                     }
                 )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PurchasesPage from './pages/PurchasesPage'; import InventoryPage from './pages/InventoryPage'; import AlertsPage from './pages/AlertsPage'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/purchases' element={<PurchasesPage />} /><Route path='/inventory' element={<InventoryPage />} /><Route path='/alerts' element={<AlertsPage />} /></Routes></div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                         }
                     )
@@ -2174,16 +2186,22 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
     class _LLM:
         async def generate_app_code(self, _prd, _wo, requirements):
             required = tuple(requirements["required_files"])
-            if required == (
-                "frontend/src/App.tsx",
-                "frontend/src/pages/Login.tsx",
-                "frontend/src/pages/Dashboard.tsx",
-            ):
+            if required == ("frontend/src/App.tsx",):
                 return _Resp(
                     {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/' element={<Dashboard />} /></Routes></div>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                    }
+                )
+            if required == ("frontend/src/pages/Login.tsx",):
+                return _Resp(
+                    {
+                        "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                    }
+                )
+            if required == ("frontend/src/pages/Dashboard.tsx",):
+                return _Resp(
+                    {
+                        "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                     }
                 )
             if required == (
