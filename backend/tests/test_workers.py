@@ -20,7 +20,6 @@ from workers.orchestrator.runner import (
     STAGE_HANDLERS,
 )
 from workers.stages.build_support import (
-    _synthesize_app_tsx,
     build_codegen_batches,
     build_codegen_requirements,
     generate_task_app_code,
@@ -685,6 +684,32 @@ export default function WorkflowPage() {
         assert "mockData" in workflow_text
         assert "新能源债券组合压力测试" not in workflow_text
 
+    def test_repair_invalid_module_pages_rejects_reporting_copy(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function WorkflowPage() {
+  return <section>任务简报 平台入口概览 风险指标体系与模型管理 分析编号 新能源债券组合压力测试</section>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "table_headers": ["分析编号", "分析主题"],
+                    "rows": [["AN-202605-017", "新能源债券组合压力测试"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "任务简报" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
         profile = {
@@ -745,22 +770,21 @@ export default function WorkflowPage() {
 
         report, error = asyncio.run(_run())
         assert report is not None
-        assert error is None
-        assert report["repaired_core_paths"] == [
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Dashboard.tsx",
-            "frontend/src/pages/Login.tsx",
-        ]
+        assert error == (
+            "App code generation failed: missing or invalid LLM-generated core frontend files: "
+            "frontend/src/App.tsx, frontend/src/pages/Dashboard.tsx, frontend/src/pages/Login.tsx"
+        )
+        assert report["repaired_core_paths"] == []
         assert report["repaired_support_paths"] == [
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
-        assert report["template_ui_fallback_used"] is True
-        assert (app_root / "frontend/src/App.tsx").exists()
-        assert (app_root / "frontend/src/pages/Login.tsx").exists()
-        assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
-        assert (app_root / "frontend/src/services/api.ts").exists()
+        assert report["template_ui_fallback_used"] is False
+        assert (app_root / "frontend/src/App.tsx").exists() is False
+        assert (app_root / "frontend/src/pages/Login.tsx").exists() is False
+        assert (app_root / "frontend/src/pages/Dashboard.tsx").exists() is False
+        assert (app_root / "frontend/src/services/api.ts").exists() is False
 
     def test_generate_task_app_code_retries_missing_core_files(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1072,14 +1096,13 @@ export default function WorkflowPage() {
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error is None
-        assert report["repaired_core_paths"] == ["frontend/src/App.tsx"]
-        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_structural_fallback")
-        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
-        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
-        assert "APP_PROFILE" in app_text
-        assert "/credit-subjects" in app_text
-        assert "CreditSubjectsPage" in app_text
+        assert error == (
+            "App code generation failed: missing or invalid LLM-generated core frontend files: "
+            "frontend/src/App.tsx"
+        )
+        assert report["repaired_core_paths"] == []
+        assert all(batch["batch"] != "core_structural_fallback" for batch in report["batches"])
+        assert (app_root / "frontend/src/App.tsx").exists() is False
 
     def test_generate_task_app_code_retries_invalid_module_pages(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1281,9 +1304,9 @@ export default function WorkflowPage() {
                 ):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PurchasesPage from './pages/PurchasesPage'; import InventoryPage from './pages/InventoryPage'; import AlertsPage from './pages/AlertsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/purchases' element={<PurchasesPage />} /><Route path='/inventory' element={<InventoryPage />} /><Route path='/alerts' element={<AlertsPage />} /></Routes>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PurchasesPage from './pages/PurchasesPage'; import InventoryPage from './pages/InventoryPage'; import AlertsPage from './pages/AlertsPage'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/purchases' element={<PurchasesPage />} /><Route path='/inventory' element={<InventoryPage />} /><Route path='/alerts' element={<AlertsPage />} /></Routes></div>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                         }
                     )
                 if required == (
@@ -1678,7 +1701,7 @@ const css = `
         assert "登录" in markers
         assert "用户名" in markers
         assert "密码" in markers
-        assert "平台入口概览" in markers
+        assert "平台入口概览" not in markers
 
     def test_capture_dashboard_expected_markers_allow_variant_titles(self):
         capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
@@ -2145,9 +2168,9 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
             ):
                 return _Resp(
                     {
-                        "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; export default function App(){ return <Routes><Route path='/' element={<div>盲盒平台</div>} /></Routes>; }",
-                        "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
-                        "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/' element={<Dashboard />} /></Routes></div>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
                     }
                 )
             if required == (
@@ -2379,30 +2402,3 @@ def test_collect_missing_essential_titles_marks_failed_or_missing_core_pages():
     missing = _collect_missing_essential_titles(capture_manifest, results)
 
     assert missing == ["系统首页", "授信主体管理"]
-
-
-def test_synthesize_app_tsx_keeps_valid_jsx_style_object_syntax():
-    profile = {
-        "product_name": "投资风险评估预警平台",
-        "scene": "面向投资风险监控与预警处置的业务平台",
-        "app_type": "admin_web",
-        "modules": [
-            {
-                "key": "records",
-                "route": "/records",
-                "title": "多源数据接入与治理",
-                "description": "用于承接多源数据治理与查询。",
-            }
-        ],
-    }
-    generated_files = {
-        "frontend/src/pages/RecordsPage.tsx": "export default function RecordsPage(){ return <div>ok</div>; }"
-    }
-
-    content = _synthesize_app_tsx(profile, generated_files)
-
-    assert "style={{ minHeight: '100vh'" in content
-    assert "style={ minHeight: '100vh'" not in content
-    assert "chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'))" in content
-    assert "if (!loggedIn) {" in content
-    assert "<Login onLogin={handleLogin} />" in content

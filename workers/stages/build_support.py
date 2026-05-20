@@ -9,9 +9,6 @@ from pathlib import Path
 from workers.stages.generated_backend import GENERATED_BACKEND_APP_FILES
 from workers.stages.generated_frontend import (
     _camel_name,
-    _render_dashboard_page,
-    _render_frontend_app,
-    _render_login_page,
     _write_task_specific_app,
     sync_frontend_dependencies,
 )
@@ -30,6 +27,33 @@ _FRONTEND_FONT_MATCH_TOKENS = (
 _FONT_FAMILY_PROP_RE = re.compile(r"fontFamily\s*:\s*(?P<value>`[^`]*`|'[^'\n]*'|\"[^\"\n]*\")")
 _FONT_FAMILY_CSS_RE = re.compile(r"(font-family\s*:\s*)(?P<value>[^;]+)(;)", re.IGNORECASE)
 _MODULE_INVALID_RETRY_BATCH_SIZE = 2
+_DISALLOWED_FRONTEND_REPORTING_TOKENS = (
+    "任务简报",
+    "进入前摘要",
+    "岗位工作台预览",
+    "平台入口概览",
+    "软件演示入口",
+    "演示入口",
+    "开发情况",
+    "研发测试",
+    "验收建议",
+    "交付资料下载",
+)
+
+
+def _contains_disallowed_frontend_reporting_copy(content: str) -> bool:
+    lowered = content.lower()
+    if any(token in content for token in _DISALLOWED_FRONTEND_REPORTING_TOKENS):
+        return True
+    return any(
+        phrase in lowered
+        for phrase in (
+            "for the platform owner",
+            "for the team",
+            "development report",
+            "delivery summary",
+        )
+    )
 
 
 def _write_text(path: str, content: str) -> None:
@@ -461,39 +485,6 @@ def _build_module_route_specs(profile: dict, generated_files: dict[str, str]) ->
     return route_specs
 
 
-def _synthesize_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
-    return _render_frontend_app(profile)
-
-
-def _synthesize_dashboard_tsx(profile: dict) -> str:
-    return _render_dashboard_page(profile)
-
-
-def _synthesize_login_tsx(profile: dict) -> str:
-    return _render_login_page(profile)
-
-
-def synthesize_recoverable_core_files(
-    generated_files: dict[str, str],
-    invalid_core_paths: list[str],
-    profile: dict,
-) -> tuple[dict[str, str], list[str]]:
-    synthesized = dict(generated_files)
-    repaired_paths: list[str] = []
-    builders = {
-        "frontend/src/App.tsx": lambda: _synthesize_app_tsx(profile, synthesized),
-        "frontend/src/pages/Dashboard.tsx": lambda: _synthesize_dashboard_tsx(profile),
-        "frontend/src/pages/Login.tsx": lambda: _synthesize_login_tsx(profile),
-    }
-    for relative_path in invalid_core_paths:
-        builder = builders.get(relative_path)
-        if not builder:
-            continue
-        synthesized[relative_path] = builder()
-        repaired_paths.append(relative_path)
-    return synthesized, repaired_paths
-
-
 def repair_invalid_core_files(
     app_root: str,
     generated_files: dict[str, str],
@@ -561,6 +552,7 @@ def repair_invalid_core_files(
             and "ModuleShell" not in content
             and not _references_unknown_page_import(content)
             and not _uses_disallowed_unified_sidebar(content)
+            and not _contains_disallowed_frontend_reporting_copy(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
             and (
@@ -574,6 +566,7 @@ def repair_invalid_core_files(
         ),
         "frontend/src/pages/Dashboard.tsx": lambda content: (
             "模块开发中" not in content
+            and not _contains_disallowed_frontend_reporting_copy(content)
             and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
             and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
             and _contains_any(
@@ -593,6 +586,7 @@ def repair_invalid_core_files(
         ),
         "frontend/src/pages/Login.tsx": lambda content: (
             "模块开发中" not in content
+            and not _contains_disallowed_frontend_reporting_copy(content)
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
             and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
             and _contains_any(content, ["登录", "密码", "用户名"])
@@ -633,6 +627,7 @@ def repair_invalid_module_pages(
             and "APP_PROFILE" in content
             and "ModuleShell" not in content
             and "模块开发中" not in content
+            and not _contains_disallowed_frontend_reporting_copy(content)
             and "const mockData" not in content
             and "mockData:" not in content
             and must_have_task_data
@@ -669,6 +664,7 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
                 + ", ".join(module_routes)
             )
         hints.append("App.tsx 不得输出 PlaceholderPage、'模块开发中' 或统一后台占位壳层。")
+        hints.append("App.tsx 不得出现任务简报、平台入口概览、软件演示入口、开发情况汇报或任何写给平台拥有者/研发团队的说明性文案。")
         navigation_variant = str((profile.get("experience_blueprint") or {}).get("navigation_variant") or "").strip()
         chrome_treatment = str((profile.get("visual_profile") or {}).get("chrome_treatment") or "").strip()
         if navigation_variant or chrome_treatment:
@@ -683,10 +679,12 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
         hints.append(
             "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
         )
+        hints.append("Dashboard.tsx 必须是正式面向最终用户的首页，不得出现任务简报、岗位工作台预览、开发汇报、处理建议说明等平台侧叙事。")
     if "frontend/src/pages/Login.tsx" in invalid_paths:
         hints.append(
             "Login.tsx 必须包含中文登录表单，并通过 onLogin、handleSubmit 或 localStorage(ipright_demo_auth) 完成登录态写入。"
         )
+        hints.append("Login.tsx 只能呈现正式登录入口，不得出现平台入口概览、演示入口、任务摘要、角色说明书或写给内部团队的介绍文案。")
     return hints
 
 
@@ -718,6 +716,9 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
 
         hints.append(
             f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 或 ../../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
+        )
+        hints.append(
+            f"{relative_path} 必须是正式面向最终用户的产品界面，不得出现任务简报、平台说明、开发情况汇报、面向研发团队的提示或演示口径。"
         )
         if route:
             hints.append(f"{relative_path} 必须围绕路由 {route} 的业务语境组织页面内容，不得复用其他模块页面。")
@@ -1036,28 +1037,6 @@ async def generate_task_app_code(
                     break
     repaired_core_paths: list[str] = []
     if invalid_core_paths:
-        generated_files, repaired_core_paths = synthesize_recoverable_core_files(
-            generated_files,
-            invalid_core_paths,
-            profile,
-        )
-        if repaired_core_paths:
-            generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
-            batch_reports.append(
-                {
-                    "batch": "core_structural_fallback",
-                    "attempt": 1,
-                    "required_files": list(repaired_core_paths),
-                    "generated_paths": sorted(repaired_core_paths),
-                    "fallback_to_template": bool(invalid_core_paths),
-                    "error": (
-                        "still invalid after structural fallback: " + ", ".join(invalid_core_paths)
-                        if invalid_core_paths
-                        else None
-                    ),
-                }
-            )
-    if invalid_core_paths:
         invalid_core_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
             for relative_path in invalid_core_paths
@@ -1065,7 +1044,7 @@ async def generate_task_app_code(
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            template_ui_fallback_used=False,
             invalid_core_paths=invalid_core_paths,
             invalid_core_previews=invalid_core_previews,
         ), (
@@ -1198,7 +1177,7 @@ async def generate_task_app_code(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_module_paths=[],
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            template_ui_fallback_used=False,
             invalid_module_paths=invalid_module_paths,
             invalid_module_previews=invalid_module_previews,
         ), (
@@ -1212,7 +1191,7 @@ async def generate_task_app_code(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_module_paths=[],
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            template_ui_fallback_used=False,
             apply_error=apply_error,
         ), f"App code generation failed: {apply_error}"
 
@@ -1222,5 +1201,5 @@ async def generate_task_app_code(
         repaired_core_paths=sorted(repaired_core_paths),
         repaired_module_paths=[],
         repaired_support_paths=sorted(repaired_support_paths),
-        template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+        template_ui_fallback_used=False,
     ), None

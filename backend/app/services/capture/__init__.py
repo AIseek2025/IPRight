@@ -280,7 +280,7 @@ class PlaywrightCapture:
     def _expected_markers(self, title: str | None, route: str) -> list[str]:
         normalized_title = (title or "").replace("筛选结果", "").strip()
         if route == "/login":
-            return ["登录", "登录系统", "用户名", "密码", "平台入口概览"]
+            return ["登录", "登录系统", "用户名", "密码"]
         if route == "/dashboard":
             return ["系统首页", "调度总览", "工作台", "概览", "Dashboard"]
         return [normalized_title] if normalized_title else []
