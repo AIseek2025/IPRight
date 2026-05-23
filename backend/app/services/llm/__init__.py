@@ -890,6 +890,49 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
                     structured={"files": {file_path: content}},
                 )
 
+            async def _request_single_file_json_recovery(*, model: str, extra_user_note: str = "") -> LLMResponse:
+                request_messages = messages
+                recovery_note = (
+                    "\n\n前两次单文件纯文本返回为空。"
+                    " 这一次改为 JSON 对象协议，但最终只允许返回一个 files 对象，"
+                    f" 且只能包含键 `{file_path}`。"
+                    " 请务必返回完整 TSX 源码，不要返回空字符串、占位说明或其他文件。"
+                )
+                if extra_user_note:
+                    recovery_note += extra_user_note
+                request_messages = [
+                    messages[0],
+                    {"role": "user", "content": messages[1]["content"] + recovery_note},
+                ]
+                raw_resp = await self.chat_with_models(
+                    request_messages,
+                    response_format="json_object",
+                    primary_model=model,
+                    max_tokens_override=max_tokens_override,
+                    temperature_override=temperature_override,
+                )
+                if not raw_resp.success:
+                    return raw_resp
+
+                files = raw_resp.structured.get("files") if isinstance(raw_resp.structured, dict) else None
+                content = ""
+                if isinstance(files, dict) and isinstance(files.get(file_path), str):
+                    content = str(files[file_path]).strip()
+                if not content:
+                    parsed, _ = self._parse_json_object_content(raw_resp.text)
+                    parsed_files = parsed.get("files") if isinstance(parsed, dict) else None
+                    if isinstance(parsed_files, dict) and isinstance(parsed_files.get(file_path), str):
+                        content = str(parsed_files[file_path]).strip()
+
+                if not content:
+                    return LLMResponse(success=False, error="empty code body")
+
+                return LLMResponse(
+                    success=True,
+                    text=content,
+                    structured={"files": {file_path: content}},
+                )
+
             raw_resp = await _request_single_file(model=REASONING_MODEL)
             if not raw_resp.success:
                 return raw_resp
@@ -912,7 +955,19 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
             if not fallback_resp.success:
                 return fallback_resp
             if not fallback_resp.text:
-                return LLMResponse(success=False, error="empty code body")
+                logger.warning(
+                    "single-file plaintext mode still empty for %s with model=%s; retrying with structured json recovery via %s",
+                    file_path,
+                    TEXT_MODEL,
+                    REASONING_MODEL,
+                )
+                return await _request_single_file_json_recovery(
+                    model=REASONING_MODEL,
+                    extra_user_note=(
+                        " 只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}` 这一层结构，"
+                        " 不要省略 files，也不要返回空文件内容。"
+                    ),
+                )
             return fallback_resp
 
         return await self.chat_with_models(

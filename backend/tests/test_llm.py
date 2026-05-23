@@ -1044,6 +1044,73 @@ class TestLLMClient:
         assert calls[1]["primary_model"] == TEXT_MODEL
         assert "上一次返回为空。请这一次立即从第一行开始输出完整 TSX 源码" in calls[1]["messages"][1]["content"]
 
+    def test_generate_app_code_recovers_plaintext_single_file_with_json_when_both_text_attempts_empty(self, monkeypatch):
+        calls = []
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            calls.append(
+                {
+                    "messages": messages,
+                    "response_format": response_format,
+                    "primary_model": primary_model,
+                    "parse_json_response": parse_json_response,
+                    "max_tokens_override": max_tokens_override,
+                    "temperature_override": temperature_override,
+                }
+            )
+            if len(calls) < 3:
+                return LLMResponse(success=True, text="")
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/Dashboard.tsx":"export default function Dashboard(){ return <section>json-ok</section>; }"}}',
+                structured={
+                    "files": {
+                        "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <section>json-ok</section>; }"
+                    }
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/Dashboard.tsx"],
+                    "single_file_plaintext": True,
+                },
+            )
+            assert resp.success
+            assert resp.structured == {
+                "files": {
+                    "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <section>json-ok</section>; }"
+                }
+            }
+
+        asyncio.run(_run())
+        assert len(calls) == 3
+        assert calls[0]["response_format"] == "text"
+        assert calls[0]["primary_model"] == REASONING_MODEL
+        assert calls[1]["response_format"] == "text"
+        assert calls[1]["primary_model"] == TEXT_MODEL
+        assert calls[2]["response_format"] == "json_object"
+        assert calls[2]["primary_model"] == REASONING_MODEL
+        assert "前两次单文件纯文本返回为空" in calls[2]["messages"][1]["content"]
+        assert "只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}`" in calls[2]["messages"][1]["content"]
+
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
         captured = {}
 
