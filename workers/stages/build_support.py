@@ -26,7 +26,8 @@ _FRONTEND_FONT_MATCH_TOKENS = (
 )
 _FONT_FAMILY_PROP_RE = re.compile(r"fontFamily\s*:\s*(?P<value>`[^`]*`|'[^'\n]*'|\"[^\"\n]*\")")
 _FONT_FAMILY_CSS_RE = re.compile(r"(font-family\s*:\s*)(?P<value>[^;]+)(;)", re.IGNORECASE)
-_MODULE_INVALID_RETRY_BATCH_SIZE = 2
+_ANTD_ICON_IMPORT_RE = re.compile(r"import\s*\{(?P<icons>[\s\S]*?)\}\s*from\s*['\"]@ant-design/icons['\"]")
+_MODULE_INVALID_RETRY_BATCH_SIZE = 1
 _CORE_INVALID_RETRY_BATCH_SIZE = 1
 _DISALLOWED_FRONTEND_REPORTING_TOKENS = (
     "任务简报",
@@ -40,6 +41,20 @@ _DISALLOWED_FRONTEND_REPORTING_TOKENS = (
     "验收建议",
     "交付资料下载",
 )
+_SUPPORTED_ANTD_ICON_NAMES = {
+    "AppstoreOutlined",
+    "AuditOutlined",
+    "BarChartOutlined",
+    "CalendarOutlined",
+    "CheckCircleOutlined",
+    "ClockCircleOutlined",
+    "ExclamationCircleOutlined",
+    "FileTextOutlined",
+    "PlusOutlined",
+    "RightOutlined",
+    "TeamOutlined",
+    "UserOutlined",
+}
 
 
 def _contains_disallowed_frontend_reporting_copy(content: str) -> bool:
@@ -55,6 +70,92 @@ def _contains_disallowed_frontend_reporting_copy(content: str) -> bool:
             "delivery summary",
         )
     )
+
+
+def _extract_antd_icon_names(content: str) -> set[str]:
+    icon_names: set[str] = set()
+    for match in _ANTD_ICON_IMPORT_RE.finditer(content or ""):
+        for raw_token in match.group("icons").replace("\n", " ").split(","):
+            token = raw_token.strip()
+            if not token:
+                continue
+            icon_name = token.split(" as ", 1)[0].strip()
+            if icon_name:
+                icon_names.add(icon_name)
+    return icon_names
+
+
+def _uses_supported_antd_icons(content: str) -> bool:
+    icon_names = _extract_antd_icon_names(content)
+    return all(icon_name in _SUPPORTED_ANTD_ICON_NAMES for icon_name in icon_names)
+
+
+def _has_balanced_quote_pairs(content: str, quote: str) -> bool:
+    escaped = False
+    open_count = 0
+    for char in content:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == quote:
+            open_count ^= 1
+    return open_count == 0
+
+
+def _has_balanced_delimiters(content: str) -> bool:
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    closing = {value: key for key, value in pairs.items()}
+    stack: list[str] = []
+    in_single = False
+    in_double = False
+    in_backtick = False
+    escaped = False
+
+    for char in content:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "'" and not in_double and not in_backtick:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single and not in_backtick:
+            in_double = not in_double
+            continue
+        if char == "`" and not in_single and not in_double:
+            in_backtick = not in_backtick
+            continue
+        if in_single or in_double or in_backtick:
+            continue
+        if char in pairs:
+            stack.append(char)
+            continue
+        if char in closing:
+            if not stack or stack[-1] != closing[char]:
+                return False
+            stack.pop()
+
+    return not stack and not in_single and not in_double and not in_backtick
+
+
+def _looks_like_complete_typescript_source(content: str) -> bool:
+    text = str(content or "").strip()
+    if not text:
+        return False
+    if not _has_balanced_quote_pairs(text, "'"):
+        return False
+    if not _has_balanced_quote_pairs(text, '"'):
+        return False
+    if not _has_balanced_quote_pairs(text, "`"):
+        return False
+    if not _has_balanced_delimiters(text):
+        return False
+    return text[-1] in {"}", ")", ";", "]"}
 
 
 def _write_text(path: str, content: str) -> None:
@@ -256,6 +357,7 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
                     **common_requirements,
                     "required_files": ["frontend/src/pages/Dashboard.tsx"],
                     "module_pages": [],
+                    "single_file_plaintext": True,
                 },
             }
         )
@@ -575,6 +677,92 @@ def repair_invalid_core_files(
         ]
         return _contains_any(content, sidebar_tokens)
 
+    def _uses_disallowed_heavy_app_shell(content: str) -> bool:
+        return _contains_any(
+            content,
+            [
+                "useMemo",
+                "useLocation",
+                "useNavigate",
+                "NavLink",
+                "TabsProps",
+                "Tabs",
+                "Outlet",
+                "Row, Col, Card, Button, Space",
+            ],
+        )
+
+    def _uses_disallowed_dashboard_light_shell(content: str) -> bool:
+        padding_tokens = [
+            "padding: 24",
+            "padding:'24px'",
+            "padding: '24px'",
+            'padding: "24px"',
+            "padding:'20px 24px'",
+            "padding: '20px 24px'",
+            'padding: "20px 24px"',
+            "padding:'1.5rem 2rem'",
+            "padding: '1.5rem 2rem'",
+            'padding: "1.5rem 2rem"',
+        ]
+        has_old_light_shell = _contains_any(content, padding_tokens[:4]) and _contains_any(
+            content,
+            [
+                "minHeight: '100vh'",
+                'minHeight: "100vh"',
+                "background:",
+                "<h1>工作台</h1>",
+                "<h1>系统首页</h1>",
+            ],
+        )
+        has_flex_shell = _contains_any(content, padding_tokens[4:]) and _contains_any(
+            content,
+            [
+                "异常监控总览",
+                "display: 'flex'",
+                'display: "flex"',
+                "flexDirection: 'column'",
+                'flexDirection: "column"',
+                "gap: 16",
+            ],
+        )
+        has_workbench_shell = _contains_any(content, padding_tokens[7:]) and _contains_any(
+            content,
+            [
+                "冷链履约异常协同工作台",
+                "ExclamationCircleOutlined",
+                "import { Card, Statistic, Tag } from 'antd';",
+            ],
+        )
+        return has_old_light_shell or has_flex_shell or has_workbench_shell
+
+    def _uses_disallowed_dashboard_icon_stats_shell(content: str) -> bool:
+        icon_hits = sum(
+            1
+            for icon_name in [
+                "TeamOutlined",
+                "CalendarOutlined",
+                "FileTextOutlined",
+                "UserOutlined",
+                "CheckCircleOutlined",
+            ]
+            if icon_name in content
+        )
+        return (
+            "import { Card, Statistic } from 'antd';" in content
+            and icon_hits >= 4
+            and _contains_any(
+                content,
+                [
+                    "background: '#f8f5ef'",
+                    'background: "#f8f5ef"',
+                    "padding: '24px'",
+                    'padding: "24px"',
+                    "padding: 24",
+                ],
+            )
+        )
+
     validators = {
         "frontend/src/App.tsx": lambda content: (
             "PlaceholderPage" not in content
@@ -582,6 +770,7 @@ def repair_invalid_core_files(
             and "ModuleShell" not in content
             and not _references_unknown_page_import(content)
             and not _uses_disallowed_unified_sidebar(content)
+            and not _uses_disallowed_heavy_app_shell(content)
             and not _contains_disallowed_frontend_reporting_copy(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
@@ -597,8 +786,29 @@ def repair_invalid_core_files(
         "frontend/src/pages/Dashboard.tsx": lambda content: (
             "模块开发中" not in content
             and not _contains_disallowed_frontend_reporting_copy(content)
-            and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
-            and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
+            and _looks_like_complete_typescript_source(content)
+            and _uses_supported_antd_icons(content)
+            and "export default function Dashboard" in content
+            and "import { APP_PROFILE } from '../generated/appProfile';" in content
+            and "import { APP_PROFILE } from './generated/appProfile';" not in content
+            and "../../generated/appProfile" not in content
+            and "import APP_PROFILE from '../generated/appProfile'" not in content
+            and "APP_PROFILE.product_name" in content
+            and "APP_PROFILE.dashboard_metrics" in content
+            and "const metrics = APP_PROFILE.dashboard_metrics" not in content
+            and "const metrics = APP_PROFILE.dashboard_metrics || []" not in content
+            and "const metrics = (APP_PROFILE as any).dashboard_metrics" not in content
+            and "const fallbackMetrics = [" not in content
+            and "const recentActivities = [" not in content
+            and "const iconMap" not in content
+            and "React.ReactNode" not in content
+            and "Typography" not in content
+            and "const { Title } = Typography" not in content
+            and "const columns = [" not in content
+            and "const dataSource = [" not in content
+            and "ColumnsType" not in content
+            and not _uses_disallowed_dashboard_light_shell(content)
+            and not _uses_disallowed_dashboard_icon_stats_shell(content)
             and _contains_any(
                 content,
                 [
@@ -651,9 +861,88 @@ def repair_invalid_module_pages(
         ]
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
+        uses_disallowed_records_light_shell = (
+            relative_path.endswith("RecordsPage.tsx")
+            and "background: '#f8f5ef'" in content
+            and any(token in content for token in ["padding: 24", "padding:'24px'", "padding: '24px'", 'padding: "24px"'])
+            and any(token in content for token in ["minHeight: '100vh'", 'minHeight: "100vh"'])
+            and any(token in content for token in ["justifyContent: 'space-between'", 'justifyContent: "space-between"'])
+            and any(token in content for token in ["alignItems: 'center'", 'alignItems: "center"'])
+        )
+        uses_disallowed_workflow_white_shell = (
+            relative_path.endswith("WorkflowPage.tsx")
+            and "APP_PROFILE.product_name" in content
+            and "候选人管理" in content
+            and any(token in content for token in ["padding: 24", "padding:'24px'", "padding: '24px'", 'padding: "24px"'])
+            and any(
+                token in content
+                for token in [
+                    "background: '#ffffff'",
+                    'background: "#ffffff"',
+                    "color: '#888'",
+                    'color: "#888"',
+                    "fontSize: 12",
+                ]
+            )
+        )
+        uses_disallowed_analytics_heavy_shell = (
+            relative_path.endswith("AnalyticsPage.tsx")
+            and any(
+                token in content
+                for token in [
+                    "const { Title, Text } = Typography",
+                    "const AnalyticsPage: React.FC",
+                    "SearchOutlined",
+                    "PlusOutlined",
+                ]
+            )
+            and any(
+                token in content
+                for token in [
+                    "import { Typography, Input, Button, Space, Card, Tag } from 'antd';",
+                    "import { Input, Button, Space, Card, Tag, Typography } from 'antd';",
+                ]
+            )
+        )
+        uses_disallowed_reports_blue_shell = (
+            relative_path.endswith("ReportsPage.tsx")
+            and "background: '#f3f6fb'" in content
+            and "fontFamily:" in content
+            and "录用与Offer管理" in content
+            and any(token in content for token in ["padding: 24", "padding:'24px'", "padding: '24px'", 'padding: "24px"'])
+        )
+        uses_disallowed_statistics_blue_shell = (
+            relative_path.endswith("StatisticsPage.tsx")
+            and "background: '#f3f6fb'" in content
+            and "padding: '24px 32px'" in content
+            and "fontFamily:" in content
+        )
+        uses_disallowed_statistics_heavy_shell = (
+            relative_path.endswith("StatisticsPage.tsx")
+            and any(
+                token in content
+                for token in [
+                    "const StatisticsPage: React.FC",
+                    "const { Title, Text } = Typography",
+                    "BarChartOutlined",
+                    "SearchOutlined",
+                ]
+            )
+            and any(
+                token in content
+                for token in [
+                    "import { Input, Button, Card, Row, Col, Typography } from 'antd';",
+                    "import { Input, Button, Card, Row, Col, Typography, Space } from 'antd';",
+                    "import { Input, Button, Card, Row, Col, Typography, Table } from 'antd';",
+                ]
+            )
+        )
         is_valid = (
             bool(content)
             and "generated/appProfile" in content
+            and "../generated/appProfile" in content
+            and "../../generated/appProfile" not in content
+            and "import APP_PROFILE from '../generated/appProfile'" not in content
             and "APP_PROFILE" in content
             and "ModuleShell" not in content
             and "模块开发中" not in content
@@ -661,6 +950,13 @@ def repair_invalid_module_pages(
             and "const mockData" not in content
             and "mockData:" not in content
             and must_have_task_data
+            and _looks_like_complete_typescript_source(content)
+            and not uses_disallowed_records_light_shell
+            and not uses_disallowed_workflow_white_shell
+            and not uses_disallowed_analytics_heavy_shell
+            and not uses_disallowed_reports_blue_shell
+            and not uses_disallowed_statistics_blue_shell
+            and not uses_disallowed_statistics_heavy_shell
         )
         if is_valid:
             continue
@@ -688,6 +984,9 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             "App.tsx 必须导入并使用 ./generated/appProfile 中的 APP_PROFILE，不能只写静态文案。"
         )
         hints.append("App.tsx 只能引用 Login、Dashboard 和当前任务 required_files 中明确要求的模块页面，不能额外导入不存在的页面组件。")
+        hints.append(
+            "如果当前只回补 App.tsx，请优先输出精简后的单文件路由壳：减少 import、状态、重复菜单配置和超长 JSX，避免再次返回过长 JSON。"
+        )
         if module_routes:
             hints.append(
                 "App.tsx 必须使用 Routes/Route 或 useRoutes 显式挂接这些模块路由: "
@@ -695,6 +994,13 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             )
         hints.append("App.tsx 不得输出 PlaceholderPage、'模块开发中' 或统一后台占位壳层。")
         hints.append("App.tsx 不得出现任务简报、平台入口概览、软件演示入口、开发情况汇报或任何写给平台拥有者/研发团队的说明性文案。")
+        hints.append(
+            "App.tsx 回补时应整体替换旧后台模板，不要保留 Layout、Sider、Menu、Dropdown、Breadcrumb、theme=\"dark\"、mode=\"inline\" 等后台壳层残留。"
+        )
+        hints.append(
+            "App.tsx 也不要再写 `useMemo`、`useLocation`、`useNavigate`、`NavLink`、`Outlet`、`TabsProps`、`Tabs`，"
+            "也不要导入 `Row, Col, Card, Button, Space` 这种整页装饰性组件组合；请压缩为更短的 `header/nav + Routes` 顶层路由壳。"
+        )
         navigation_variant = str((profile.get("experience_blueprint") or {}).get("navigation_variant") or "").strip()
         chrome_treatment = str((profile.get("visual_profile") or {}).get("chrome_treatment") or "").strip()
         if navigation_variant or chrome_treatment:
@@ -719,7 +1025,81 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
         hints.append(
             "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
         )
+        hints.append(
+            "Dashboard.tsx 必须使用 `export default function Dashboard()`；不要改成 `React.FC`、`HomeDashboard`、`OverviewPage` 或其他函数名。"
+        )
+        hints.append(
+            "Dashboard.tsx 必须压缩成精简首页：保留 1 个中文 H1（如“系统首页”或“工作台”）、2~4 个统计块、1 个轻量表格/列表即可，避免长图标映射、大量 imports、长篇静态说明或超长 JSX。"
+        )
+        hints.append(
+            "Dashboard.tsx 源码里必须逐字出现 `APP_PROFILE.product_name` 与 `APP_PROFILE.dashboard_metrics`；不要只写成 `const metrics = APP_PROFILE.dashboard_metrics ...`、`const productName = ...` 后面却不再直接引用原字段。"
+        )
         hints.append("Dashboard.tsx 必须是正式面向最终用户的首页，不得出现任务简报、岗位工作台预览、开发汇报、处理建议说明等平台侧叙事。")
+        hints.append(
+            "Dashboard.tsx 若使用 `@ant-design/icons`，只允许使用这些已验证可用的图标名："
+            + "、".join(sorted(_SUPPORTED_ANTD_ICON_NAMES))
+            + "；禁止 `BriefcaseOutlined` 或其他当前依赖未导出的图标名，否则 verify_run 会编译失败。"
+        )
+        hints.append(
+            "若上一版以 `import React from 'react'; import { Row, Col, Card, Statistic, Table, Tag, Progress, Button } from 'antd';` 这类大体量首页壳开头，请整体改写成更短的实现；优先保证函数名、标题和 APP_PROFILE 字段命中，不要把 token 花在装饰层。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要在组件外声明 `const items = [`、长数组、长映射或大型统计配置；请把 2~3 行轻量样例直接放进组件内部，避免再次生成过长首页壳。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要再写 `const fallbackMetrics = [`、`const metricCards = [` 或其他本地兜底指标数组；请直接基于 `APP_PROFILE.dashboard_metrics` 渲染 2~4 个统计块，不要回退成通用演示数据。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要再写 `const recentActivities = [`、`const activities = [` 或其他顶部最近动态数组；若需要列表，请在组件内部直接内联 2~3 行轻量记录。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要导入 `Typography`、不要写 `const { Title } = Typography`，也不要用 `Title`/`Paragraph` 这一类通用展示壳；请直接使用原生 `h1`、`p` 或最少量 `Card/Statistic` 组织首页。"
+        )
+        hints.append(
+            "Dashboard.tsx 也不要写顶层或组件内的 `const columns = [`、`const dataSource = [` 或 `ColumnsType` 表格配置；不要使用 antd `Table columns` 这一整套写法。若需要轻量表格，请直接改成原生 `<table>` 并把 2~3 行数据内联到 JSX。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要再写 `const metrics = APP_PROFILE.dashboard_metrics || []`、`const metrics = (APP_PROFILE as any).dashboard_metrics`，"
+            "也不要返回 `<div style={{ padding: 24 }}>` 或 `<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>` 这类通用轻壳；"
+            "H1 必须是中文首页/工作台标题，不能直接把 `APP_PROFILE.product_name` 当成首页主标题，也不要回退成只有“工作台”标题 + 单个统计卡的白页。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版再次出现 `import { Card, Statistic } from 'antd'` + 图标导入，"
+            "并返回 `<div style={{ padding: 24, background: '#f8f5ef', minHeight: '100vh' }}>` 这类米色轻壳首页，"
+            "或直接用 `Card + Statistic + 3~4 个状态图标` 拼一个通用工作台壳，这一整类写法都判无效，必须整体换成更短、更贴近当前业务首页的实现。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又回退成 `import React from 'react'; import { Card, Statistic } from 'antd';` 开头，"
+            "再配合 `<div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 24px' }}>`、"
+            "`异常监控总览` 标题或纵向堆叠的统计卡轻壳，这一整类写法同样判无效，必须整体改写为更短的正式首页。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic, Tag } from 'antd';` + `ExclamationCircleOutlined`，"
+            "再配合 `<div style={{ padding: '1.5rem 2rem' }}>`、`冷链履约异常协同工作台` 这类领域名直出 H1、"
+            "以及顶部一排告警卡/标签工作台壳，也一律判无效；必须回到更短的正式首页，不要再写监控大盘式轻壳。"
+        )
+        hints.append(
+            "Dashboard.tsx 不要再声明 `const iconMap: Record<string, React.ReactNode>`、不要写成 `React.ReactNode` 图标字典，"
+            "也不要导入 `CheckCircleOutlined + ExclamationCircleOutlined + ClockCircleOutlined + TeamOutlined` 这一组四图标再拼统计卡；"
+            "这类 iconMap 监控大盘模板一律判无效。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';`，"
+            "并同时导入 `TeamOutlined + CalendarOutlined + FileTextOutlined + UserOutlined` 这一组四图标，"
+            "再拼 3~4 张统计卡首页壳，那么同样一律判无效；必须改回更短的正式首页。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';` + `const metrics = APP_PROFILE.dashboard_metrics;`，"
+            "再配合 `<div style={{ margin: 24 }}>`、`display: 'flex' + gap: 16 + flexWrap: 'wrap'` 的统计卡壳，"
+            "那么同样一律判无效；不要再写 `metrics.map(...)` 这种通用工作台模板。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';`，"
+            "并同时导入 `CalendarOutlined + TeamOutlined` 这一组图标，"
+            "再配合 `<div style={{ padding: '16px' }}>`、`<h1>工作台</h1>`、"
+            "`<p style={{ color: '#555' }}>{APP_PROFILE.product_name}</p>` 这种通用白页壳，"
+            "那么同样一律判无效；必须改回更短的正式首页，不要再返回产品名副标题 + 统计卡轻壳。"
+        )
     if "frontend/src/pages/Login.tsx" in invalid_paths:
         hints.append(
             "Login.tsx 必须包含中文登录表单，并通过 onLogin、handleSubmit 或 localStorage(ipright_demo_auth) 完成登录态写入。"
@@ -755,7 +1135,13 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
         filter_placeholder = str(module.get("filter_placeholder") or "").strip()
 
         hints.append(
-            f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 或 ../../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
+            f"{relative_path} 必须是 {title} 的真实业务页面。由于文件位于 frontend/src/pages 目录下，只能从 ../generated/appProfile 读取 APP_PROFILE；禁止写成 ../../generated/appProfile、默认导入或其他错误路径，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
+        )
+        hints.append(
+            f"{relative_path} 导入 APP_PROFILE 时必须使用命名导入 `import {{ APP_PROFILE }} from '../generated/appProfile';`；禁止 `import APP_PROFILE from '../generated/appProfile'` 这类默认导入写法。"
+        )
+        hints.append(
+            f"{relative_path} 的首屏主标题（H1、页面标题或最显著标题）必须逐字等于 `{title}`，不能改写成历史模块名、近义标题或通用业务名称。"
         )
         hints.append(
             f"{relative_path} 必须是正式面向最终用户的产品界面，不得出现任务简报、平台说明、开发情况汇报、面向研发团队的提示或演示口径。"
@@ -764,6 +1150,12 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
             hints.append(f"{relative_path} 必须围绕路由 {route} 的业务语境组织页面内容，不得复用其他模块页面。")
         hints.append(
             f"{relative_path} 必须体现 page_variant={page_variant} 对应的信息组织方式，并根据本模块主题自主设计正文布局，不能套用统一后台骨架。"
+        )
+        hints.append(
+            f"{relative_path} 本轮回补以最小可运行业务页为目标：允许只保留 1 个筛选区、1 个主操作和 1 张轻量表格/列表；不要堆叠 Modal、Drawer、复杂表单、多层 Tabs、长 columns render、useMemo/useCallback 或大段本地状态。"
+        )
+        hints.append(
+            f"{relative_path} 请优先使用原生 table 或最简单的列表结构，尽量不要声明 interface/type、ColumnsType、长 data 数组或复杂映射函数；可直接在 JSX 中写入 2-4 行任务样例数据。"
         )
         if table_headers or row_tokens:
             hints.append(
@@ -775,6 +1167,129 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
             hints.append(
                 f"{relative_path} 需要把当前模块的主操作、筛选入口和信息重点落到页面中："
                 + "、".join(module_traits[:6])
+            )
+        if page_variant == "workflow":
+            hints.append(
+                f"{relative_path} 若当前仍然过长，请压缩为“筛选条 + 阶段摘要 + 跟进表/列表”的轻量结构；不要再生成步骤条、时间轴、弹窗或多层联动。"
+            )
+        if relative_path.endswith("WorkflowPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React, {{ useState }} from 'react'`、`React.FC`、"
+                "`Input/Card/Space/Tag`、默认导入 `import APP_PROFILE from '../generated/appProfile'`、"
+                "或受控搜索输入，那么本轮必须整体改写为命名导入 APP_PROFILE 的无 hooks 原生轻量页面。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `const platformName = APP_PROFILE.product_name || '...'`、"
+                "通用 `<div style=...>` 壳页面、或页面主标题没有逐字等于当前模块标题，"
+                "那么本轮必须整体改写为当前模块标题直出 + 当前任务样例数据直出，不能只展示产品名。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版页面标题写成“候选人管理”等历史主题，或整页仍是通用轻壳而不是当前模块业务页，那么本轮必须整体重写。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import {{ Button }} from 'antd'`，"
+                "再配合统一蓝色内联样式壳（如 `#f3f6fb`/`#1e3a8a`/`#2563eb`）且只放一个主按钮或摘要文字，"
+                "那么本轮必须整体重写为含筛选输入 + 业务摘要 + 原生表格/列表的真实业务页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React from 'react'` + `import {{ APP_PROFILE }} from '../generated/appProfile'`，"
+                "再配合白底通用内联样式壳（如 `#ffffff`/`#111`/`#555`）且 H1 写成“候选人管理”，"
+                "那么本轮必须整体重写为当前模块标题逐字命中的真实业务页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `const WorkflowPage = () =>`、顶层 `<div style={{ padding: 24 }}>`、"
+                "先显示 `APP_PROFILE.product_name` 再把 H1 写成“候选人管理”的通用白页壳，"
+                "那么本轮必须整体重写为当前模块标题逐字命中的真实业务页，并直接落下当前模块筛选提示、业务摘要与原生表格/列表。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `<div style={{ color: '#888', fontSize: 12 }}>{{APP_PROFILE.product_name}} / 候选人管理</div>`，"
+                "再配合顶层 `padding: 24` 白页壳，那么同样一律判失败；不能再输出产品名 / 历史主题的面包屑式轻壳。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版出现 `import React from 'react'` + `function WorkflowPage() {{ return ( <div style={{ padding: 24 }}> ... ) }}`，"
+                "顶部先用灰色小字显示 `APP_PROFILE.product_name`，再在正文里放历史模块标题或泛化业务标题，"
+                "那么同样一律判失败；这仍然只是产品名面包屑 + 通用轻壳，不是当前模块真实业务页。"
+            )
+        if relative_path.endswith("AssetsPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React, {{ useState }} from 'react'`、`React.FC`、"
+                "`Input/Card/Typography/Tag` 或受控搜索输入，那么本轮必须整体改写为无 hooks 的原生轻量列表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `function AssetsPage() {{ const items = [{{ id, topic, role, status, tag, updateTime }}] ... }}`、"
+                "或把主题写成“候选人管理”/“人才档案库”/“应聘者全旅程管理”等历史模块，而不是当前模块标题，那么本轮必须整体重写。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React from 'react'`、`import {{ Button }} from 'antd'` + `import {{ APP_PROFILE }} from '../generated/appProfile'`，"
+                "再配合通用 `<div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>` 轻壳并把 H1 写成“面试管理”，"
+                "那么本轮必须整体重写为当前模块标题逐字命中的真实业务表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `import React from 'react'` + `import {{ APP_PROFILE }} from '../generated/appProfile'`，"
+                "再配合 `<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>` 蓝色轻壳，"
+                "并把 H1 写成“面试流程管理”或把 `APP_PROFILE.productName` 当成正文说明，那么同样一律判失败；"
+                "AssetsPage 必须改回当前模块标题逐字命中的真实业务页。"
+            )
+        if relative_path.endswith("RecordsPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React, {{ useState }} from 'react'`、`React.FC`、"
+                "`Table/Input/Space/Typography/Tag` 或受控搜索输入，那么本轮必须整体改写为无 hooks 的原生检索表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现默认导入 `import APP_PROFILE from '../generated/appProfile'`、"
+                "`const productName = APP_PROFILE?.productName || '...'`、"
+                "或页面标题写成“招聘需求管理”/“院校客户管理”/“职位管理”/“职位与需求管理”等历史主题，那么本轮必须整体重写为当前模块标题逐字命中的检索表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `const data = [{{ id, topic, role, status, tag, time }}]`、"
+                "`const data = [{ id, topic, role, status, tag, updateTime }]`、`MOD0-001`/`MOD0-002` 或“重点事项”这类泛化招聘需求数组，"
+                "那么本轮必须改回当前模块真实表头与样例字段，不能继续复用通用数据壳。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又回退成 `import React from 'react';` + `import {{ APP_PROFILE }} from '../generated/appProfile';`，"
+                "再配合 `<div style={{ padding: 24, background: '#f8f5ef', minHeight: '100vh' }}>`、"
+                "`display: 'flex' + justifyContent: 'space-between' + alignItems: 'center'` 的米色通用轻壳页，"
+                "那么同样一律判失败；必须改回当前模块标题逐字命中的真实检索表页。"
+            )
+        if page_variant == "assets":
+            hints.append(
+                f"{relative_path} 若当前仍然过长，请压缩为“资产筛选 + 主按钮 + 台账表”的轻量结构；不要再生成弹窗、抽屉、批量操作区或复杂状态映射。"
+            )
+        if page_variant == "records":
+            hints.append(
+                f"{relative_path} 若当前仍然过长，请压缩为“档案检索 + 新建入口 + 档案表”的轻量结构；不要再生成详情抽屉、批量操作、复杂筛选面板或标签墙。"
+            )
+        if page_variant == "reports":
+            hints.append(
+                f"{relative_path} 若当前仍然过长，请压缩为“筛选条 + 少量摘要卡 + 结果表/列表”的轻量结构；不要再生成图表库、Tabs、折叠区、下载弹窗或长篇分析说明。"
+            )
+        if relative_path.endswith("ReportsPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React, {{ useState }} from 'react'`、"
+                "`Input/Table/Card/Row/Col/Statistic/Typography/Space`、"
+                "`SearchOutlined`、`FileTextOutlined` 或通用重型 antd 报表页模板，"
+                "那么本轮必须整体改写为无 hooks 的原生轻量报表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又回退成 `<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>`，"
+                "并把 H1 写成“录用与Offer管理”这类历史主题，那么同样一律判失败；必须改回当前模块标题逐字命中的轻量报表页。"
+            )
+        if relative_path.endswith("AnalyticsPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `const {{ Title, Text }} = Typography`、"
+                "`Typography/Input/Button/Space/Card/Tag`、`SearchOutlined`、`PlusOutlined` 或 `const AnalyticsPage: React.FC = ...`，"
+                "那么本轮必须整体改写为无 hooks 的原生轻量分析页。"
+            )
+        if relative_path.endswith("StatisticsPage.tsx"):
+            hints.append(
+                f"{relative_path} 若上一版仍出现 `import React from 'react'`、"
+                "`Input/Button/Card/Row/Col/Typography`、`SearchOutlined`、`BarChartOutlined`、"
+                "`const {{ Title, Text }} = Typography` 或 `const StatisticsPage: React.FC = ...`，"
+                "那么本轮必须整体改写为无 hooks 的原生轻量统计页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又回退成 `<div style={{ padding: '24px 32px', background: '#f3f6fb' }}>` 这类蓝色通用轻壳，"
+                "那么同样一律判失败；必须改回当前模块标题逐字命中的轻量统计页。"
             )
     return hints
 
@@ -812,7 +1327,6 @@ async def generate_task_app_code(
     batches = build_codegen_batches(codegen_requirements)
     if batches:
         llm = get_llm_client()
-        allowed_files = set(codegen_requirements["required_files"])
         for batch in batches:
             pending_files = [
                 relative_path
@@ -906,8 +1420,14 @@ async def generate_task_app_code(
                     continue
 
                 generated_paths: list[str] = []
+                allowed_batch_files = set(current_required_files)
+                unexpected_paths = sorted(
+                    relative_path
+                    for relative_path in batch_files.keys()
+                    if relative_path not in allowed_batch_files
+                )
                 for relative_path, content in batch_files.items():
-                    if relative_path in allowed_files and content:
+                    if relative_path in allowed_batch_files and content:
                         generated_files[relative_path] = str(content)
                         generated_paths.append(relative_path)
 
@@ -936,9 +1456,20 @@ async def generate_task_app_code(
                         "generated_paths": sorted(generated_paths),
                         "fallback_to_template": bool(pending_files),
                         "error": (
-                            f"missing generated files: {', '.join(pending_files[:8])}"
-                            if pending_files
-                            else None
+                            (
+                                "unexpected files returned: " + ", ".join(unexpected_paths)
+                                + (
+                                    "; missing generated files: " + ", ".join(pending_files[:8])
+                                    if pending_files
+                                    else ""
+                                )
+                            )
+                            if unexpected_paths
+                            else (
+                                f"missing generated files: {', '.join(pending_files[:8])}"
+                                if pending_files
+                                else None
+                            )
                         ),
                     }
                 )
@@ -983,6 +1514,10 @@ async def generate_task_app_code(
                     retry_requirements["required_files"] = list(required_chunk)
                     retry_requirements["validation_hints"] = _build_core_validation_hints(profile, required_chunk)
                     retry_requirements["invalid_core_previews"] = invalid_core_previews
+                    retry_requirements["single_file_plaintext"] = (
+                        len(required_chunk) == 1
+                        and required_chunk[0] == "frontend/src/pages/Dashboard.tsx"
+                    )
                     if progress_callback is not None:
                         await progress_callback(
                             {
@@ -1114,6 +1649,7 @@ async def generate_task_app_code(
                     "module_pages": _select_module_pages_for_files(codegen_requirements, required_chunk),
                     "validation_hints": _build_module_validation_hints(profile, required_chunk),
                     "invalid_module_previews": invalid_module_previews,
+                    "single_file_plaintext": len(required_chunk) == 1,
                 }
                 if progress_callback is not None:
                     await progress_callback(
@@ -1176,11 +1712,17 @@ async def generate_task_app_code(
                     )
                     continue
                 regenerated_paths: list[str] = []
+                unexpected_paths = sorted(
+                    relative_path
+                    for relative_path in batch_files.keys()
+                    if relative_path not in required_chunk
+                )
                 for relative_path, content in batch_files.items():
                     if relative_path in required_chunk and content:
                         generated_files[relative_path] = str(content)
                         regenerated_paths.append(relative_path)
                 generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
+                remaining_chunk = [relative_path for relative_path in required_chunk if relative_path in invalid_module_paths]
                 if progress_callback is not None:
                     await progress_callback(
                         {
@@ -1189,8 +1731,8 @@ async def generate_task_app_code(
                             "attempt": attempt_no,
                             "required_files": list(retry_requirements["required_files"]),
                             "generated_paths": sorted(regenerated_paths),
-                            "pending_files": list(invalid_module_paths),
-                            "fallback_to_template": bool(invalid_module_paths),
+                            "pending_files": remaining_chunk,
+                            "fallback_to_template": bool(remaining_chunk),
                         }
                     )
                 batch_reports.append(
@@ -1199,11 +1741,22 @@ async def generate_task_app_code(
                         "attempt": attempt_no,
                         "required_files": list(retry_requirements["required_files"]),
                         "generated_paths": sorted(regenerated_paths),
-                        "fallback_to_template": bool(invalid_module_paths),
+                        "fallback_to_template": bool(remaining_chunk),
                         "error": (
-                            "still invalid after retry: " + ", ".join(invalid_module_paths)
-                            if invalid_module_paths
-                            else None
+                            (
+                                "unexpected files returned: " + ", ".join(unexpected_paths)
+                                + (
+                                    "; still invalid after retry: " + ", ".join(remaining_chunk)
+                                    if remaining_chunk
+                                    else ""
+                                )
+                            )
+                            if unexpected_paths
+                            else (
+                                "still invalid after retry: " + ", ".join(remaining_chunk)
+                                if remaining_chunk
+                                else None
+                            )
                         ),
                     }
                 )

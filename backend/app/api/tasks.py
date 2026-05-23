@@ -15,7 +15,7 @@ from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.state_machine import StageStatus
+from app.core.state_machine import StageStatus, TopLevelStatus
 from app.core.database import get_db
 from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
 from app.services import TaskService
@@ -61,6 +61,54 @@ async def _resolve_effective_build_id(
     return latest_build_q.scalar_one_or_none()
 
 
+async def _refresh_task_state(db: AsyncSession, task: Task) -> Task:
+    service = TaskService(db)
+    stale_builds = await service.cleanup_stale_builds(task_id=task.id)
+    reconciled = await service.reconcile_task_state(task)
+    if stale_builds or reconciled:
+        await db.commit()
+        await db.refresh(task)
+    return task
+
+
+async def _serialize_export_items(db: AsyncSession, exports: list[Export]) -> list[ExportItem]:
+    build_no_by_id: dict[uuid.UUID, int] = {}
+    build_finished_at_by_id: dict[uuid.UUID, datetime | None] = {}
+    build_ids = sorted({export.build_id for export in exports if export.build_id})
+    if build_ids:
+        build_rows = await db.execute(select(Build.id, Build.build_no, Build.finished_at).where(Build.id.in_(build_ids)))
+        for build_id, build_no, finished_at in build_rows.all():
+            build_no_by_id[build_id] = build_no
+            build_finished_at_by_id[build_id] = finished_at
+
+    latest_build_no = max(build_no_by_id.values(), default=None)
+
+    items = [
+        ExportItem(
+            id=str(export.id),
+            export_type=export.export_type,
+            file_name=export.file_name,
+            status=export.status,
+            download_url=export.download_url,
+            build_id=str(export.build_id) if export.build_id else None,
+            build_no=build_no_by_id.get(export.build_id) if export.build_id else None,
+            build_finished_at=build_finished_at_by_id.get(export.build_id) if export.build_id else None,
+            is_latest=bool(export.build_id and latest_build_no is not None and build_no_by_id.get(export.build_id) == latest_build_no),
+            created_at=export.created_at,
+        )
+        for export in exports
+    ]
+    items.sort(
+        key=lambda item: (
+            item.build_no is None,
+            -(item.build_no or 0),
+            -item.created_at.timestamp(),
+            item.file_name,
+        )
+    )
+    return items
+
+
 def _slugify_name(value: str) -> str:
     normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", value.strip())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
@@ -88,10 +136,89 @@ def _bundle_target(task: Task) -> tuple[Path, str, Path]:
     return bundle_path, bundle_name, root_prefix
 
 
-def _build_bundle(task: Task) -> tuple[Path, str]:
+def _bundle_source_latest_mtime(task_root: Path, effective_build_id: Optional[uuid.UUID]) -> float | None:
+    if not task_root.exists():
+        return None
+
+    latest_mtime: float | None = None
+    task_root_resolved = task_root.resolve(strict=False)
+    for file_path in task_root.rglob("*"):
+        if not file_path.is_file() or file_path.is_symlink():
+            continue
+        try:
+            relative = file_path.resolve(strict=False).relative_to(task_root_resolved)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] == "downloads":
+            continue
+        if _should_skip_bundle_path(relative, effective_build_id):
+            continue
+        file_mtime = file_path.stat().st_mtime
+        if latest_mtime is None or file_mtime > latest_mtime:
+            latest_mtime = file_mtime
+    return latest_mtime
+
+
+def _bundle_is_fresh_for_build(
+    task_root: Path,
+    bundle_path: Path,
+    effective_build_id: Optional[uuid.UUID],
+    task_updated_at,
+    task_created_at=None,
+    *,
+    allow_legacy_without_build_ids: bool = False,
+) -> bool:
+    if not bundle_path.is_file() or bundle_path.stat().st_size <= 0:
+        return False
+    bundle_mtime = bundle_path.stat().st_mtime
+    try:
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            build_ids: set[str] = set()
+            for name in zf.namelist():
+                if "/node_modules/" in name or "/__pycache__/" in name or name.endswith((".pyc", ".pyo")):
+                    return False
+                parts = Path(name).parts
+                if "builds" in parts:
+                    idx = parts.index("builds")
+                    if idx + 1 < len(parts):
+                        build_ids.add(parts[idx + 1])
+    except zipfile.BadZipFile:
+        return False
+
+    latest_source_mtime = _bundle_source_latest_mtime(task_root, effective_build_id)
+    if latest_source_mtime and bundle_mtime < latest_source_mtime:
+        return False
+    if allow_legacy_without_build_ids and not build_ids:
+        return True
+    if effective_build_id and not build_ids:
+        return False
+    if task_updated_at and bundle_mtime < task_updated_at.timestamp():
+        return False
+    if effective_build_id and build_ids and build_ids != {str(effective_build_id)}:
+        return False
+    return True
+
+
+def _should_skip_bundle_path(relative: Path, effective_build_id: Optional[uuid.UUID]) -> bool:
+    parts = relative.parts
+    if any(part in {"node_modules", "__pycache__", ".pytest_cache", ".mypy_cache"} for part in parts):
+        return True
+    if relative.suffix in {".pyc", ".pyo"}:
+        return True
+    if parts and parts[0] == "builds" and effective_build_id and len(parts) > 1 and parts[1] != str(effective_build_id):
+        return True
+    return False
+
+
+def _build_bundle(
+    task: Task,
+    effective_build_id: Optional[uuid.UUID] = None,
+    output_path: Path | None = None,
+) -> tuple[Path, str]:
     task_root = _task_root(task.id)
     task_root_resolved = task_root.resolve()
     bundle_path, bundle_name, root_prefix = _bundle_target(task)
+    target_path = output_path or bundle_path
     added_files = 0
 
     def _safe_add(zf: zipfile.ZipFile, file_path: Path) -> None:
@@ -106,11 +233,13 @@ def _build_bundle(task: Task) -> tuple[Path, str]:
         except ValueError:
             logger.warning("Skipping path outside task workspace: %s", file_path)
             return
+        if _should_skip_bundle_path(relative, effective_build_id):
+            return
         arcname = root_prefix / relative
         zf.write(file_path, arcname.as_posix())
         added_files += 1
 
-    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         if task_root.exists():
             for child in sorted(task_root.iterdir(), key=lambda p: p.name):
                 if child.name == "downloads":
@@ -126,7 +255,7 @@ def _build_bundle(task: Task) -> tuple[Path, str]:
                 elif child.is_file():
                     _safe_add(zf, child)
 
-    return bundle_path, bundle_name, root_prefix, added_files
+    return target_path, bundle_name, root_prefix, added_files
 
 
 async def _hydrate_bundle_from_artifacts(
@@ -238,6 +367,15 @@ async def list_tasks(
 
     query = query.order_by(Task.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     tasks = (await db.execute(query)).scalars().all()
+    changed = False
+    service = TaskService(db)
+    for task in tasks:
+        stale_builds = await service.cleanup_stale_builds(task_id=task.id)
+        reconciled = await service.reconcile_task_state(task)
+        if stale_builds or reconciled:
+            changed = True
+    if changed:
+        await db.commit()
 
     items = [TaskListItem.model_validate({**t.__dict__, "id": str(t.id)}) for t in tasks]
     return {"code": "OK", "message": "success", "data": TaskListResponse(
@@ -250,6 +388,7 @@ async def get_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> di
     task = await db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+    task = await _refresh_task_state(db, task)
     return {"code": "OK", "message": "success", "data": TaskDetailResponse.model_validate(task).model_dump()}
 
 
@@ -258,6 +397,7 @@ async def get_task_dashboard(task_id: uuid.UUID, db: AsyncSession = Depends(get_
     task = await db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
+    task = await _refresh_task_state(db, task)
 
     effective_build_id = await _resolve_effective_build_id(db, task)
 
@@ -277,10 +417,12 @@ async def get_task_dashboard(task_id: uuid.UUID, db: AsyncSession = Depends(get_
     screenshots_q = await db.execute(screenshots_stmt.order_by(Screenshot.created_at.desc()).limit(6))
     screenshots = screenshots_q.scalars().all()
 
+    export_items = await _serialize_export_items(db, exports)
+
     dashboard = TaskDashboardResponse(
         task=TaskDetailResponse.model_validate(task),
         timeline=[EventItem.model_validate(e) for e in events],
-        exports=[ExportItem.model_validate(e) for e in exports],
+        exports=export_items,
         prd_summary=None,
         screenshot_previews=[s.scenario_id for s in screenshots],
     )
@@ -326,7 +468,7 @@ async def get_task_artifacts(
 async def get_task_exports(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
     exports_q = await db.execute(select(Export).where(Export.task_id == task_id))
     exports = exports_q.scalars().all()
-    items = [ExportItem.model_validate(e) for e in exports]
+    items = await _serialize_export_items(db, exports)
     return {"code": "OK", "message": "success", "data": ExportListResponse(items=items).model_dump()}
 
 
@@ -337,28 +479,50 @@ async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(ge
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
     effective_build_id = await _resolve_effective_build_id(db, task)
+    allow_legacy_without_build_ids = bool(
+        task.status not in {TopLevelStatus.COMPLETED.value, TopLevelStatus.FAILED.value}
+    )
     bundle_path, bundle_name, root_prefix = _bundle_target(task)
-    if bundle_path.is_file() and bundle_path.stat().st_size > 0:
+    if _bundle_is_fresh_for_build(
+        _task_root(task.id),
+        bundle_path,
+        effective_build_id,
+        task.updated_at,
+        task.created_at,
+        allow_legacy_without_build_ids=allow_legacy_without_build_ids,
+    ):
         return FileResponse(
             path=bundle_path,
             filename=bundle_name,
             media_type="application/zip",
         )
 
-    bundle_path, bundle_name, root_prefix, added_files = _build_bundle(task)
+    temp_bundle_path = bundle_path.with_name(f".{bundle_name}.tmp")
+    if temp_bundle_path.exists():
+        temp_bundle_path.unlink()
+
+    built_bundle_path, bundle_name, root_prefix, added_files = _build_bundle(
+        task,
+        effective_build_id,
+        output_path=temp_bundle_path,
+    )
     if added_files == 0:
         added_files = await _hydrate_bundle_from_artifacts(
             db,
             task,
-            bundle_path=bundle_path,
+            bundle_path=built_bundle_path,
             root_prefix=root_prefix,
             effective_build_id=effective_build_id,
         )
-    if not bundle_path.exists() or added_files == 0:
+    if not built_bundle_path.exists() or added_files == 0:
+        if built_bundle_path.exists():
+            built_bundle_path.unlink()
         raise HTTPException(
             status_code=404,
             detail={"code": "TASK_BUNDLE_NOT_FOUND", "message": "bundle generation failed"},
         )
+
+    built_bundle_path.replace(bundle_path)
 
     return FileResponse(
         path=bundle_path,
@@ -398,6 +562,8 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
+    service = TaskService(db)
+    await service.cleanup_stale_builds(task_id=task.id)
     active_build = await _resolve_effective_build_id(db, task, task.active_build_id)
     if active_build:
         active_build_obj = await db.get(Build, active_build)
@@ -410,8 +576,7 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
                 },
             )
 
-    service = TaskService(db)
-    build = await service.start_build(task, trigger_type="retry")
+    build = await service.start_build(task, trigger_type="retry", from_stage=body.from_stage)
 
     event = TaskEvent(
         task_id=task.id,

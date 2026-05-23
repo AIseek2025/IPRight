@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -95,6 +96,129 @@ def _diagram_modules(profile: dict | None) -> list[str]:
     return [str(module.get("title", "")).strip() for module in (profile or {}).get("modules", []) if str(module.get("title", "")).strip()]
 
 
+def _seed_index(seed: str, modulo: int) -> int:
+    if modulo <= 0:
+        return 0
+    return int(hashlib.md5(seed.encode("utf-8")).hexdigest()[:8], 16) % modulo
+
+
+def _hex_to_rgb(value: str | None, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    raw = str(value or "").strip().lstrip("#")
+    if len(raw) != 6:
+        return fallback
+    try:
+        return tuple(int(raw[idx : idx + 2], 16) for idx in (0, 2, 4))
+    except ValueError:
+        return fallback
+
+
+def _mix_rgb(color: tuple[int, int, int], target: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+    return tuple(int(channel + (target[idx] - channel) * ratio) for idx, channel in enumerate(color))
+
+
+def _short_group_title(group: list[str], fallback: str) -> str:
+    labels = [item for item in group if item]
+    if not labels:
+        return fallback
+    if len(labels) == 1:
+        return labels[0]
+    joined = " / ".join(labels[:2])
+    return joined if len(joined) <= 22 else f"{labels[0]}等模块"
+
+
+def _diagram_palette(profile: dict, product_name: str) -> dict:
+    seed = str(profile.get("design_seed") or product_name)
+    visual_profile = profile.get("visual_profile") or {}
+    fallback_headers = [
+        (24, 144, 255),
+        (17, 94, 89),
+        (124, 58, 237),
+        (180, 83, 9),
+        (190, 24, 93),
+    ]
+    fallback_accents = [
+        (37, 99, 235),
+        (22, 163, 74),
+        (124, 58, 237),
+        (234, 88, 12),
+        (225, 29, 72),
+    ]
+    header = _hex_to_rgb(visual_profile.get("nav_background"), fallback_headers[_seed_index(f"{seed}|header", len(fallback_headers))])
+    accent = _hex_to_rgb(visual_profile.get("accent"), fallback_accents[_seed_index(f"{seed}|accent", len(fallback_accents))])
+    strong = _hex_to_rgb(visual_profile.get("strong"), _mix_rgb(accent, (0, 0, 0), 0.2))
+    soft = _hex_to_rgb(visual_profile.get("soft"), _mix_rgb(accent, (255, 255, 255), 0.88))
+    panel = _hex_to_rgb(visual_profile.get("panel_background"), (255, 255, 255))
+    border = _hex_to_rgb(visual_profile.get("panel_border"), _mix_rgb(header, (255, 255, 255), 0.78))
+    return {
+        "header": header,
+        "title_fg": _hex_to_rgb(visual_profile.get("nav_text"), (255, 255, 255)),
+        "primary": accent,
+        "primary_fill": _mix_rgb(soft, (255, 255, 255), 0.35),
+        "secondary": strong,
+        "secondary_fill": _mix_rgb(panel, accent, 0.08),
+        "accent": _mix_rgb(header, accent, 0.45),
+        "accent_fill": _mix_rgb(panel, header, 0.1),
+        "text": (34, 34, 34),
+        "muted": (90, 90, 90),
+        "panel_border": border,
+    }
+
+
+def _diagram_layouts() -> dict[str, dict]:
+    return {
+        "matrix": {
+            "boxes": [
+                (120, 98, 1120, 224),
+                (70, 288, 560, 476),
+                (680, 288, 1170, 476),
+                (120, 540, 560, 724),
+                (680, 540, 1120, 724),
+            ],
+            "arrows": [
+                (620, 224, 315, 288),
+                (620, 224, 925, 288),
+                (315, 476, 315, 540),
+                (925, 476, 925, 540),
+                (560, 382, 680, 382),
+            ],
+        },
+        "ladder": {
+            "boxes": [
+                (60, 118, 340, 252),
+                (410, 92, 1180, 260),
+                (60, 336, 430, 548),
+                (470, 336, 840, 548),
+                (880, 336, 1180, 700),
+            ],
+            "arrows": [
+                (340, 186, 410, 176),
+                (545, 260, 245, 336),
+                (785, 260, 655, 336),
+                (1010, 260, 1030, 336),
+                (430, 548, 880, 548),
+                (840, 442, 880, 442),
+            ],
+        },
+        "gallery": {
+            "boxes": [
+                (100, 98, 1140, 214),
+                (60, 270, 380, 486),
+                (460, 270, 780, 486),
+                (860, 270, 1180, 486),
+                (190, 560, 1050, 732),
+            ],
+            "arrows": [
+                (300, 214, 220, 270),
+                (620, 214, 620, 270),
+                (940, 214, 1020, 270),
+                (220, 486, 360, 560),
+                (620, 486, 620, 560),
+                (1020, 486, 880, 560),
+            ],
+        },
+    }
+
+
 def _draw_box(draw, box, *, title: str, body: str, fill, outline, title_color, body_font, heading_font, body_color):
     draw.rounded_rectangle(box, radius=18, fill=fill, outline=outline, width=3)
     draw.text((box[0] + 24, box[1] + 22), title, fill=title_color, font=heading_font)
@@ -103,105 +227,77 @@ def _draw_box(draw, box, *, title: str, body: str, fill, outline, title_color, b
 
 def _build_diagram_spec(product_name: str, profile: dict | None = None) -> dict:
     profile = profile or {}
-    preset_key = str(profile.get("preset_key", "")).strip()
     architecture_style = str((profile.get("project_dna") or {}).get("architecture_style", "")).strip()
     scene = str(profile.get("scene", "")).strip()
     modules = _diagram_modules(profile)
+    roles = [str(item).strip() for item in profile.get("user_roles", []) if str(item).strip()]
+    core_entities = [str(item).strip() for item in profile.get("core_entities", []) if str(item).strip()]
     module_phrase = "、".join(modules[:4]) or "登录首页、业务模块、统计视图和配置能力"
+    seed = str(profile.get("design_seed") or f"{product_name}|{scene}|{architecture_style}")
+    palette = _diagram_palette(profile, product_name)
+    grouped_modules = [modules[idx : idx + 2] for idx in range(0, min(len(modules), 6), 2)]
+    while len(grouped_modules) < 3:
+        grouped_modules.append([])
+    scene_label = scene or "当前业务协同"
+    entity_label = "、".join(core_entities[:3]) or "业务对象、状态结果和审计记录"
+    role_label = "、".join(roles[:3]) or "管理员、业务主管、业务专员"
 
-    if architecture_style == "dispatch_flow" or preset_key == "logistics":
-        return {
-            "palette": {
-                "header": (12, 74, 110),
-                "title_fg": (255, 255, 255),
-                "primary": (15, 118, 110),
-                "primary_fill": (236, 254, 255),
-                "secondary": (217, 119, 6),
-                "secondary_fill": (255, 247, 237),
-                "accent": (55, 65, 81),
-                "accent_fill": (243, 244, 246),
-                "text": (34, 34, 34),
-                "muted": (90, 90, 90),
-            },
-            "boxes": [
-                {"box": (60, 118, 320, 248), "title": "业务接入层", "body": f"承载{product_name}的登录入口、调度首页和岗位导航，面向调度主管、车队专员与客服协同员。", "kind": "primary"},
-                {"box": (390, 92, 1180, 288), "title": "调度驾驶舱", "body": f"围绕{scene or '运单编排与时效协同'}组织首页与核心模块，重点承载{module_phrase}等页面视图，并同步显示在途状态、异常提醒和待办任务。", "kind": "primary"},
-                {"box": (60, 350, 420, 560), "title": "运力协同层", "body": "用于维护车辆、司机、可用运力和调度任务分配结果，支撑派车、改派、回场和运力回收。", "kind": "secondary"},
-                {"box": (450, 350, 800, 560), "title": "线路监测层", "body": "用于汇总线路节点、在途轨迹、拥堵状态和绕行方案，为时效预测和异常处置提供依据。", "kind": "secondary"},
-                {"box": (830, 350, 1180, 560), "title": "仓配与签收层", "body": "用于处理分拨协同、签收回单、影像归档和客户反馈回写，保证仓配节点与正式材料同步。", "kind": "accent"},
-                {"box": (220, 626, 1020, 760), "title": "支撑服务层", "body": "负责截图采集、说明书编排、异常通知、导出打包与发布留痕，确保物流项目的页面结果、回单材料与交付文件保持一致。", "kind": "accent"},
-            ],
-            "arrows": [
-                (320, 182, 390, 182),
-                (545, 288, 255, 350),
-                (785, 288, 625, 350),
-                (1005, 288, 1005, 350),
-                (250, 560, 360, 626),
-                (625, 560, 625, 626),
-                (1005, 560, 880, 626),
-            ],
-            "caption": f"图1：{product_name}围绕运单调度、运力协同、线路监测与签收回单形成闭环架构。",
-        }
+    style_caption = {
+        "dispatch_flow": "形成以调度协同和执行闭环为核心的项目专属架构。",
+        "risk_grid": "形成以分析评估、规则处置和材料沉淀为核心的项目专属架构。",
+        "control_tower": "形成以监测总览、任务协同和结果留痕为核心的项目专属架构。",
+    }.get(architecture_style, "形成以页面处理、业务协同和交付发布为核心的项目专属架构。")
 
-    if architecture_style == "risk_grid" or preset_key == "supply_chain_finance":
-        return {
-            "palette": {
-                "header": (30, 64, 175),
-                "title_fg": (255, 255, 255),
-                "primary": (37, 99, 235),
-                "primary_fill": (239, 246, 255),
-                "secondary": (147, 51, 234),
-                "secondary_fill": (245, 243, 255),
-                "accent": (217, 119, 6),
-                "accent_fill": (255, 247, 237),
-                "text": (34, 34, 34),
-                "muted": (90, 90, 90),
-            },
-            "boxes": [
-                {"box": (140, 108, 1100, 232), "title": "接入与主体层", "body": f"承载{product_name}的登录入口、核心企业看板和授信主体检索，面向授信分析师、风控经理和资金运营专员。", "kind": "primary"},
-                {"box": (70, 290, 560, 470), "title": "融资分析工作台", "body": f"围绕{scene or '授信分析与融资监控'}组织{module_phrase}等核心视图，集中处理融资申请、尽调意见和审批节点。", "kind": "secondary"},
-                {"box": (680, 290, 1170, 470), "title": "风险监测与授信决策层", "body": "用于监控资金敞口、授信额度占用、预警等级与责任归属，支撑授信策略调整和风险处置闭环。", "kind": "secondary"},
-                {"box": (70, 536, 560, 722), "title": "贸易背景与凭证层", "body": "用于核验订单、合同、发票、影像与补件状态，保证融资材料真实性、单据完备度和审计可追溯性。", "kind": "accent"},
-                {"box": (680, 536, 1170, 722), "title": "资金与交付支撑层", "body": "负责截图采集、说明书生成、预警通知、导出发布与留痕归档，保证分析平台页面结果与正式材料保持一致。", "kind": "accent"},
-            ],
-            "arrows": [
-                (620, 232, 315, 290),
-                (620, 232, 925, 290),
-                (315, 470, 315, 536),
-                (925, 470, 925, 536),
-                (560, 380, 680, 380),
-            ],
-            "caption": f"图1：{product_name}围绕授信主体、融资分析、风险监测与贸易背景核验形成项目专属架构。",
-        }
+    contents = [
+        {
+            "title": "访问与任务入口",
+            "body": f"承载{product_name}的登录入口、首页导航和任务工作入口，面向{role_label}等核心角色组织访问路径。",
+            "kind": "primary",
+        },
+        {
+            "title": _short_group_title(grouped_modules[0], "首页与核心总览"),
+            "body": f"围绕{scene_label}组织首页与核心模块入口，重点承载{_short_group_title(grouped_modules[0], module_phrase)}相关视图与工作动作。",
+            "kind": "primary",
+        },
+        {
+            "title": _short_group_title(grouped_modules[1], "业务处理与规则协同"),
+            "body": f"负责处理{_short_group_title(grouped_modules[1], module_phrase)}等业务场景，承接状态流转、结果回写和规则编排。",
+            "kind": "secondary",
+        },
+        {
+            "title": _short_group_title(grouped_modules[2], "数据与结果沉淀"),
+            "body": f"围绕{entity_label}等核心对象组织数据口径、记录留痕和结果沉淀，保证页面显示与导出材料一致。",
+            "kind": "accent",
+        },
+        {
+            "title": "交付与发布支撑",
+            "body": "负责截图采集、说明书编排、源码文档生成、导出打包和发布留痕，使页面、文档和下载材料保持一一对应。",
+            "kind": "accent",
+        },
+    ]
+
+    layouts = _diagram_layouts()
+    if architecture_style == "dispatch_flow":
+        layout_key = "ladder"
+    elif architecture_style == "risk_grid":
+        layout_key = "matrix"
+    else:
+        layout_key = list(layouts.keys())[_seed_index(seed, len(layouts))]
+    layout = layouts[layout_key]
 
     return {
-        "palette": {
-            "header": (24, 144, 255),
-            "title_fg": (255, 255, 255),
-            "primary": (24, 144, 255),
-            "primary_fill": (233, 246, 255),
-            "secondary": (82, 196, 26),
-            "secondary_fill": (246, 255, 237),
-            "accent": (250, 173, 20),
-            "accent_fill": (255, 247, 230),
-            "text": (34, 34, 34),
-            "muted": (102, 102, 102),
-        },
+        "palette": palette,
         "boxes": [
-            {"box": (60, 120, 300, 245), "title": "用户访问层", "body": f"承载{product_name}的登录入口、首页导航和任务级业务入口，面向当前项目的核心岗位角色。", "kind": "primary"},
-            {"box": (345, 100, 735, 305), "title": "页面展示层", "body": f"负责{module_phrase}等项目专属页面展示，依据当前任务主题生成统计卡片、筛选区、表格字段和说明板块。", "kind": "primary"},
-            {"box": (790, 100, 1180, 325), "title": "业务处理层", "body": f"围绕{scene or '业务协同'}执行任务处理、状态流转、结果回写和服务编排，是当前产品功能闭环的核心区域。", "kind": "secondary"},
-            {"box": (345, 390, 735, 605), "title": "数据组织层", "body": "用于保存页面业务数据、截图结果、导出记录和系统配置，保证不同角色在统一口径下查看与处理数据。", "kind": "accent"},
-            {"box": (790, 390, 1180, 620), "title": "交付支撑层", "body": "负责截图采集、说明书编排、导出打包和交付发布，使项目页面、文档和下载材料形成一一对应关系。", "kind": "accent"},
+            {
+                "box": layout["boxes"][idx],
+                "title": contents[idx]["title"],
+                "body": contents[idx]["body"],
+                "kind": contents[idx]["kind"],
+            }
+            for idx in range(len(contents))
         ],
-        "arrows": [
-            (300, 180, 345, 180),
-            (735, 200, 790, 200),
-            (880, 325, 650, 390),
-            (1010, 325, 950, 390),
-            (790, 555, 735, 555),
-        ],
-        "caption": f"图1：{product_name}围绕页面展示、业务处理、数据组织与交付支撑形成项目专属架构。",
+        "arrows": layout["arrows"],
+        "caption": f"图1：{product_name}{style_caption}",
     }
 
 

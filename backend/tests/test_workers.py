@@ -42,7 +42,9 @@ from workers.stages.handlers import (
     run_compose_code_book_stage,
 )
 from workers.stages.delivery_support import load_screenshots_meta
+from workers.stages.delivery_support import _warm_bundle_download
 from workers.stages.generated_backend import write_generated_backend_files
+from workers.stages import delivery_support as delivery_support_module
 from workers.stages.generated_frontend import (
     _ensure_backend_dependencies,
     _ensure_frontend_dependencies,
@@ -237,6 +239,35 @@ class TestStageHandlers:
         assert screenshots[0]["caption"] == "图1 采购管理首页"
         assert screenshots[0]["description"] == "新的页面描述"
         assert screenshots[0]["steps"] == ["步骤1", "步骤2"]
+
+    def test_merge_manual_llm_content_dedupes_repeated_sentences(self):
+        profile = {"modules": [{"title": "采购管理"}]}
+        screenshots = [{"page_title": "采购管理", "route": "/purchases"}]
+        llm_content = {
+            "development_background": "平台围绕采购审批展开。平台围绕采购审批展开。",
+            "technical_feature_bullets": ["统一登录", "统一登录", "过程留痕"],
+            "module_overrides": [
+                {
+                    "title": "采购管理",
+                    "description": "采购管理页面用于处理采购事项。采购管理页面用于处理采购事项。",
+                    "steps": ["进入页面查看列表。", "进入页面查看列表。", "完成后导出结果。"],
+                }
+            ],
+            "page_overrides": [
+                {
+                    "page_title": "采购管理",
+                    "description": "采购页面展示审批结果。采购页面展示审批结果。",
+                }
+            ],
+        }
+
+        merged = _merge_manual_llm_content(profile, llm_content, screenshots)
+
+        assert merged["development_background"] == "平台围绕采购审批展开。"
+        assert merged["technical_feature_bullets"] == ["统一登录", "过程留痕"]
+        assert merged["modules"][0]["description"] == "采购管理页面用于处理采购事项。"
+        assert merged["modules"][0]["steps"] == ["进入页面查看列表。", "完成后导出结果。"]
+        assert screenshots[0]["description"] == "采购页面展示审批结果。"
 
     def test_load_screenshots_meta_falls_back_to_artifacts_manifest(self, tmp_path):
         task_id = str(uuid.uuid4())
@@ -509,7 +540,20 @@ export default function App() {
                 "frontend/src/pages/Dashboard.tsx": """
 import { APP_PROFILE } from '../generated/appProfile';
 export default function Dashboard() {
-  return <section>指挥仪表盘 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>;
+  return (
+    <section>
+      <h1>指挥仪表盘</h1>
+      <div>{APP_PROFILE.product_name}</div>
+      <div>
+        {APP_PROFILE.dashboard_metrics.map((item) => (
+          <article key={item.title}>
+            <strong>{item.title}</strong>
+            <span>{item.value}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 """,
                 "frontend/src/pages/Login.tsx": """
@@ -591,19 +635,23 @@ import { Card, Statistic, Table } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { APP_PROFILE } from '../generated/appProfile';
 
-const Dashboard: React.FC = () => {
-  const { product_name, dashboard_metrics } = APP_PROFILE;
+export default function Dashboard() {
   return (
     <div>
-      <h1>{product_name}</h1>
-      <Card><Statistic title={dashboard_metrics[0]?.title} value={dashboard_metrics[0]?.value} /></Card>
-      <ReactECharts option={{}} />
-      <Table dataSource={[]} columns={[]} />
+      <h1>系统概览</h1>
+      <div>{APP_PROFILE.product_name}</div>
+      <Card>
+        <Statistic title="当前指标数" value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+      <ReactECharts option={{ xAxis: { type: 'category', data: ['本周'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [APP_PROFILE.dashboard_metrics.length] }] }} />
+      <Table
+        dataSource={[{ key: '1', item: '指标同步', status: '完成' }]}
+        columns={[{ title: '事项', dataIndex: 'item' }, { title: '状态', dataIndex: 'status' }]}
+        pagination={false}
+      />
     </div>
   );
-};
-
-export default Dashboard;
+}
 """,
                 "frontend/src/pages/Login.tsx": """
 export default function Login() {
@@ -617,6 +665,633 @@ export default function Login() {
 
         assert invalid_paths == []
         assert "ReactECharts" in repaired["frontend/src/pages/Dashboard.tsx"]
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_unsupported_antd_icon_name(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { BriefcaseOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <section>
+      <h1>系统首页</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.dashboard_metrics[0]?.label} value={APP_PROFILE.dashboard_metrics[0]?.value} prefix={<BriefcaseOutlined />} />
+      </Card>
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_top_level_table_config(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic, Table } from 'antd';
+import { TeamOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const columns = [
+  { title: '事项', dataIndex: 'title' },
+  { title: '状态', dataIndex: 'status' },
+];
+
+export default function Dashboard() {
+  return (
+    <section>
+      <h1>系统首页</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} prefix={<TeamOutlined />} />
+      </Card>
+      <Table columns={columns} dataSource={[{ key: '1', title: '事项A', status: '进行中' }]} pagination={False} />
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_typography_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic, Table, Typography } from 'antd';
+import { TeamOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title } = Typography;
+
+export default function Dashboard() {
+  return (
+    <section>
+      <Title level={2}>系统首页</Title>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} prefix={<TeamOutlined />} />
+      </Card>
+      <Table dataSource={[{ key: '1', title: '事项A' }]} pagination={false} />
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_fallback_metrics_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic, Table, Tag } from 'antd';
+import { TeamOutlined, FileTextOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const fallbackMetrics = [
+    { label: '进行中职位', value: 12 },
+    { label: '待审批事项', value: 8 },
+  ];
+  return (
+    <section>
+      <h1>系统首页</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} prefix={<TeamOutlined />} />
+      </Card>
+      <Table dataSource={fallbackMetrics.map((item, index) => ({ key: String(index), ...item }))} pagination={false} />
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_flex_monitor_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import React from 'react';
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 24px' }}>
+      <h1>异常监控总览</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <Card>
+        <Statistic title="异常总数" value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_domain_workbench_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic, Tag } from 'antd';
+import { ExclamationCircleOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ padding: '1.5rem 2rem' }}>
+      <h1>冷链履约异常协同工作台</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <Card>
+        <Statistic title="异常事件" value={APP_PROFILE.dashboard_metrics.length} prefix={<ExclamationCircleOutlined />} />
+      </Card>
+      <Tag color="warning">待协同处理</Tag>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_icon_map_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined, TeamOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const iconMap: Record<string, React.ReactNode> = {
+    check: <CheckCircleOutlined />,
+    alert: <ExclamationCircleOutlined />,
+    time: <ClockCircleOutlined />,
+    team: <TeamOutlined />,
+  };
+  return (
+    <section>
+      <h1>工作台</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} prefix={iconMap.alert} />
+      </Card>
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_four_icon_stats_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { TeamOutlined, CalendarOutlined, FileTextOutlined, UserOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <section>
+      <h1>工作台</h1>
+      <Card>
+        <Statistic title="团队总数" value={8} prefix={<TeamOutlined />} />
+      </Card>
+      <Card>
+        <Statistic title="今日安排" value={5} prefix={<CalendarOutlined />} />
+      </Card>
+      <Card>
+        <Statistic title="文档数量" value={APP_PROFILE.dashboard_metrics.length} prefix={<FileTextOutlined />} />
+      </Card>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={12} prefix={<UserOutlined />} />
+      </Card>
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_beige_icon_stats_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+import { Card, Statistic } from 'antd';
+import { FileTextOutlined, UserOutlined, CalendarOutlined, CheckCircleOutlined } from '@ant-design/icons';
+
+export default function Dashboard() {
+  return (
+    <div style={{ background: '#f8f5ef', minHeight: '100vh', padding: '24px' }}>
+      <h1>工作台</h1>
+      <Card><Statistic title="文档总数" value={APP_PROFILE.dashboard_metrics.length} prefix={<FileTextOutlined />} /></Card>
+      <Card><Statistic title="活跃用户" value={12} prefix={<UserOutlined />} /></Card>
+      <Card><Statistic title="今日安排" value={6} prefix={<CalendarOutlined />} /></Card>
+      <Card><Statistic title={APP_PROFILE.product_name} value={1} prefix={<CheckCircleOutlined />} /></Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_margin_metrics_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+import { Card, Statistic } from 'antd';
+
+export default function Dashboard() {
+  const metrics = APP_PROFILE.dashboard_metrics;
+  return (
+    <div style={{ margin: 24 }}>
+      <h1>工作台</h1>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+        {metrics.map((item) => (
+          <Card key={item.title}>
+            <Statistic title={item.title} value={item.value} />
+          </Card>
+        ))}
+      </div>
+      <p>{APP_PROFILE.product_name}</p>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_metrics_alias_blue_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+import { Card, Statistic } from 'antd';
+
+export default function Dashboard() {
+  const metrics = APP_PROFILE.dashboard_metrics || [];
+  return (
+    <div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>
+      <h1 style={{ marginBottom: 24 }}>{APP_PROFILE.product_name}</h1>
+      <Card>
+        <Statistic title="指标数量" value={metrics.length} />
+      </Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_any_metrics_plain_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const metrics = (APP_PROFILE as any).dashboard_metrics;
+  return (
+    <div style={{ padding: 24 }}>
+      <h1>工作台</h1>
+      <Card>
+        <Statistic title="指标数量" value={metrics?.length || 0} />
+      </Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_string_padding_light_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ background: '#f8f5ef', minHeight: '100vh', padding: '24px' }}>
+      <h1>工作台</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_calendar_team_plain_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { CalendarOutlined, TeamOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ padding: '16px' }}>
+      <h1>工作台</h1>
+      <p style={{ color: '#555' }}>{APP_PROFILE.product_name}</p>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <Card>
+          <Statistic title="待办事项" value={8} prefix={<CalendarOutlined />} />
+        </Card>
+        <Card>
+          <Statistic title="团队成员" value={12} prefix={<TeamOutlined />} />
+        </Card>
+      </div>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_wrong_app_profile_path(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from './generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <section>
+      <h1>系统首页</h1>
+      <Card>
+        <Statistic title={APP_PROFILE.product_name} value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+    </section>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
     def test_repair_invalid_core_files_rejects_inline_module_shell_app(self, tmp_path):
         app_root = tmp_path / "app"
@@ -635,7 +1310,7 @@ export default function App() {
                 "frontend/src/pages/Dashboard.tsx": """
 import { APP_PROFILE } from '../generated/appProfile';
 export default function Dashboard() {
-  return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>;
+  return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>;
 }
 """,
                 "frontend/src/pages/Login.tsx": """
@@ -648,6 +1323,70 @@ export default function Login({ onLogin }) {
                 "modules": [
                     {"route": "/credit-subjects", "key": "credit-subjects"},
                 ]
+            },
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_heavy_tabs_app_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import React, { useMemo } from 'react';
+import { Routes, Route, Navigate, useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
+import { Tabs, Row, Col, Card, Button, Space } from 'antd';
+import type { TabsProps } from 'antd';
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import WorkflowPage from './pages/WorkflowPage';
+
+export default function App() {
+  const items: TabsProps['items'] = useMemo(() => [], []);
+  return (
+    <Row>
+      <Col span={24}>
+        <Card>
+          <Space>{APP_PROFILE.product_name}</Space>
+          <Tabs items={items} />
+          <Routes>
+            <Route path="/login" element={<Login onLogin={() => undefined} />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/workflow" element={<WorkflowPage />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+          <Outlet />
+        </Card>
+      </Col>
+    </Row>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }) {
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+                "frontend/src/pages/WorkflowPage.tsx": """
+export default function WorkflowPage() {
+  return <div>职位与候选人管理</div>;
+}
+""",
+            },
+            profile={
+                "modules": [
+                    {"route": "/workflow", "key": "workflow"},
+                ],
+                "experience_blueprint": {"navigation_variant": "indexed"},
+                "visual_profile": {"chrome_treatment": "indexed_topbar"},
             },
         )
 
@@ -714,6 +1453,329 @@ export default function WorkflowPage() {
 
         assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
         assert "任务简报" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workflow_candidate_white_shell(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function WorkflowPage() {
+  return (
+    <div style={{ padding: 24, background: '#ffffff', minHeight: '100vh' }}>
+      <div style={{ color: '#888', fontSize: 12 }}>{APP_PROFILE.product_name} / 候选人管理</div>
+      <h1 style={{ margin: '8px 0 16px' }}>候选人管理</h1>
+      <p style={{ color: '#555' }}>用于处理候选人流程。</p>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "table_headers": ["分析编号", "分析主题"],
+                    "rows": [["AN-202605-017", "新能源债券组合压力测试"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "候选人管理" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_truncated_typescript_source(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function StatisticsPage() {
+  const allData = [
+    { key: '1', analysisId: 'MOD0-301', topic: '统计报表周报', dimension: '融合招聘一体化软件', responsible: '周铭', conclusion: '融合招聘一体化软件趋势稳定', updateTime: '2026-05-02' },
+    { key: '2', analysisId: 'MOD0-302', topic: '统计报表月报', dimension: '教育
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                    "rows": [["MOD0-301", "统计报表周报", "融合招聘一体化软件", "周铭"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "统计报表月报" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_wrong_app_profile_relative_path(self):
+        generated_files = {
+            "frontend/src/pages/AssetsPage.tsx": """
+import { APP_PROFILE } from '../../generated/appProfile';
+export default function AssetsPage() {
+  return <section><h1>招聘流程引擎</h1><div>{APP_PROFILE.product_name}</div><table><tbody><tr><td>WF-001</td><td>初筛流转</td><td>招聘经理</td></tr></tbody></table></section>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "招聘流程引擎",
+                    "key": "assets",
+                    "route": "/assets",
+                    "table_headers": ["流程编号", "流程主题", "负责人"],
+                    "rows": [["WF-001", "初筛流转", "招聘经理"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/AssetsPage.tsx"]
+        assert "../../generated/appProfile" in repaired["frontend/src/pages/AssetsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_default_app_profile_import(self):
+        generated_files = {
+            "frontend/src/pages/RecordsPage.tsx": """
+import APP_PROFILE from '../generated/appProfile';
+export default function RecordsPage() {
+  return <section><h1>职位与岗位管理</h1><div>{APP_PROFILE.product_name}</div><table><tbody><tr><td>REC-001</td><td>岗位编制调整</td><td>招聘主管</td></tr></tbody></table></section>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "职位与岗位管理",
+                    "key": "records",
+                    "route": "/records",
+                    "table_headers": ["记录编号", "主题名称", "责任角色"],
+                    "rows": [["REC-001", "岗位编制调整", "招聘主管"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/RecordsPage.tsx"]
+        assert "import APP_PROFILE from '../generated/appProfile'" in repaired["frontend/src/pages/RecordsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_records_beige_light_shell(self):
+        generated_files = {
+            "frontend/src/pages/RecordsPage.tsx": """
+import React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function RecordsPage() {
+  return (
+    <div style={{ padding: 24, background: '#f8f5ef', minHeight: '100vh' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h1 style={{ margin: 0 }}>职位与岗位管理</h1>
+        <span>{APP_PROFILE.product_name}</span>
+      </div>
+      <input placeholder="搜索职位与岗位管理相关的融合招聘一体化软件/教育" />
+      <table>
+        <tbody>
+          <tr><td>记录编号</td><td>主题名称</td><td>责任角色</td><td>当前状态</td></tr>
+          <tr><td>REC-001</td><td>岗位编制调整</td><td>招聘主管</td><td>处理中</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "职位与岗位管理",
+                    "key": "records",
+                    "route": "/records",
+                    "table_headers": ["记录编号", "主题名称", "责任角色", "当前状态"],
+                    "rows": [["REC-001", "岗位编制调整", "招聘主管", "处理中"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/RecordsPage.tsx"]
+        assert "background: '#f8f5ef'" in repaired["frontend/src/pages/RecordsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_statistics_heavy_antd_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import React from 'react';
+import { Input, Button, Card, Row, Col, Typography } from 'antd';
+import { SearchOutlined, BarChartOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title, Text } = Typography;
+
+const StatisticsPage: React.FC = () => {
+  return (
+    <div>
+      <Title>统计报表</Title>
+      <Text>{APP_PROFILE.product_name}</Text>
+      <Input prefix={<SearchOutlined />} placeholder="搜索统计报表相关主题" />
+      <Button icon={<BarChartOutlined />}>生成统计分析</Button>
+      <Row gutter={16}>
+        <Col span={12}><Card>摘要一</Card></Col>
+      </Row>
+    </div>
+  );
+};
+
+export default StatisticsPage;
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                    "rows": [["AN-001", "图书借阅统计", "借阅量", "管理员"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "StatisticsPage: React.FC" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_analytics_heavy_antd_shell(self):
+        generated_files = {
+            "frontend/src/pages/AnalyticsPage.tsx": """
+import React from 'react';
+import { Typography, Input, Button, Space, Card, Tag } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title, Text } = Typography;
+
+const AnalyticsPage: React.FC = () => {
+  return (
+    <div>
+      <Title>风险指标体系与模型管理</Title>
+      <Text>{APP_PROFILE.product_name}</Text>
+      <Space>
+        <Input prefix={<SearchOutlined />} placeholder="搜索风险指标体系与模型管理相关主题" />
+        <Button icon={<PlusOutlined />}>新增风险指标</Button>
+      </Space>
+      <Card>
+        <Tag>监测中</Tag>
+      </Card>
+    </div>
+  );
+};
+
+export default AnalyticsPage;
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "analytics",
+                    "route": "/analytics",
+                    "table_headers": ["分析编号", "分析主题", "负责人"],
+                    "rows": [["AN-202605-017", "新能源债券组合压力测试", "周铭"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/AnalyticsPage.tsx"]
+        assert "AnalyticsPage: React.FC" in repaired["frontend/src/pages/AnalyticsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_reports_blue_shell(self):
+        generated_files = {
+            "frontend/src/pages/ReportsPage.tsx": """
+import React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function ReportsPage() {
+  return (
+    <div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
+      <h1>录用与Offer管理</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>校招转化分析</td><td>转化率</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "招聘成效分析",
+                    "key": "reports",
+                    "route": "/reports",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "校招转化分析", "转化率"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/ReportsPage.tsx"]
+        assert "录用与Offer管理" in repaired["frontend/src/pages/ReportsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_statistics_blue_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function StatisticsPage() {
+  return (
+    <div style={{ padding: '24px 32px', background: '#f3f6fb', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
+      <h1>统计报表</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>图书借阅统计</td><td>借阅量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "图书借阅统计", "借阅量"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "padding: '24px 32px'" in repaired["frontend/src/pages/StatisticsPage.tsx"]
 
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
@@ -847,7 +1909,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/Dashboard.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                         }
                     )
                 if required == (
@@ -949,7 +2011,7 @@ export default function WorkflowPage() {
                     if requirements.get("invalid_core_previews"):
                         return _Resp(
                             {
-                                "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
+                                "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                             }
                         )
                     return _Resp(
@@ -999,6 +2061,27 @@ export default function WorkflowPage() {
             ("frontend/src/pages/Dashboard.tsx",),
         ]
         assert all(call["validation_hints"] for call in retry_calls)
+        dashboard_retry_call = next(
+            call for call in retry_calls if call["required_files"] == ("frontend/src/pages/Dashboard.tsx",)
+        )
+        assert any("export default function Dashboard()" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("压缩成精简首页" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("不要在组件外声明 `const items = [`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("`const fallbackMetrics = [`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("`const recentActivities = [`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("`const columns = [`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("`const { Title } = Typography`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("`const metrics = APP_PROFILE.dashboard_metrics || []`" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("#f3f6fb" in hint and "APP_PROFILE.product_name" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("CalendarOutlined + TeamOutlined" in hint and "padding: '16px'" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("<h1>工作台</h1>" in hint and "产品名副标题" in hint for hint in dashboard_retry_call["validation_hints"])
+        assert any("原生 `<table>`" in hint for hint in dashboard_retry_call["validation_hints"])
+
+        app_retry_call = next(
+            call for call in retry_calls if call["required_files"] == ("frontend/src/App.tsx",)
+        )
+        assert any("`useMemo`" in hint and "`useLocation`" in hint and "`useNavigate`" in hint for hint in app_retry_call["validation_hints"])
+        assert any("`Row, Col, Card, Button, Space`" in hint for hint in app_retry_call["validation_hints"])
         retry_batches = [batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry"]
         assert [batch["required_files"] for batch in retry_batches] == [
             ["frontend/src/App.tsx"],
@@ -1011,6 +2094,43 @@ export default function WorkflowPage() {
         assert (app_root / "frontend/src/App.tsx").exists()
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
+
+    def test_build_codegen_batches_marks_core_dashboard_as_plaintext_single_file(self):
+        codegen_requirements = {
+            "required_files": [
+                "frontend/src/App.tsx",
+                "frontend/src/pages/Login.tsx",
+                "frontend/src/pages/Dashboard.tsx",
+            ],
+            "core_required_files": [
+                "frontend/src/App.tsx",
+                "frontend/src/pages/Login.tsx",
+                "frontend/src/pages/Dashboard.tsx",
+            ],
+            "raw_user_request": {},
+            "app_type": "admin_web",
+            "preset_key": "",
+            "product_name": "测试系统",
+            "short_name": "测试",
+            "topic_label": "测试系统",
+            "scene": "测试场景",
+            "industry_scope": "测试行业",
+            "software_category": "",
+            "user_roles": ["管理员"],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "project_dna": {},
+            "differentiation_hint": "",
+            "module_pages": [],
+        }
+
+        batches = build_codegen_batches(codegen_requirements)
+        core_dashboard = next(batch for batch in batches if batch["name"] == "core_dashboard")
+
+        assert core_dashboard["required_files"] == ["frontend/src/pages/Dashboard.tsx"]
+        assert core_dashboard["requirements"]["single_file_plaintext"] is True
 
     def test_generate_task_app_code_structurally_repairs_persistently_invalid_app(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1066,7 +2186,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/Dashboard.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Statistic Card</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                         }
                     )
                 if required == (
@@ -1189,7 +2309,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/Dashboard.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                         }
                     )
                 if required == (
@@ -1231,12 +2351,67 @@ export default function WorkflowPage() {
         retry_call = next(call for call in llm.calls if call["invalid_module_previews"])
         assert retry_call["required_files"] == ("frontend/src/pages/WorkflowPage.tsx",)
         assert retry_call["validation_hints"]
+        assert any("React.FC" in hint and "APP_PROFILE from '../generated/appProfile'" in hint for hint in retry_call["validation_hints"])
+        assert any("const platformName = APP_PROFILE.product_name" in hint for hint in retry_call["validation_hints"])
+        assert any("#ffffff" in hint and "候选人管理" in hint for hint in retry_call["validation_hints"])
+        assert any("const WorkflowPage = () =>" in hint and "padding: 24" in hint and "候选人管理" in hint for hint in retry_call["validation_hints"])
         assert "frontend/src/pages/WorkflowPage.tsx" in retry_call["invalid_module_previews"]
         retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry")
         assert retry_batch["generated_paths"] == ["frontend/src/pages/WorkflowPage.tsx"]
         page_text = (app_root / "frontend/src/pages/WorkflowPage.tsx").read_text(encoding="utf-8")
         assert "新能源债券组合压力测试" in page_text
         assert "mockData" not in page_text
+
+    def test_assets_retry_hints_include_padding24_button_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "assets",
+                        "route": "/assets",
+                        "title": "材料资产管理",
+                        "primary_action": "新建材料资产台账",
+                        "filter_placeholder": "搜索材料资产编号",
+                        "table_headers": ["资产编号", "材料名称", "保管部门", "当前状态"],
+                        "rows": [["AST-001", "申报材料总表", "知识产权部", "处理中"]],
+                        "page_variant": "records",
+                    }
+                ]
+            },
+            ["frontend/src/pages/AssetsPage.tsx"],
+        )
+
+        assert any("import React from 'react'" in hint for hint in hints)
+        assert any("padding: 24, maxWidth: 1200, margin: '0 auto'" in hint for hint in hints)
+        assert any("面试管理" in hint for hint in hints)
+        assert any("background: '#f3f6fb'" in hint and "面试流程管理" in hint for hint in hints)
+        assert any("APP_PROFILE.productName" in hint for hint in hints)
+
+    def test_workflow_retry_hints_include_product_name_breadcrumb_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "workflow",
+                        "route": "/workflow",
+                        "title": "录用与入职管理",
+                        "primary_action": "发起录用与入职流程",
+                        "filter_placeholder": "搜索候选人姓名 / 录用岗位 / 办理阶段",
+                        "table_headers": ["录用编号", "候选人姓名", "录用岗位", "办理阶段"],
+                        "rows": [["OFF-202605-015", "林晓", "初中数学教研岗", "Offer审批中"]],
+                        "page_variant": "workflow",
+                    }
+                ]
+            },
+            ["frontend/src/pages/WorkflowPage.tsx"],
+        )
+
+        assert any("function WorkflowPage() { return (" in hint and "padding: 24" in hint for hint in hints)
+        assert any("APP_PROFILE.product_name" in hint and "灰色小字" in hint for hint in hints)
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1331,7 +2506,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/Dashboard.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                         }
                     )
                 if required == (
@@ -1378,17 +2553,266 @@ export default function WorkflowPage() {
             if call["invalid_module_previews"]
         ]
         assert retry_calls == [
-            ("frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"),
+            ("frontend/src/pages/PurchasesPage.tsx",),
+            ("frontend/src/pages/InventoryPage.tsx",),
             ("frontend/src/pages/AlertsPage.tsx",),
         ]
         retry_batches = [batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry"]
         assert [batch["required_files"] for batch in retry_batches] == [
-            ["frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"],
+            ["frontend/src/pages/PurchasesPage.tsx"],
+            ["frontend/src/pages/InventoryPage.tsx"],
             ["frontend/src/pages/AlertsPage.tsx"],
         ]
         assert "mockData" not in (app_root / "frontend/src/pages/PurchasesPage.tsx").read_text(encoding="utf-8")
         assert "mockData" not in (app_root / "frontend/src/pages/InventoryPage.tsx").read_text(encoding="utf-8")
         assert "mockData" not in (app_root / "frontend/src/pages/AlertsPage.tsx").read_text(encoding="utf-8")
+
+    def test_generate_task_app_code_ignores_unexpected_files_in_module_retry(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "招聘分析平台",
+            "scene": "围绕招聘记录、流程跟进和画像评估进行分析",
+            "industry_scope": "人力资源",
+            "user_roles": ["招聘主管"],
+            "modules": [
+                {
+                    "title": "流程跟进",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "新增跟进记录",
+                    "filter_placeholder": "搜索候选人 / 岗位 / 招聘顾问",
+                    "table_headers": ["候选人", "岗位", "环节", "顾问"],
+                    "rows": [["林晓", "算法工程师", "终面", "周顾问"]],
+                    "highlights": ["聚焦流程节点协作"],
+                    "description": "管理招聘流程推进。",
+                    "page_variant": "workflow",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            def __init__(self):
+                self.calls = []
+
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                self.calls.append(
+                    {
+                        "required_files": required,
+                        "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
+                    }
+                )
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import WorkflowPage from './pages/WorkflowPage'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/workflow' element={<WorkflowPage />} /></Routes></div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '招聘分析平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/WorkflowPage.tsx",):
+                    if not requirements.get("invalid_module_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/pages/WorkflowPage.tsx": "const mockData = [{ id: '1' }]; export default function WorkflowPage(){ return <div>流程跟进</div>; }",
+                            }
+                        )
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Layout } from 'antd'; export default function App(){ return <Layout />; }",
+                            "frontend/src/pages/WorkflowPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function WorkflowPage(){ return <section><h1>流程跟进</h1><div>{APP_PROFILE.product_name}</div><button>新增跟进记录</button><table><tbody><tr><td>林晓</td><td>算法工程师</td><td>终面</td><td>周顾问</td></tr></tbody></table></section>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry")
+        assert retry_batch["required_files"] == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert retry_batch["generated_paths"] == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "unexpected files returned: frontend/src/App.tsx" in (retry_batch["error"] or "")
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "<Layout />" not in app_text
+        workflow_text = (app_root / "frontend/src/pages/WorkflowPage.tsx").read_text(encoding="utf-8")
+        assert "林晓" in workflow_text
+
+    def test_generate_task_app_code_ignores_unexpected_files_in_main_page_batch(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "档案管理平台",
+            "scene": "围绕主体档案、证照记录和经营信息进行归集",
+            "industry_scope": "企业服务",
+            "user_roles": ["档案专员"],
+            "modules": [
+                {
+                    "title": "主体档案",
+                    "key": "records",
+                    "route": "/records",
+                    "primary_action": "新建主体档案",
+                    "filter_placeholder": "搜索主体名称 / 统一代码 / 负责人",
+                    "table_headers": ["主体名称", "统一代码", "负责人", "状态"],
+                    "rows": [["华衡科技", "91310000MA1K12345A", "顾宁", "有效"]],
+                    "highlights": ["覆盖主体信息归集"],
+                    "description": "管理主体档案。",
+                    "page_variant": "records",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            def __init__(self):
+                self.calls = []
+
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                self.calls.append({"required_files": required})
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import RecordsPage from './pages/RecordsPage'; export default function App(){ return <div>{APP_PROFILE.product_name}<Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/records' element={<RecordsPage />} /></Routes></div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { const handleSubmit = () => { localStorage.setItem('ipright_demo_auth', 'true'); onLogin(); }; return <button onClick={handleSubmit}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '档案管理平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/RecordsPage.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Layout } from 'antd'; export default function App(){ return <Layout />; }",
+                            "frontend/src/pages/RecordsPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function RecordsPage(){ return <section><h1>主体档案</h1><div>{APP_PROFILE.product_name}</div><button>新建主体档案</button><table><tbody><tr><td>华衡科技</td><td>91310000MA1K12345A</td><td>顾宁</td><td>有效</td></tr></tbody></table></section>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        page_batch = next(batch for batch in report["batches"] if batch["batch"] == "page:RecordsPage")
+        assert page_batch["required_files"] == ["frontend/src/pages/RecordsPage.tsx"]
+        assert page_batch["generated_paths"] == ["frontend/src/pages/RecordsPage.tsx"]
+        assert "unexpected files returned: frontend/src/App.tsx" in (page_batch["error"] or "")
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "<Layout />" not in app_text
+        records_text = (app_root / "frontend/src/pages/RecordsPage.tsx").read_text(encoding="utf-8")
+        assert "华衡科技" in records_text
+
+    def test_records_retry_hints_include_generic_data_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "records",
+                        "route": "/records",
+                        "title": "职位与岗位管理",
+                        "primary_action": "新建职位与岗位管理事项",
+                        "filter_placeholder": "搜索职位与岗位管理",
+                        "table_headers": ["记录编号", "主题名称", "责任角色", "当前状态"],
+                        "rows": [["MOD0-001", "融合招聘一体化软件职位与岗位管理", "超级管理员", "处理中"]],
+                        "page_variant": "records",
+                    }
+                ]
+            },
+            ["frontend/src/pages/RecordsPage.tsx"],
+        )
+
+        assert any("招聘需求管理" in hint for hint in hints)
+        assert any("const data = [{ id, topic, role, status, tag, updateTime }]" in hint for hint in hints)
 
     def test_runtime_captures_early_exit_logs(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -2201,7 +3625,7 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
             if required == ("frontend/src/pages/Dashboard.tsx",):
                 return _Resp(
                     {
-                        "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                        "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>; }",
                     }
                 )
             if required == (
@@ -2433,3 +3857,36 @@ def test_collect_missing_essential_titles_marks_failed_or_missing_core_pages():
     missing = _collect_missing_essential_titles(capture_manifest, results)
 
     assert missing == ["系统首页", "授信主体管理"]
+
+
+def test_warm_bundle_download_hits_dynamic_bundle_endpoint(monkeypatch):
+    calls = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _size=-1):
+            return b""
+
+    def fake_urlopen(request, timeout):
+        calls["url"] = request.full_url
+        calls["auth"] = request.headers.get("Authorization")
+        calls["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setenv("IPRIGHT_API_TOKEN", "api-token")
+    monkeypatch.setattr(delivery_support_module.urllib_request, "urlopen", fake_urlopen)
+
+    assert _warm_bundle_download("task-123") is True
+    assert calls["url"] == "http://127.0.0.1:18000/api/v1/tasks/task-123/bundle/download"
+    assert calls["auth"] == "Bearer api-token"
+    assert calls["timeout"] == 120
+
+
+def test_warm_bundle_download_skips_without_api_token(monkeypatch):
+    monkeypatch.delenv("IPRIGHT_API_TOKEN", raising=False)
+    assert _warm_bundle_download("task-123") is False

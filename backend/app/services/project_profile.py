@@ -582,6 +582,47 @@ def _ascii_token(text: str, fallback: str) -> str:
     return token[:12] if token else fallback
 
 
+def _module_code_prefix(kind: str, index: int) -> str:
+    prefixes = {
+        "recruitment_demands": "REQ",
+        "recruitment_candidates": "CAN",
+        "recruitment_interviews": "INT",
+        "recruitment_offers": "OFF",
+        "talent_pool": "TAL",
+        "recruitment_reports": "RPT",
+        "power_dispatch": "DSP",
+        "grid_monitor": "GRD",
+        "generation": "GEN",
+        "work_tickets": "WRK",
+        "power_faults": "FLT",
+        "credit_subjects": "CRD",
+        "financing": "FIN",
+        "exposure": "EXP",
+        "trade_verification": "TRD",
+        "dispatch": "LOG",
+        "fleet": "VEH",
+        "routes": "RTE",
+        "warehousing": "WRH",
+        "signoffs": "POD",
+        "purchases": "PUR",
+        "sales": "SAL",
+        "inventory": "INV",
+        "suppliers": "SUP",
+        "fulfillment": "FUL",
+        "settlements": "STL",
+        "talents": "KOL",
+        "clients": "CLT",
+        "campaigns": "CMP",
+        "analytics": "ANL",
+        "settings": "CFG",
+        "alerts": "ALT",
+        "users": "USR",
+        "actions": "ACT",
+        "records": "REC",
+    }
+    return prefixes.get(kind, f"M{index + 1:02d}")
+
+
 def _product_code(keyword: str, product_name: str) -> str:
     seed = f"{keyword}|{product_name}".encode("utf-8")
     digest = hashlib.md5(seed).hexdigest()[:6].upper()
@@ -608,6 +649,10 @@ def _ensure_min_length(text: str, minimum: int, filler: str) -> str:
 
 def _clean_phrase(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _clean_fragment(text: str) -> str:
+    return _clean_phrase(text).rstrip("，,。；;：:、 ")
 
 
 def _split_terms(*texts: str) -> list[str]:
@@ -640,63 +685,59 @@ def _seed_index(seed: str, modulo: int) -> int:
 
 
 def _pick_experience_blueprint(product_code: str, preset_key: str, design_seed: str = "") -> dict:
-    blueprints = [
-        {
-            "name": "command_hub",
-            "login_variant": "spotlight",
-            "dashboard_variant": "command",
-            "module_variants": ["operations", "workspace", "insight"],
-            "navigation_variant": "top_tabs",
-            "shell_layout_hint": "顶部主导航 + 指挥条 + 多区块工作台，避免默认左侧深色竖栏后台",
-            "tone": "强调执行节奏、状态看板与统一调度",
-        },
-        {
-            "name": "analysis_studio",
-            "login_variant": "briefing",
-            "dashboard_variant": "insight",
-            "module_variants": ["insight", "records", "workspace"],
-            "navigation_variant": "indexed",
-            "shell_layout_hint": "顶部索引导航 + 过滤工具带 + 双列或三列分析画布，避免统一侧栏壳层",
-            "tone": "强调分析结论、关键洞察与对比视图",
-        },
-        {
-            "name": "collaboration_workspace",
-            "login_variant": "workspace",
-            "dashboard_variant": "workspace",
-            "module_variants": ["workspace", "operations", "records"],
-            "navigation_variant": "sectioned",
-            "shell_layout_hint": "顶部标题区 + 分段导航 + 协同工作区，可按模块使用二级面板，不要默认整站左侧固定竖栏",
-            "tone": "强调岗位协同、分区工作台与任务闭环",
-        },
-        {
-            "name": "signal_gallery",
-            "login_variant": "spotlight",
-            "dashboard_variant": "insight",
-            "module_variants": ["insight", "workspace", "operations"],
-            "navigation_variant": "top_tabs",
-            "shell_layout_hint": "顶部信号导航 + 横向概览条 + 画廊式主内容区，不要回退为统一后台侧栏",
-            "tone": "强调专题焦点、关键信号与模块分镜展示",
-        },
-        {
-            "name": "studio_matrix",
-            "login_variant": "briefing",
-            "dashboard_variant": "workspace",
-            "module_variants": ["workspace", "insight", "records"],
-            "navigation_variant": "indexed",
-            "shell_layout_hint": "顶部索引区 + 右侧摘要栏 + 分析工作台，不要回退为同一套模块列表页面",
-            "tone": "强调专题分镜、摘要索引与操作面板并置",
-        },
-        {
-            "name": "mission_sections",
-            "login_variant": "workspace",
-            "dashboard_variant": "command",
-            "module_variants": ["operations", "records", "workspace"],
-            "navigation_variant": "sectioned",
-            "shell_layout_hint": "标题区 + 章节导航 + 任务面板式工作区，避免复用统一左侧深色竖栏",
-            "tone": "强调任务主线、章节切换与分区执行面板",
-        },
-    ]
-    return blueprints[_seed_index(f"{product_code}|{preset_key}|{design_seed}", len(blueprints))]
+    seed = f"{product_code}|{preset_key}|{design_seed}"
+    navigation_variant = ["top_tabs", "indexed", "sectioned"][_seed_index(seed, 3)]
+    login_variant = ["spotlight", "briefing", "workspace", "editorial"][_seed_index(f"{seed}|login", 4)]
+    dashboard_variant = ["command", "insight", "workspace", "storyboard"][_seed_index(f"{seed}|dashboard", 4)]
+    module_pool = ["operations", "workspace", "insight", "records", "studio", "board"]
+    offset = _seed_index(f"{seed}|modules", len(module_pool))
+    module_variants = [module_pool[(offset + idx) % len(module_pool)] for idx in range(3)]
+    shell_hints = {
+        "top_tabs": [
+            "顶部主导航 + 横向概览带 + 自由组合内容画布，避免默认左侧深色竖栏后台",
+            "顶部标签导航 + 主题摘要区 + 多节内容面板，避免复用统一后台骨架",
+            "顶部导航条 + 模块切换条 + 宽屏工作台画布，避免整站左侧固定竖栏",
+            "顶部导航 + 横向任务带 + 重点内容分镜区，避免通用后台套板",
+        ],
+        "indexed": [
+            "顶部索引导航 + 过滤工具带 + 双列或三列分析画布，避免统一侧栏壳层",
+            "顶部索引区 + 摘要栏 + 模块化内容画布，避免复用单一后台模板",
+            "顶部索引导航 + 横向筛选区 + 并列信息面板，避免默认左侧竖栏后台",
+            "顶部索引标签 + 内容分栏区 + 分析摘要面板，避免整站同一套后台骨架",
+        ],
+        "sectioned": [
+            "顶部标题区 + 分段导航 + 协同工作区，不要默认整站左侧固定竖栏",
+            "标题区 + 章节导航 + 多面板工作区，避免复用统一左侧深色竖栏",
+            "顶部标题条 + 分区导航 + 模块工作台，不要回退为通用后台侧栏",
+            "标题区 + 分段标签 + 自由排布工作面板，避免同一套后台壳层",
+        ],
+    }
+    tones = {
+        "top_tabs": [
+            "强调任务节奏、横向信息组织与首页工作入口",
+            "强调主题切换、内容分镜与宽屏工作台",
+            "强调统一导航、模块区块和操作聚焦",
+        ],
+        "indexed": [
+            "强调分析结论、关键洞察与对比视图",
+            "强调索引检索、摘要导航与信息分层",
+            "强调多维观察、过滤比较与重点提炼",
+        ],
+        "sectioned": [
+            "强调岗位协同、分区工作台与任务闭环",
+            "强调章节切换、多人协作与过程承接",
+            "强调模块分段、责任边界与执行面板",
+        ],
+    }
+    return {
+        "name": f"{navigation_variant}_{dashboard_variant}_{_seed_index(f'{seed}|name', 97)}",
+        "login_variant": login_variant,
+        "dashboard_variant": dashboard_variant,
+        "module_variants": module_variants,
+        "navigation_variant": navigation_variant,
+        "shell_layout_hint": shell_hints[navigation_variant][_seed_index(f"{seed}|shell", len(shell_hints[navigation_variant]))],
+        "tone": tones[navigation_variant][_seed_index(f"{seed}|tone", len(tones[navigation_variant]))],
+    }
 
 
 def _normalize_app_type(value: str | None) -> str | None:
@@ -815,6 +856,32 @@ def _build_visual_profile(
             "layout_signal": "顶部标签栏 + 指挥区 + 多列工作台，避免侧边栏壳层",
             "chrome_treatment": "top_tabs",
         },
+        {
+            "name": "plum_signal_gallery",
+            "shell_background": "#faf5ff",
+            "nav_background": "#581c87",
+            "nav_text": "#f3e8ff",
+            "panel_background": "#ffffff",
+            "panel_border": "#e9d5ff",
+            "accent": "#9333ea",
+            "soft": "#f5f3ff",
+            "strong": "#7e22ce",
+            "layout_signal": "顶部主导航 + 横向主题带 + 分镜式工作画布，避免统一后台套板",
+            "chrome_treatment": "top_tabs",
+        },
+        {
+            "name": "sunrise_operation_ribbon",
+            "shell_background": "#fff8f1",
+            "nav_background": "#7c2d12",
+            "nav_text": "#ffedd5",
+            "panel_background": "#fffdf9",
+            "panel_border": "#fed7aa",
+            "accent": "#ea580c",
+            "soft": "#fff7ed",
+            "strong": "#c2410c",
+            "layout_signal": "顶部导航条 + 横向运营带 + 多区块工作台，避免左侧竖栏后台",
+            "chrome_treatment": "top_tabs",
+        },
     ]
     indexed_profiles = [
         {
@@ -856,6 +923,32 @@ def _build_visual_profile(
             "layout_signal": "顶部索引标签 + 过滤带 + 宽屏分析区，避免左侧竖栏后台",
             "chrome_treatment": "indexed_topbar",
         },
+        {
+            "name": "jade_observer_grid",
+            "shell_background": "#f0fdf9",
+            "nav_background": "#14532d",
+            "nav_text": "#dcfce7",
+            "panel_background": "#ffffff",
+            "panel_border": "#bbf7d0",
+            "accent": "#16a34a",
+            "soft": "#f0fdf4",
+            "strong": "#15803d",
+            "layout_signal": "顶部索引导航 + 内容分栏区 + 摘要面板，避免通用后台壳层",
+            "chrome_treatment": "indexed_topbar",
+        },
+        {
+            "name": "rose_story_matrix",
+            "shell_background": "#fff4f6",
+            "nav_background": "#9f1239",
+            "nav_text": "#ffe4e6",
+            "panel_background": "#fffdfd",
+            "panel_border": "#fecdd3",
+            "accent": "#e11d48",
+            "soft": "#fff1f2",
+            "strong": "#be123c",
+            "layout_signal": "顶部索引区 + 叙事摘要栏 + 分析矩阵区，避免复用统一后台模板",
+            "chrome_treatment": "indexed_topbar",
+        },
     ]
     sectioned_profiles = [
         {
@@ -895,6 +988,32 @@ def _build_visual_profile(
             "soft": "#f0fdfa",
             "strong": "#115e59",
             "layout_signal": "顶部标题区 + 分段标签 + 协同工作台，避免左侧竖栏后台",
+            "chrome_treatment": "sectioned_header",
+        },
+        {
+            "name": "violet_case_panels",
+            "shell_background": "#f7f5ff",
+            "nav_background": "#4c1d95",
+            "nav_text": "#ede9fe",
+            "panel_background": "#ffffff",
+            "panel_border": "#ddd6fe",
+            "accent": "#7c3aed",
+            "soft": "#f5f3ff",
+            "strong": "#6d28d9",
+            "layout_signal": "顶部标题区 + 分段导航 + 案例式工作面板，避免默认左侧后台壳层",
+            "chrome_treatment": "sectioned_header",
+        },
+        {
+            "name": "olive_process_board",
+            "shell_background": "#f7fee7",
+            "nav_background": "#365314",
+            "nav_text": "#ecfccb",
+            "panel_background": "#fdfffa",
+            "panel_border": "#d9f99d",
+            "accent": "#65a30d",
+            "soft": "#f7fee7",
+            "strong": "#4d7c0f",
+            "layout_signal": "标题区 + 分段标签 + 过程面板工作区，避免复用单一后台骨架",
             "chrome_treatment": "sectioned_header",
         },
     ]
@@ -960,6 +1079,18 @@ def _build_design_seed(
 
 
 def _module_kind(title: str) -> str:
+    if any(token in title for token in ["招聘需求"]):
+        return "recruitment_demands"
+    if any(token in title for token in ["职位与候选人", "候选人", "岗位管理", "职位管理"]):
+        return "recruitment_candidates"
+    if any(token in title for token in ["面试与流程", "面试流程", "流程管理"]):
+        return "recruitment_interviews"
+    if any(token in title for token in ["录用与入职", "Offer", "入职管理", "入职流程"]):
+        return "recruitment_offers"
+    if any(token in title for token in ["人才库", "资料中心", "人才档案"]):
+        return "talent_pool"
+    if any(token in title for token in ["招聘数据分析", "招聘报表", "招聘分析", "招聘数据分析与报表", "数据分析看板"]):
+        return "recruitment_reports"
     if any(token in title for token in ["负荷调度", "电力调度", "调度日志", "调度指令", "调度令"]):
         return "power_dispatch"
     if any(token in title for token in ["电网运行", "输变线路", "线路监测", "输电线路", "配电线路", "变电站", "潮流"]):
@@ -1085,6 +1216,18 @@ def _module_route(title: str, index: int, fallback_route: str, page_routes: list
 
 
 def _module_headers(kind: str) -> list[str]:
+    if kind == "recruitment_demands":
+        return ["需求编号", "需求主题", "用人部门", "招聘阶段", "优先级", "更新时间"]
+    if kind == "recruitment_candidates":
+        return ["候选人编号", "候选人姓名", "应聘岗位", "当前阶段", "来源渠道", "更新时间"]
+    if kind == "recruitment_interviews":
+        return ["流程编号", "候选人姓名", "面试环节", "安排状态", "面试官", "更新时间"]
+    if kind == "recruitment_offers":
+        return ["录用编号", "候选人姓名", "录用岗位", "办理阶段", "责任人", "更新时间"]
+    if kind == "talent_pool":
+        return ["人才编号", "人才方向", "最近进展", "储备等级", "归属顾问", "更新时间"]
+    if kind == "recruitment_reports":
+        return ["报表编号", "报表主题", "统计周期", "负责人", "核心结论", "更新时间"]
     if kind == "power_dispatch":
         return ["指令编号", "调度单元", "负荷水平", "执行状态", "值班调度员", "更新时间"]
     if kind == "grid_monitor":
@@ -1145,6 +1288,18 @@ def _module_headers(kind: str) -> list[str]:
 
 
 def _module_primary_action(title: str) -> str:
+    if any(token in title for token in ["招聘需求"]):
+        return "新建招聘需求"
+    if any(token in title for token in ["职位与候选人", "候选人", "岗位管理", "职位管理"]):
+        return "新增候选人推进记录"
+    if any(token in title for token in ["面试与流程", "面试流程", "流程管理"]):
+        return "安排面试流程"
+    if any(token in title for token in ["录用与入职", "Offer", "入职管理", "入职流程"]):
+        return "发起录用与入职流程"
+    if any(token in title for token in ["人才库", "资料中心", "人才档案"]):
+        return "录入人才档案"
+    if any(token in title for token in ["招聘数据分析", "招聘报表", "招聘分析", "招聘数据分析与报表", "数据分析看板"]):
+        return "生成招聘分析报表"
     if any(token in title for token in ["负荷调度", "电力调度", "调度指令", "调度令"]):
         return "下发调度指令"
     if any(token in title for token in ["电网运行", "输变线路", "线路监测", "变电站", "潮流"]):
@@ -1212,6 +1367,18 @@ def _module_primary_action(title: str) -> str:
 
 def _module_filter(title: str, focus_terms: list[str]) -> str:
     focus = "/".join(focus_terms[:2]) or "关键字/负责人/状态"
+    if any(token in title for token in ["招聘需求"]):
+        return "搜索需求编号 / 用人部门 / 招聘阶段"
+    if any(token in title for token in ["职位与候选人", "候选人", "岗位管理", "职位管理"]):
+        return "搜索候选人姓名 / 应聘岗位 / 当前阶段"
+    if any(token in title for token in ["面试与流程", "面试流程", "流程管理"]):
+        return "搜索候选人姓名 / 面试环节 / 安排状态"
+    if any(token in title for token in ["录用与入职", "Offer", "入职管理", "入职流程"]):
+        return "搜索候选人姓名 / 录用岗位 / 办理阶段"
+    if any(token in title for token in ["人才库", "资料中心", "人才档案"]):
+        return "搜索人才方向 / 储备等级 / 归属顾问"
+    if any(token in title for token in ["招聘数据分析", "招聘报表", "招聘分析", "招聘数据分析与报表", "数据分析看板"]):
+        return "搜索报表主题 / 统计周期 / 负责人"
     if any(token in title for token in ["负荷调度", "电力调度", "调度指令", "调度令"]):
         return "搜索指令编号 / 调度单元 / 执行状态"
     if any(token in title for token in ["电网运行", "输变线路", "线路监测", "变电站", "潮流"]):
@@ -1262,13 +1429,49 @@ def _module_rows(
     roles: list[str],
     focus_terms: list[str],
 ) -> list[list[str]]:
-    base_code = _ascii_token(title, f"MOD{index + 1:02d}")[:4]
+    base_code = _ascii_token(title, _module_code_prefix(kind, index))[:4]
     names = _pick_names(f"{product_code}|{title}", 3)
     focus_a = focus_terms[0] if focus_terms else keyword
     focus_b = focus_terms[1] if len(focus_terms) > 1 else title
     role_a = roles[0] if roles else "管理员"
     role_b = roles[1] if len(roles) > 1 else role_a
     role_c = roles[2] if len(roles) > 2 else role_b
+    if kind == "recruitment_demands":
+        return [
+            ["REQ-202605-013", "初中数学教研岗补录", "师资发展中心", "简历初筛", "高", "2026-05-22 09:30"],
+            ["REQ-202605-009", "双语科学教师储备", "国际课程部", "部门复核", "中", "2026-05-21 16:20"],
+            ["REQ-202605-004", "校招班主任岗位扩编", "学生发展处", "已发布", "高", "2026-05-20 11:10"],
+        ]
+    if kind == "recruitment_candidates":
+        return [
+            ["CAN-202605-031", names[0], "初中数学教研岗", "复试安排", "校园宣讲会", "2026-05-22 10:10"],
+            ["CAN-202605-018", names[1], "双语科学教师", "用人部门评估", "内部推荐", "2026-05-21 18:05"],
+            ["CAN-202605-007", names[2], "班主任储备岗", "Offer沟通", "招聘官网", "2026-05-20 14:40"],
+        ]
+    if kind == "recruitment_interviews":
+        return [
+            ["INT-202605-021", names[0], "试讲评估", "已排期", "教研主任", "2026-05-22 13:30"],
+            ["INT-202605-014", names[1], "综合复试", "待确认", "招聘主管", "2026-05-21 17:50"],
+            ["INT-202605-006", names[2], "终面沟通", "已完成", "校区负责人", "2026-05-20 15:05"],
+        ]
+    if kind == "recruitment_offers":
+        return [
+            ["OFF-202605-015", names[0], "初中数学教研岗", "Offer审批中", "招聘主管", "2026-05-22 15:20"],
+            ["OFF-202605-011", names[1], "双语科学教师", "待发入职材料", "HR专员", "2026-05-21 19:00"],
+            ["OFF-202605-004", names[2], "班主任储备岗", "已完成入职", "校区负责人", "2026-05-20 17:10"],
+        ]
+    if kind == "talent_pool":
+        return [
+            ["TAL-202605-082", "理科教师储备", "完成首轮沟通并补充试讲视频", "A", "校招顾问", "2026-05-22 08:55"],
+            ["TAL-202605-057", "双语教师储备", "更新海外课程经历与证书材料", "A-", "招聘顾问", "2026-05-21 19:15"],
+            ["TAL-202605-024", "德育管理储备", "进入校区意向跟进阶段", "B+", "人才运营", "2026-05-20 10:25"],
+        ]
+    if kind == "recruitment_reports":
+        return [
+            ["RPT-202605-011", "周度岗位转化分析", "2026W21", role_a, "数学教师岗位复试转化率提升至42%", "2026-05-22 09:05"],
+            ["RPT-202605-008", "渠道到面效率对比", "2026年05月", role_b, "内部推荐渠道到面效率最高", "2026-05-21 18:40"],
+            ["RPT-202605-003", "校招储备结构复盘", "春招阶段", role_c, "双语教师储备仍需补强", "2026-05-20 16:30"],
+        ]
     if kind == "power_dispatch":
         return [
             [f"{base_code}-181", "华东主网", "78%", "待执行", role_a, "2026-05-02"],
@@ -1439,13 +1642,33 @@ def _module_rows(
         ]
     return [
         [f"{base_code}-001", f"{focus_a}{title}", role_a, "处理中", focus_b, "2026-05-02"],
-        [f"{base_code}-002", f"{keyword}重点事项", role_b, "待审核", title, "2026-05-01"],
+        [f"{base_code}-002", f"{title}协同跟进", role_b, "待审核", focus_a, "2026-05-01"],
         [f"{base_code}-003", f"{product_code}{title}", role_c, "已完成", focus_a, "2026-04-30"],
     ]
 
 
 def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> str:
-    focus = "、".join(focus_terms[:3]) or keyword or title
+    selected_terms: list[str] = []
+    for term in [title, *focus_terms, keyword]:
+        normalized = str(term).strip()
+        if not normalized or normalized in selected_terms:
+            continue
+        selected_terms.append(normalized)
+        if len(selected_terms) >= 3:
+            break
+    focus = "、".join(selected_terms) or keyword or title
+    if _module_kind(title) == "recruitment_demands":
+        return "需求编号、用人部门与招聘阶段"
+    if _module_kind(title) == "recruitment_candidates":
+        return "候选人姓名、应聘岗位与推进阶段"
+    if _module_kind(title) == "recruitment_interviews":
+        return "面试环节、安排状态与面试官"
+    if _module_kind(title) == "recruitment_offers":
+        return "候选人姓名、录用岗位与办理阶段"
+    if _module_kind(title) == "talent_pool":
+        return "人才方向、储备等级与跟进进展"
+    if _module_kind(title) == "recruitment_reports":
+        return "统计周期、渠道表现与转化结论"
     if _module_kind(title) == "power_dispatch":
         return "调度指令、负荷水平与执行状态"
     if _module_kind(title) == "grid_monitor":
@@ -1511,6 +1734,42 @@ def _module_domain_focus(title: str, keyword: str, focus_terms: list[str]) -> st
 def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_phrase: str) -> list[str]:
     focus = _module_domain_focus(title, keyword, focus_terms)
     kind = _module_kind(title)
+    if kind == "recruitment_demands":
+        return [
+            "支持围绕需求编号、用人部门和招聘阶段统一查看岗位需求流转情况",
+            "支持按岗位方向、优先级和处理阶段快速定位待推进的招聘需求",
+            f"支持{role_phrase}同步需求确认结果、编制信息和发布时间节点",
+        ]
+    if kind == "recruitment_candidates":
+        return [
+            "支持围绕候选人姓名、应聘岗位和当前阶段持续跟踪推进进度",
+            "支持按来源渠道、候选人状态和岗位方向快速筛查重点人选",
+            f"支持{role_phrase}共享评估意见、沟通记录和Offer推进结果",
+        ]
+    if kind == "recruitment_interviews":
+        return [
+            "支持围绕面试环节、安排状态和面试官统一查看流程推进情况",
+            "支持按候选人姓名、流程阶段和排期结果快速定位待确认事项",
+            f"支持{role_phrase}同步试讲反馈、复试结论和终面安排记录",
+        ]
+    if kind == "recruitment_offers":
+        return [
+            "支持围绕候选人姓名、录用岗位和办理阶段统一查看录用推进情况",
+            "支持按审批状态、入职材料和责任人快速定位待处理的录用事项",
+            f"支持{role_phrase}同步 Offer 审批、材料回收和入职确认结果",
+        ]
+    if kind == "talent_pool":
+        return [
+            "支持围绕人才方向、储备等级和最近进展统一维护人才档案",
+            "支持按归属顾问、储备状态和关键标签快速筛查重点储备人选",
+            f"支持{role_phrase}共享跟进结论、资料更新和后续联系计划",
+        ]
+    if kind == "recruitment_reports":
+        return [
+            "支持围绕招聘周期、渠道表现和转化结果生成统计报表",
+            "支持按岗位方向、统计周期和负责人快速定位需要复盘的分析结果",
+            f"支持{role_phrase}共享复盘结论、趋势判断和优化建议",
+        ]
     if kind == "power_dispatch":
         return [
             "支持围绕调度单元、负荷水平和执行状态统一查看日内调度指令",
@@ -1696,6 +1955,31 @@ def _module_highlights(title: str, keyword: str, focus_terms: list[str], role_ph
 def _module_description(title: str, keyword: str, scene: str, focus_terms: list[str]) -> str:
     focus = _module_domain_focus(title, keyword, focus_terms)
     kind = _module_kind(title)
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
+    if kind == "recruitment_demands":
+        return (
+            f"{title}模块围绕岗位需求确认、优先级排序和发布时间安排组织页面信息，用于支撑{scene_scope}中的需求受理与推进。"
+            f"页面重点展示{focus}，便于统一查看需求主题、用人部门和当前招聘阶段。"
+        )
+    if kind == "recruitment_candidates":
+        return (
+            f"{title}模块用于统一维护候选人档案、应聘岗位和推进状态，帮助团队在{scene_scope}中持续跟踪重点人选。"
+            f"页面重点展示{focus}，便于快速查看候选人来源、应聘岗位和当前进度。"
+        )
+    if kind == "recruitment_interviews":
+        return (
+            f"{title}模块围绕候选人面试安排、反馈结论和后续推进组织页面信息，用于支撑{scene_scope}中的流程协同与进度确认。"
+            f"页面重点展示{focus}，便于统一查看面试环节、安排状态和责任人。"
+        )
+    if kind == "recruitment_offers":
+        return (
+            f"{title}模块用于统一跟踪 Offer 审批、入职材料回收和报到确认，帮助团队在{scene_scope}中完成录用决策后的闭环办理。"
+            f"页面重点展示{focus}，便于快速查看候选人状态、录用岗位和当前办理进度。"
+        )
+    if kind == "recruitment_reports":
+        return (
+            f"{title}模块面向{scene_scope}相关的复盘分析与结论输出，重点汇总{focus}，用于快速形成统计视图和阶段判断。"
+        )
     if kind == "power_dispatch":
         return (
             f"{title}模块围绕负荷平衡、调度指令和执行反馈组织页面信息，用于支撑{scene}中的日内指令下发与执行跟踪。"
@@ -1823,7 +2107,7 @@ def _module_description(title: str, keyword: str, scene: str, focus_terms: list[
         )
     if kind == "analytics":
         return (
-            f"{title}模块面向{scene}中的复盘分析与结论输出，重点汇总{focus}，用于快速形成统计视图和阶段判断。"
+            f"{title}模块面向{scene_scope}相关的复盘分析与结论输出，重点汇总{focus}，用于快速形成统计视图和阶段判断。"
         )
     if kind == "settings":
         return (
@@ -1834,7 +2118,7 @@ def _module_description(title: str, keyword: str, scene: str, focus_terms: list[
             f"{title}模块用于识别异常、跟踪处理进度并汇总提醒结果，帮助团队围绕{focus}及时开展处置与复核。"
         )
     return (
-        f"{title}模块围绕{keyword}的业务主题构建，主要服务于{scene}中的日常处理、结果确认和记录留痕。"
+        f"{title}模块围绕{keyword}的业务主题构建，主要服务于{scene_scope}相关的日常处理、结果确认和记录留痕。"
         f"页面重点展示{focus}，使用户能够在同一页面内完成查询、录入、审核或跟踪操作。"
     )
 
@@ -2006,6 +2290,7 @@ def _module_steps(title: str, primary_action: str, focus_terms: list[str]) -> li
 
 def _module_business_value(title: str, keyword: str, scene: str) -> str:
     kind = _module_kind(title)
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     if kind == "power_dispatch":
         return "负荷调度中心将调度指令、执行状态和负荷变化统一呈现，有助于值班调度岗位快速协调电网运行与出力平衡。"
     if kind == "grid_monitor":
@@ -2055,7 +2340,7 @@ def _module_business_value(title: str, keyword: str, scene: str) -> str:
     if "用户" in title:
         return "用户管理通过统一维护账号、角色和负责范围，帮助团队明确协作边界，降低跨角色操作与权限核对成本。"
     return (
-        f"{title}页面将与“{keyword}”相关的核心业务处理集中到统一界面中，适用于{scene}场景下的受理、跟踪、复核和结果沉淀。"
+        f"{title}页面将与“{keyword}”相关的核心业务处理集中到统一界面中，适用于{scene_scope}相关的受理、跟踪、复核和结果沉淀。"
     )
 
 
@@ -2231,10 +2516,12 @@ def _build_background_text(
 ) -> str:
     topic = _clean_phrase(keyword) or _topic_label(keyword, product_name)
     module_titles = "、".join(module["title"] for module in modules[:5])
+    industry_label = _clean_fragment(industry_scope) or "当前行业"
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     return _ensure_min_length(
         (
-            f"{product_name}围绕“{topic}”这一任务主题建设，面向{industry_scope}场景，重点解决线下信息分散、关键处理环节缺少统一入口、"
-            f"结果反馈不够及时以及材料整理依赖人工汇总等问题。系统以{scene}为业务主线，把{module_titles}等核心模块纳入同一套操作界面，"
+            f"{product_name}围绕“{topic}”这一任务主题建设，面向{industry_label}相关场景，重点解决线下信息分散、关键处理环节缺少统一入口、"
+            f"结果反馈不够及时以及材料整理依赖人工汇总等问题。系统以{scene_scope}为业务主线，把{module_titles}等核心模块纳入同一套操作界面，"
             "使不同岗位能够基于统一数据视图协同处理业务、查看阶段状态并输出交付材料。"
         ),
         100,
@@ -2252,9 +2539,10 @@ def _build_purpose_text(
     topic = _topic_label(keyword, product_name)
     role_phrase = "、".join(roles[:4]) or "管理员、业务主管、运营专员"
     module_titles = "、".join(module["title"] for module in modules[:6])
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     return _ensure_min_length(
         (
-            f"{product_name}的开发目的在于针对“{topic}”对应的业务需求搭建一套可持续复用的业务支撑平台，让{role_phrase}能够围绕{scene}开展统一登录、"
+            f"{product_name}的开发目的在于针对“{topic}”对应的业务需求搭建一套可持续复用的业务支撑平台，让{role_phrase}能够围绕{scene_scope}开展统一登录、"
             f"信息录入、状态跟踪、结果分析和材料导出。系统以{module_titles}作为主要功能骨架，把原本分散在表格、消息和人工交接中的流程沉淀为"
             "标准化页面操作，提升任务推进效率、结果可追溯性和正式交付的一致性。"
         ),
@@ -2301,9 +2589,10 @@ def _build_technical_features(
     topic = _topic_label(keyword, product_name)
     module_titles = "、".join(module["title"] for module in modules[:5])
     role_phrase = "、".join(roles[:3]) or "管理员、业务主管、运营专员"
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     return _ensure_min_length(
         (
-            f"{product_name}采用前后端分层、模块化页面与任务画像驱动的生成方式，围绕“{topic}”对应的{scene}需求组织软件结构。"
+            f"{product_name}采用前后端分层、模块化页面与任务画像驱动的生成方式，围绕“{topic}”对应的{scene_scope}需求组织软件结构。"
             f"系统通过统一导航、标准表格、状态标签、结果导出和截图留痕等机制，把{module_titles}等模块纳入一致的交互风格。"
             f"在使用层面，系统支持{role_phrase}按职责访问对应页面；在工程层面，系统保留 FastAPI、React、TypeScript、PostgreSQL 等通用技术原名，"
             "便于开发、测试、部署和后续扩展协同。"
@@ -2321,10 +2610,12 @@ def _build_product_positioning(
     modules: list[dict],
 ) -> str:
     module_titles = "、".join(module["title"] for module in modules[:4]) or "核心模块"
+    industry_label = _clean_fragment(industry_scope) or "当前行业"
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     return _ensure_min_length(
         (
-            f"{product_name}面向{industry_scope}场景进行设计，围绕“{keyword or product_name}”这一业务主题构建产品定位。"
-            f"系统通过{module_titles}等模块组织页面内容，突出{scene}中的关键业务对象、处理动作与结果输出要求。"
+            f"{product_name}面向{industry_label}相关场景设计，围绕“{keyword or product_name}”这一业务主题构建产品定位。"
+            f"系统通过{module_titles}等模块组织页面内容，突出{scene_scope}相关的关键业务对象、处理动作与结果输出要求。"
         ),
         90,
         "说明书内容、页面命名与功能讲解均根据当前产品主题进行重构，以形成具有辨识度的产品表达。",
@@ -2340,9 +2631,10 @@ def _build_design_focus(
 ) -> str:
     role_phrase = "、".join(roles[:3]) or "管理员、业务主管、运营专员"
     focus = "、".join(focus_terms[:3]) or keyword or product_name
+    scene_scope = _clean_fragment(scene) or "当前业务场景"
     return _ensure_min_length(
         (
-            f"{product_name}在设计上重点突出{scene}中的角色协同、页面字段组织和业务状态反馈。"
+            f"{product_name}在设计上重点突出{scene_scope}相关的角色协同、页面字段组织和业务状态反馈。"
             f"系统会围绕{focus}等主题信息安排页面结构，使{role_phrase}能够快速理解当前产品的处理重点、数据重点和交付重点。"
         ),
         90,
@@ -2403,8 +2695,9 @@ def _build_distinguishing_features(
 ) -> list[str]:
     module_titles = [module["title"] for module in modules[:4]]
     focus = "、".join(focus_terms[:3]) or keyword or product_name
+    industry_label = _clean_fragment(industry_scope) or "当前行业"
     return [
-        f"围绕“{keyword or product_name}”组织产品内容，说明书正文突出{industry_scope}中的任务目标、核心数据和流程特征。",
+        f"围绕“{keyword or product_name}”组织产品内容，说明书正文突出{industry_label}相关的任务目标、核心数据和流程特征。",
         f"优先以{ '、'.join(module_titles) if module_titles else '当前核心模块'}承接当前软件产品的专属业务主线，避免不同产品之间出现同质化模块表达。",
         f"页面说明、截图图注与功能结构统一围绕{focus}等重点内容展开，使当前产品形成清晰可辨的业务侧重点。",
     ]

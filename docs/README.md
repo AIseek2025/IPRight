@@ -37,6 +37,9 @@
 11. `IPRIGHT_ACCEPTANCE_AND_TEST_PLAN.md`
    - 验收标准、测试矩阵、自动化与人工抽检建议
 
+12. `IPRIGHT_OPTIMAL_RUNTIME_PIPELINE.md`
+   - 当前最适合真实生产运行的最佳流程、模型分工、失败收口与长期迭代升级方案
+
 ## 运维与治理
 
 1. `IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
@@ -59,6 +62,7 @@
 - `archive/`
   - 收纳历史阶段报告、验收结论、修复纪要、重部署记录、代码审计报告
   - 归档文档保留历史参考价值，但不再作为当前主设计或主运维入口
+  - 本轮生产成功链路参考：`archive/IPRIGHT_PRODUCTION_SUCCESS_CHAIN_2026-05-22.md`
 
 ## 关键约束
 

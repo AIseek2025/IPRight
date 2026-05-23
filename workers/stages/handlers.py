@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import copy
-import json
 import hashlib
+import json
 import logging
 import os
+import re
 import shutil
 import uuid
 
@@ -200,15 +201,47 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
         "technical_feature_detail",
         "data_organization",
     ]
+
+    def _normalize_narrative_text(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "")).strip()
+
+    def _dedupe_sentences(text: str) -> str:
+        normalized = _normalize_narrative_text(text)
+        if not normalized:
+            return ""
+        parts = re.split(r"(?<=[。！？；])", normalized)
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            sentence = _normalize_narrative_text(part)
+            key = re.sub(r"[，。；：！？、】【（）“”\"'《》<>·\-\s]", "", sentence)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(sentence)
+        return "".join(cleaned)
+
+    def _dedupe_string_list(items: list) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            sentence = _dedupe_sentences(str(item))
+            key = re.sub(r"[，。；：！？、】【（）“”\"'《》<>·\-\s]", "", sentence)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(sentence)
+        return cleaned
+
     for key in scalar_keys:
         value = llm_content.get(key)
         if isinstance(value, str) and value.strip():
-            merged[key] = value.strip()
+            merged[key] = _dedupe_sentences(value)
 
     for key in ("technical_feature_bullets", "typical_scenarios"):
         value = llm_content.get(key)
         if isinstance(value, list):
-            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            cleaned = _dedupe_string_list(value)
             if cleaned:
                 merged[key] = cleaned
 
@@ -251,11 +284,11 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
         for field in ("description", "primary_action", "business_value", "variant_instruction"):
             value = override.get(field)
             if isinstance(value, str) and value.strip():
-                target[field] = value.strip()
+                target[field] = _dedupe_sentences(value)
         for field in ("highlights", "steps"):
             value = override.get(field)
             if isinstance(value, list):
-                cleaned = [str(item).strip() for item in value if str(item).strip()]
+                cleaned = _dedupe_string_list(value)
                 if cleaned:
                     target[field] = cleaned
     if modules:
@@ -277,11 +310,11 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
             for field in ("caption", "description", "primary_action", "business_value", "variant_instruction"):
                 value = override.get(field)
                 if isinstance(value, str) and value.strip():
-                    screenshot[field] = value.strip()
+                    screenshot[field] = _dedupe_sentences(value)
             for field in ("highlights", "steps"):
                 value = override.get(field)
                 if isinstance(value, list):
-                    cleaned = [str(item).strip() for item in value if str(item).strip()]
+                    cleaned = _dedupe_string_list(value)
                     if cleaned:
                         screenshot[field] = cleaned
 

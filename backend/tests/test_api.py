@@ -154,15 +154,20 @@ class TestTaskBundleAPI:
 
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle测试", "product_name": "下载测试系统"})
         assert resp.status_code == 201
-        task_id = resp.json()["data"]["task_id"]
+        task_id = uuid.UUID(resp.json()["data"]["task_id"])
 
-        task_root = tmp_path / "tasks" / task_id
+        task_root = tmp_path / "tasks" / str(task_id)
         (task_root / "workspace" / "prd").mkdir(parents=True, exist_ok=True)
         (task_root / "artifacts" / "screenshots").mkdir(parents=True, exist_ok=True)
-        (task_root / "builds" / "build_001" / "exports").mkdir(parents=True, exist_ok=True)
         (task_root / "workspace" / "prd" / "product_prd.md").write_text("# PRD", encoding="utf-8")
         (task_root / "artifacts" / "screenshots" / "home.png").write_bytes(b"png-data")
-        (task_root / "builds" / "build_001" / "exports" / "software_manual.docx").write_bytes(b"docx-data")
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            current_build_id = task.active_build_id
+            assert current_build_id is not None
+        (task_root / "builds" / str(current_build_id) / "exports").mkdir(parents=True, exist_ok=True)
+        (task_root / "builds" / str(current_build_id) / "exports" / "software_manual.docx").write_bytes(b"docx-data")
 
         resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
         assert resp2.status_code == 200
@@ -174,7 +179,7 @@ class TestTaskBundleAPI:
             names = zf.namelist()
             assert any(name.endswith("/workspace/prd/product_prd.md") for name in names)
             assert any(name.endswith("/artifacts/screenshots/home.png") for name in names)
-            assert any(name.endswith("/builds/build_001/exports/software_manual.docx") for name in names)
+            assert any(name.endswith(f"/builds/{current_build_id}/exports/software_manual.docx") for name in names)
 
     async def test_task_bundle_falls_back_to_artifact_local_paths(self, async_client, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -242,3 +247,86 @@ class TestTaskBundleAPI:
         bundle_path.write_bytes(resp2.content)
         with zipfile.ZipFile(bundle_path, "r") as zf:
             assert zf.read("cached/readme.txt") == b"cached bundle"
+
+    async def test_task_bundle_regenerates_stale_existing_download(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle刷新测试", "product_name": "刷新下载系统"})
+        assert resp.status_code == 201
+        task_id = uuid.UUID(resp.json()["data"]["task_id"])
+
+        task_root = tmp_path / "tasks" / str(task_id)
+        downloads_dir = task_root / "downloads"
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        existing_bundle = downloads_dir / f"刷新下载系统_V1_0_{str(task_id)[:8]}_full_delivery.zip"
+        with zipfile.ZipFile(existing_bundle, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("cached/readme.txt", "stale bundle")
+        os.utime(existing_bundle, (1, 1))
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            current_build_id = task.active_build_id
+            assert current_build_id is not None
+
+        current_exports = task_root / "builds" / str(current_build_id) / "exports"
+        current_exports.mkdir(parents=True, exist_ok=True)
+        (current_exports / "software_manual.docx").write_bytes(b"current-docx")
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp2.status_code == 200
+
+        bundle_path = tmp_path / "refreshed_bundle.zip"
+        bundle_path.write_bytes(resp2.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert "cached/readme.txt" not in names
+            assert any(name.endswith(f"/builds/{current_build_id}/exports/software_manual.docx") for name in names)
+
+    async def test_task_bundle_excludes_old_builds_and_runtime_cache(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle过滤测试", "product_name": "过滤下载系统"})
+        assert resp.status_code == 201
+        task_id = uuid.UUID(resp.json()["data"]["task_id"])
+
+        task_root = tmp_path / "tasks" / str(task_id)
+        (task_root / "workspace" / "app" / "frontend" / "node_modules" / "demo").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "app" / "backend" / "__pycache__").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "app" / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "app" / "frontend" / "src" / "main.tsx").write_text("console.log('ok')", encoding="utf-8")
+        (task_root / "workspace" / "app" / "frontend" / "node_modules" / "demo" / "index.js").write_text("ignore", encoding="utf-8")
+        (task_root / "workspace" / "app" / "backend" / "__pycache__" / "main.cpython-311.pyc").write_bytes(b"pyc")
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            current_build_id = task.active_build_id
+            assert current_build_id is not None
+            old_build = Build(task_id=task.id, build_no=99, status="failed", trigger_type="retry")
+            session.add(old_build)
+            await session.commit()
+
+        current_exports = task_root / "builds" / str(current_build_id) / "exports"
+        old_exports = task_root / "builds" / str(old_build.id) / "exports"
+        current_exports.mkdir(parents=True, exist_ok=True)
+        old_exports.mkdir(parents=True, exist_ok=True)
+        (current_exports / "software_manual.docx").write_bytes(b"current-docx")
+        (old_exports / "software_manual.docx").write_bytes(b"old-docx")
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp2.status_code == 200
+
+        bundle_path = tmp_path / "filtered_bundle.zip"
+        bundle_path.write_bytes(resp2.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert any(name.endswith(f"/builds/{current_build_id}/exports/software_manual.docx") for name in names)
+            assert not any(name.endswith(f"/builds/{old_build.id}/exports/software_manual.docx") for name in names)
+            assert not any("/node_modules/" in name for name in names)
+            assert not any("/__pycache__/" in name for name in names)
+            assert not any(name.endswith(".pyc") for name in names)

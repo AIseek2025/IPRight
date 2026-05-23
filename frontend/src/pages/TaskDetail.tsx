@@ -36,7 +36,7 @@ import {
   STATUS_LABELS,
   STATUS_COLORS,
 } from '@/types';
-import type { TaskDashboard, ArtifactItem, ScreenshotItem, EventItem } from '@/types';
+import type { TaskDashboard, ArtifactItem, ScreenshotItem, EventItem, ExportItem } from '@/types';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -273,6 +273,15 @@ export default function TaskDetail() {
     if (fileName === 'application_form.docx') return '申请表';
     return fileName;
   };
+  const getExportRoundLabel = (exp: ExportItem) => (
+    exp.build_no ? `第 ${exp.build_no} 轮版本` : '历史轮次未知'
+  );
+  const getExportTimeLabel = (exp: ExportItem) => {
+    const source = exp.build_finished_at || exp.created_at;
+    const prefix = exp.build_finished_at ? '构建完成' : '导出时间';
+    return `${prefix} ${dayjs(source).format('YYYY-MM-DD HH:mm:ss')}`;
+  };
+  const latestRound = readyExports.find((exp) => exp.is_latest)?.build_no;
 
   return (
     <div>
@@ -448,7 +457,7 @@ export default function TaskDetail() {
             target="_blank"
             disabled={!isTerminal}
           >
-            下载整套软件/文件/文档 ZIP
+            下载最新整套软件/文件/文档 ZIP
           </Button>
           <Button
             icon={<DownloadOutlined />}
@@ -456,7 +465,7 @@ export default function TaskDetail() {
             target="_blank"
             disabled={!manualExport}
           >
-            下载软件说明书
+            下载最新软件说明书
           </Button>
           <Button
             icon={<DownloadOutlined />}
@@ -464,7 +473,7 @@ export default function TaskDetail() {
             target="_blank"
             disabled={!codeBookExport}
           >
-            下载源码文档
+            下载最新源码文档
           </Button>
           <Button
             icon={<DownloadOutlined />}
@@ -472,9 +481,17 @@ export default function TaskDetail() {
             target="_blank"
             disabled={!applicationFormExport}
           >
-            下载申请表
+            下载最新申请表
           </Button>
         </Space>
+        {latestRound ? (
+          <Alert
+            style={{ marginBottom: 16 }}
+            type="success"
+            showIcon
+            message={`当前最新可下载版本为第 ${latestRound} 轮构建产物，列表中已用“最新版本”标识。`}
+          />
+        ) : null}
         <Alert
           style={{ marginBottom: 16 }}
           type="info"
@@ -507,7 +524,14 @@ export default function TaskDetail() {
               >
                 <List.Item.Meta
                   title={getExportLabel(exp.file_name, exp.export_type)}
-                  description={<Tag>{exp.export_type}</Tag>}
+                  description={(
+                    <Space size={[8, 8]} wrap>
+                      <Tag>{exp.export_type}</Tag>
+                      <Tag color="blue">{getExportRoundLabel(exp)}</Tag>
+                      {exp.is_latest ? <Tag color="green">最新版本</Tag> : null}
+                      <span>{getExportTimeLabel(exp)}</span>
+                    </Space>
+                  )}
                 />
               </List.Item>
             )}

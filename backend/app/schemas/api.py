@@ -123,6 +123,10 @@ class ExportItem(ORMBaseModel):
     file_name: str
     status: str
     download_url: Optional[str]
+    build_id: Optional[str] = None
+    build_no: Optional[int] = None
+    build_finished_at: Optional[datetime] = None
+    is_latest: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -51,6 +51,58 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.product_name = product_name
         self.version = version
         self.profile = profile or {}
+        self._paragraph_signatures: set[str] = set()
+
+    def _normalize_compare_text(self, text: str) -> str:
+        normalized = self._sanitize_doc_text(text).lower()
+        normalized = re.sub(r"^[\-\d\.\s、]+", "", normalized)
+        normalized = re.sub(r"[，。；：！？、】【（）“”\"'《》<>·\-\s]", "", normalized)
+        return normalized
+
+    def _split_sentences(self, text: str) -> list[str]:
+        normalized = self._sanitize_doc_text(text)
+        if not normalized:
+            return []
+        parts = re.split(r"(?<=[。！？；])", normalized)
+        sentences: list[str] = []
+        for part in parts:
+            item = self._sanitize_doc_text(part)
+            if item:
+                sentences.append(item)
+        return sentences or [normalized]
+
+    def _dedupe_sentences(self, text: str) -> str:
+        sentences = self._split_sentences(text)
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for sentence in sentences:
+            key = self._normalize_compare_text(sentence)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(sentence)
+        return "".join(cleaned)
+
+    def _dedupe_text_list(self, items: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            normalized = self._dedupe_sentences(item)
+            key = self._normalize_compare_text(normalized)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        return cleaned
+
+    def add_paragraph(self, text: str, bold: bool = False, font_size: int = 10, font_name: str = "宋体"):
+        normalized = self._dedupe_sentences(text)
+        signature = self._normalize_compare_text(normalized)
+        if len(signature) >= 24 and signature in self._paragraph_signatures:
+            return None
+        if len(signature) >= 24:
+            self._paragraph_signatures.add(signature)
+        return super().add_paragraph(normalized, bold=bold, font_size=font_size, font_name=font_name)
 
     def _strip_unsupported_symbols(self, text: str) -> str:
         chars: list[str] = []
@@ -93,13 +145,13 @@ class SoftwareManualGenerator(WordTemplateBase):
         return [module.get("title", "") for module in self._module_profiles() if module.get("title")]
 
     def _profile_text(self, key: str, fallback: str) -> str:
-        return self._sanitize_doc_text(self.profile.get(key, fallback))
+        return self._dedupe_sentences(self.profile.get(key, fallback))
 
     def _profile_list(self, key: str, fallback: list[str]) -> list[str]:
         values = self.profile.get(key)
         if isinstance(values, list):
-            return [self._sanitize_doc_text(str(item)) for item in values if str(item).strip()]
-        return fallback
+            return self._dedupe_text_list([str(item) for item in values if str(item).strip()])
+        return self._dedupe_text_list(fallback)
 
     def _selected_optional_module_keys(self) -> list[str]:
         ordered_keys = [item["key"] for item in OPTIONAL_MANUAL_MODULES]
@@ -118,14 +170,14 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def _module_steps(self, module: dict) -> list[str]:
         if module.get("steps"):
-            return [self._sanitize_doc_text(str(step)) for step in module["steps"] if str(step).strip()]
+            return self._dedupe_text_list([str(step) for step in module["steps"] if str(step).strip()])
         title = module.get("title", "当前模块")
         action = module.get("primary_action", f"处理{title}")
-        return [
+        return self._dedupe_text_list([
             f"进入{title}页面后先确认标题区、筛选区和主操作按钮，核对当前处理对象与业务范围。",
             f"通过搜索条件、列表记录和状态标签定位目标事项，并按需执行“{action}”等主操作。",
             f"完成处理后复核页面反馈、更新时间和相关记录，确保结果可追踪、可导出、可沉淀。",
-        ]
+        ])
 
     def _module_field_summary(self, module: dict) -> str:
         headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
@@ -165,7 +217,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         page_variant = self._sanitize_doc_text(str(module.get("page_variant", "records")))
         primary_action = self._sanitize_doc_text(str(module.get("primary_action", f"处理{title}")))
         focus = "、".join(headers[:4]) if headers else "标题、筛选项、结果列表与状态反馈"
-        return [
+        return self._dedupe_text_list([
             self._sanitize_doc_text(
                 f"{title}页面在前端通常采用 {page_variant} 型布局组织标题区、工具区与结果区，使“{primary_action}”等主动作保持固定入口。"
             ),
@@ -175,7 +227,7 @@ class SoftwareManualGenerator(WordTemplateBase):
             self._sanitize_doc_text(
                 f"从实现角度看，该模块需要同时兼顾页面展示、状态切换、结果留痕和导出整理，确保业务处理与文档交付保持一致。"
             ),
-        ]
+        ])
 
     def _core_entities_text(self) -> str:
         entities = [self._sanitize_doc_text(str(item)) for item in self.profile.get("core_entities", []) if str(item).strip()]
@@ -205,13 +257,13 @@ class SoftwareManualGenerator(WordTemplateBase):
                 f"页面体验蓝图采用 {experience_blueprint.get('navigation_variant', '稳定导航')} 导航方式，并结合模块变体 {', '.join(experience_blueprint.get('module_variants', [])[:4]) or '列表、概览、分析和流程'} 组织不同业务页面。"
             ),
         ]
-        return notes
+        return self._dedupe_text_list(notes)
 
     def _module_delivery_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         primary_action = self._sanitize_doc_text(str(module.get("primary_action", f"处理{title}")))
         roles = "、".join(self._role_profiles()[:3])
-        return [
+        return self._dedupe_text_list([
             self._sanitize_doc_text(
                 f"{title}在交付时不仅需要完成页面开发，还需要同步确认字段命名、默认筛选项、操作反馈文案和图注说明，使真实运行页面与说明书正文保持同一语义。"
             ),
@@ -221,13 +273,13 @@ class SoftwareManualGenerator(WordTemplateBase):
             self._sanitize_doc_text(
                 f"在系统使用与交付过程中，{roles or '管理员、业务主管、业务专员'}通常分别从配置维护、日常处理和结果复核角度参与该模块的使用与确认，使页面能够稳定支撑真实工作流程。"
             ),
-        ]
+        ])
 
     def _module_acceptance_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
         checks = "、".join(headers[:4]) if headers else "模块标题、筛选条件、列表结果、状态反馈"
-        return [
+        return self._dedupe_text_list([
             self._sanitize_doc_text(
                 f"{title}在交付核对过程中，{checks}等关键内容需要与业务规则保持一致，页面中的主操作、回显信息和说明书图注之间也需要形成对应关系。"
             ),
@@ -237,38 +289,54 @@ class SoftwareManualGenerator(WordTemplateBase):
             self._sanitize_doc_text(
                 f"模块上线后还应持续关注字段口径变更、列表状态演进和导出格式调整，避免页面、截图和交付文档出现信息漂移。"
             ),
-        ]
+        ])
+
+    def _field_usage_note(self, title: str, header: str, index: int) -> str:
+        if any(token in header for token in ["编号", "编码", "单号", "ID"]):
+            return f"{index}. 字段“{header}”作为{title}的唯一定位标识，用于检索记录、建立关联关系并追踪后续处理结果。"
+        if any(token in header for token in ["主题", "名称", "标题", "对象"]):
+            return f"{index}. 字段“{header}”用于标识当前业务对象的主题或名称，便于页面列表展示、结果确认和导出归档时快速识别。"
+        if any(token in header for token in ["状态", "阶段", "进度", "环节"]):
+            return f"{index}. 字段“{header}”用于描述{title}当前所处的处理阶段或状态，支撑流程跟踪、异常识别和结果复核。"
+        if any(token in header for token in ["角色", "责任", "负责人", "审批人", "面试官"]):
+            return f"{index}. 字段“{header}”用于明确当前记录的责任归属或参与角色，方便协同分工、复核交接和责任追踪。"
+        if any(token in header for token in ["时间", "日期", "更新", "创建"]):
+            return f"{index}. 字段“{header}”用于记录{title}的关键时间节点，便于排序查看、时效核对和材料留痕。"
+        if any(token in header for token in ["结论", "摘要", "备注", "说明"]):
+            return f"{index}. 字段“{header}”用于沉淀本次处理的关键信息摘要，支撑页面说明、结果导出和后续归档查阅。"
+        return f"{index}. 字段“{header}”用于描述{title}中的关键业务属性，服务于页面展示、条件检索和导出材料中的统一口径。"
 
     def _module_data_dictionary_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         headers = [self._sanitize_doc_text(str(item)) for item in module.get("table_headers", []) if str(item).strip()]
         if not headers:
-            return [
+            return self._dedupe_text_list([
                 self._sanitize_doc_text(
                     f"{title}的数据字典应至少覆盖业务编号、主题对象、责任角色、处理状态、更新时间和结果说明等基础字段，用于支撑页面展示、结果导出与审计追踪。"
                 )
-            ]
+            ])
         notes: list[str] = []
-        for idx, header in enumerate(headers[:6], start=1):
-            notes.append(
-                self._sanitize_doc_text(
-                    f"{idx}. 字段“{header}”用于描述{title}中的关键业务信息，既服务于页面检索和列表展示，也用于说明书、导出文件和后续归档中的统一口径。"
-                )
+        notes.append(
+            self._sanitize_doc_text(
+                f"{title}的数据字段需要同时服务页面检索、业务处理、结果展示和正式归档，因此命名口径应保持稳定、可解释、可追踪。"
             )
-        return notes
+        )
+        for idx, header in enumerate(headers[:6], start=1):
+            notes.append(self._sanitize_doc_text(self._field_usage_note(title, header, idx)))
+        return self._dedupe_text_list(notes)
 
     def _module_collaboration_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         roles = self._role_profiles()
         role_text = "、".join(roles[:4]) if roles else "管理员、业务主管、业务专员"
-        return [
+        return self._dedupe_text_list([
             self._sanitize_doc_text(
                 f"{title}通常需要{role_text}等角色协同参与，其中部分角色负责录入与维护，部分角色负责复核、审批、处置跟踪或结果汇总，从而形成明确的职责边界。"
             ),
             self._sanitize_doc_text(
                 f"在协同过程中，模块页面应能够清晰展示当前记录由谁创建、当前处于何种状态、下一步由谁继续处理，以及最终结果如何沉淀到正式材料中。"
             ),
-        ]
+        ])
 
     def _core_entity_details(self) -> list[str]:
         entities = [self._sanitize_doc_text(str(item)) for item in self.profile.get("core_entities", []) if str(item).strip()]
@@ -285,14 +353,14 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def _module_risk_and_controls(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
-        return [
+        return self._dedupe_text_list([
             self._sanitize_doc_text(
                 f"{title}在运行过程中可能面临数据遗漏、状态误判、角色越权、结果回填不一致等风险，因此页面设计需要同步提供清晰的状态标签、提示信息和结果留痕。"
             ),
             self._sanitize_doc_text(
                 f"从控制措施看，可通过字段校验、操作确认、权限控制、日志记录和导出复核等方式降低{title}处理过程中的业务偏差与交付风险。"
             ),
-        ]
+        ])
 
     def _role_module_matrix_notes(self, role: str) -> list[str]:
         modules = self._module_profiles()
@@ -384,7 +452,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         values = self.profile.get(key)
         if isinstance(values, list):
             return [self._sanitize_doc_text(str(item)) for item in values if str(item).strip()]
-        return [self._sanitize_doc_text(item) for item in fallback]
+        return self._dedupe_text_list(fallback)
 
     def _role_profiles(self, prd_summary: dict | None = None) -> list[str]:
         return (
@@ -1268,6 +1336,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         modules: list[str] | None = None,
         arch_diagram_path: str = "",
     ) -> Document:
+        self._paragraph_signatures.clear()
         header_text = f"{self.product_name}{self.version} 说明书"
         self.set_header(header_text)
         self.add_page_number()

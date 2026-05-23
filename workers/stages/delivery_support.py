@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from collections.abc import Awaitable, Callable
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from sqlalchemy import select
 
@@ -12,6 +15,8 @@ from app.services.document.application_form import ApplicationFormGenerator
 from app.services.document.codebook import SourceCodeBookGenerator
 from app.services.document.diagrams import generate_system_architecture_diagram
 from app.services.document.manual import SoftwareManualGenerator
+
+logger = logging.getLogger(__name__)
 
 
 def load_screenshots_meta(
@@ -207,3 +212,25 @@ async def publish_task_exports(task_id: str, build_id: str, db_factory) -> None:
         )
         db.add(bundle_export)
         await db.commit()
+
+    _warm_bundle_download(task_id)
+
+
+def _warm_bundle_download(task_id: str) -> bool:
+    api_token = os.getenv("IPRIGHT_API_TOKEN", "").strip()
+    if not api_token:
+        logger.warning("Skipping bundle warmup for task %s: missing IPRIGHT_API_TOKEN", task_id)
+        return False
+
+    request = urllib_request.Request(
+        f"http://127.0.0.1:18000/api/v1/tasks/{task_id}/bundle/download",
+        headers={"Authorization": f"Bearer {api_token}"},
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=120) as response:
+            while response.read(1024 * 1024):
+                pass
+        return True
+    except (urllib_error.URLError, TimeoutError, ValueError) as exc:
+        logger.warning("Bundle warmup failed for task %s: %s", task_id, exc)
+        return False
