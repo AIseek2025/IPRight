@@ -308,6 +308,11 @@ class TestLLMClient:
         assert "`<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>`" in captured["messages"][0]["content"]
         assert "`const recentEvents = [`" in captured["messages"][0]["content"]
         assert "`{ code: 'E-001', type: '温度超标', status: '处理中', time: '2025-06-01 10:30' }`" in captured["messages"][0]["content"]
+        assert "`<div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>`" in captured["messages"][0]["content"]
+        assert "`<div style={{ padding: '24px 32px', background: '#f0fdf9' }}>`" in captured["messages"][0]["content"]
+        assert "`BarChartOutlined + ExclamationCircleOutlined + ClockCircleOutlined + FileTextOutlined`" in captured["messages"][0]["content"]
+        assert '"frontend/src/App.tsx"' in captured["messages"][0]["content"]
+        assert "`import { Routes, Route, Navigate, Link`" in captured["messages"][0]["content"]
         assert "当前只允许输出 Dashboard.tsx" in captured["messages"][1]["content"]
         assert "不要再导入 BriefcaseOutlined" in captured["messages"][1]["content"]
         assert "直接输出短版 `export default function Dashboard()`" in captured["messages"][1]["content"]
@@ -336,6 +341,10 @@ class TestLLMClient:
         assert "`<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>`" in captured["messages"][1]["content"]
         assert "`const recentEvents = [`" in captured["messages"][1]["content"]
         assert "`{ code: 'E-002', type: '运输延迟', status: '待处理', time: '2025-06-01 09:15' }`" in captured["messages"][1]["content"]
+        assert "`<div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>`" in captured["messages"][1]["content"]
+        assert "`<div style={{ padding: '24px 32px', background: '#f0fdf9' }}>`" in captured["messages"][1]["content"]
+        assert '"frontend/src/App.tsx"' in captured["messages"][1]["content"]
+        assert "`import { Routes, Route, Navigate, Link`" in captured["messages"][1]["content"]
         assert "原生 `<table>`" in captured["messages"][1]["content"]
 
     def test_generate_app_code_uses_compact_mode_for_single_module_retry(self, monkeypatch):

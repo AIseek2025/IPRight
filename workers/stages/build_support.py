@@ -832,6 +832,37 @@ def repair_invalid_core_files(
             )
         )
 
+    def _uses_disallowed_dashboard_centered_stats_shell(content: str) -> bool:
+        return (
+            "import { Card, Statistic } from 'antd';" in content
+            and "maxWidth: 1200" in content
+            and "margin: '0 auto'" in content
+            and "系统首页" in content
+            and _contains_any(
+                content,
+                [
+                    "color: '#4f46e5'",
+                    'color: "#4f46e5"',
+                    "APP_PROFILE.product_name",
+                ],
+            )
+        )
+
+    def _uses_disallowed_dashboard_green_icon_shell(content: str) -> bool:
+        return (
+            "import { Card, Statistic } from 'antd';" in content
+            and "background: '#f0fdf9'" in content
+            and _contains_any(
+                content,
+                [
+                    "BarChartOutlined",
+                    "ExclamationCircleOutlined",
+                    "ClockCircleOutlined",
+                    "FileTextOutlined",
+                ],
+            )
+        )
+
     validators = {
         "frontend/src/App.tsx": lambda content: (
             "PlaceholderPage" not in content
@@ -880,6 +911,8 @@ def repair_invalid_core_files(
             and not _uses_disallowed_dashboard_light_shell(content)
             and not _uses_disallowed_dashboard_icon_stats_shell(content)
             and not _uses_disallowed_dashboard_recent_events_shell(content)
+            and not _uses_disallowed_dashboard_centered_stats_shell(content)
+            and not _uses_disallowed_dashboard_green_icon_shell(content)
             and _contains_any(
                 content,
                 [
@@ -1230,6 +1263,23 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             "再配合 `<div style={{ padding: '16px' }}>`、`<h1>工作台</h1>`、"
             "`<p style={{ color: '#555' }}>{APP_PROFILE.product_name}</p>` 这种通用白页壳，"
             "那么同样一律判无效；必须改回更短的正式首页，不要再返回产品名副标题 + 统计卡轻壳。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';`，"
+            "再配合 `<div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>`、"
+            "`<h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>系统首页</h1>`、"
+            "以及紫色 `APP_PROFILE.product_name` 副标题轻壳，那么同样一律判无效；必须整体改回更短的正式首页。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';`，"
+            "并同时导入 `BarChartOutlined + ExclamationCircleOutlined + ClockCircleOutlined + FileTextOutlined`，"
+            "再配合 `<div style={{ padding: '24px 32px', background: '#f0fdf9' }}>` 这种浅绿色统计卡首页壳，"
+            "那么同样一律判无效；不要再返回多图标通用数据看板。"
+        )
+        hints.append(
+            "Dashboard.tsx 若上一版错误返回了 `frontend/src/App.tsx`、"
+            "或返回内容里出现 `\"frontend/src/App.tsx\"` / `import { Routes, Route, Navigate, Link` 这类壳层路由代码，"
+            "那么这一轮同样一律判失败；当前只允许重写 Dashboard.tsx，绝不能越界输出 App.tsx。"
         )
     if "frontend/src/pages/Login.tsx" in invalid_paths:
         hints.append(

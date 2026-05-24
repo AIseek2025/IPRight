@@ -1256,6 +1256,89 @@ export default function Login() {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_with_centered_stats_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>
+      <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>系统首页</h1>
+      <p style={{ color: '#4f46e5', marginBottom: 24 }}>{APP_PROFILE.product_name}</p>
+      <Card>
+        <Statistic title="指标总览" value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_green_icon_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { BarChartOutlined, ExclamationCircleOutlined, ClockCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ padding: '24px 32px', background: '#f0fdf9' }}>
+      <h1>系统首页</h1>
+      <Card>
+        <Statistic title="数据看板" value={APP_PROFILE.dashboard_metrics.length} prefix={<BarChartOutlined />} />
+      </Card>
+      <div>
+        <ExclamationCircleOutlined />
+        <ClockCircleOutlined />
+        <FileTextOutlined />
+      </div>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_rejects_dashboard_with_wrong_app_profile_path(self, tmp_path):
         app_root = tmp_path / "app"
         _, invalid_paths = repair_invalid_core_files(
@@ -2636,6 +2719,9 @@ export default function StatisticsPage() {
         assert any("温度超标 / 运输延迟 / 处理中 / 待处理" in hint for hint in hints)
         assert any("E-001" in hint and "2025-06-01 10:30" in hint for hint in hints)
         assert any("E-002" in hint and "2025-06-01 09:15" in hint for hint in hints)
+        assert any("32px 40px" in hint and "maxWidth: 1200" in hint for hint in hints)
+        assert any("background: '#f0fdf9'" in hint and "BarChartOutlined" in hint for hint in hints)
+        assert any('"frontend/src/App.tsx"' in hint and "Routes, Route, Navigate, Link" in hint for hint in hints)
 
     def test_statistics_retry_hints_include_exact_product_name_shell_negative_example(self):
         import workers.stages.build_support as build_support
