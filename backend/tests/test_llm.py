@@ -1147,9 +1147,90 @@ class TestLLMClient:
         assert calls[1]["response_format"] == "text"
         assert calls[1]["primary_model"] == TEXT_MODEL
         assert calls[2]["response_format"] == "json_object"
-        assert calls[2]["primary_model"] == REASONING_MODEL
+        assert calls[2]["primary_model"] == TEXT_MODEL
         assert "前两次单文件纯文本返回为空" in calls[2]["messages"][1]["content"]
         assert "只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}`" in calls[2]["messages"][1]["content"]
+        assert "如果你误生成了其他文件路径" in calls[2]["messages"][1]["content"]
+
+    def test_generate_app_code_retries_json_recovery_with_reasoning_model_when_text_model_still_empty(self, monkeypatch):
+        calls = []
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            calls.append(
+                {
+                    "messages": messages,
+                    "response_format": response_format,
+                    "primary_model": primary_model,
+                    "parse_json_response": parse_json_response,
+                    "max_tokens_override": max_tokens_override,
+                    "temperature_override": temperature_override,
+                }
+            )
+            if len(calls) < 4:
+                return LLMResponse(success=True, text="", structured={})
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/Dashboard.tsx":"export default function Dashboard(){ return <section>reasoning-json-ok</section>; }"}}',
+                structured={
+                    "files": {
+                        "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <section>reasoning-json-ok</section>; }"
+                    }
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/Dashboard.tsx"],
+                    "single_file_plaintext": True,
+                },
+            )
+            assert resp.success
+            assert resp.structured == {
+                "files": {
+                    "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <section>reasoning-json-ok</section>; }"
+                }
+            }
+
+        asyncio.run(_run())
+        assert len(calls) == 4
+        assert calls[2]["response_format"] == "json_object"
+        assert calls[2]["primary_model"] == TEXT_MODEL
+        assert calls[3]["response_format"] == "json_object"
+        assert calls[3]["primary_model"] == REASONING_MODEL
+
+    def test_extract_single_file_payload_content_recovers_dashboard_source_from_wrong_key(self):
+        content = LLMClient._extract_single_file_payload_content(
+            {
+                "files": {
+                    "frontend/src/App.tsx": (
+                        "import { APP_PROFILE } from '../generated/appProfile';\n"
+                        "export default function Dashboard(){\n"
+                        "  return <section>{APP_PROFILE.product_name} / {APP_PROFILE.dashboard_metrics.length}</section>;\n"
+                        "}"
+                    )
+                }
+            },
+            "frontend/src/pages/Dashboard.tsx",
+        )
+        assert "export default function Dashboard()" in content
+        assert "APP_PROFILE.dashboard_metrics" in content
 
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
         captured = {}

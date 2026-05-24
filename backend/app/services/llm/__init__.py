@@ -258,6 +258,90 @@ class LLMClient:
 
         return text
 
+    @staticmethod
+    def _looks_like_requested_single_file(content: str, file_path: str) -> bool:
+        body = LLMClient._extract_code_content(content).strip()
+        if not body:
+            return False
+
+        base_name = os.path.basename(file_path)
+        stem, _ = os.path.splitext(base_name)
+        candidate_names = [stem]
+        if stem.endswith("Page") and len(stem) > len("Page"):
+            candidate_names.append(stem[: -len("Page")])
+
+        signature_tokens = [
+            token
+            for name in candidate_names
+            for token in [
+                f"export default function {name}",
+                f"function {name}(",
+                f"const {name} =",
+                f"const {name}: React.FC",
+                f"const {name}: FC",
+            ]
+        ]
+        if signature_tokens and any(token in body for token in signature_tokens):
+            return True
+
+        if file_path.endswith("Dashboard.tsx"):
+            return (
+                "Dashboard" in body
+                and "APP_PROFILE.product_name" in body
+                and "APP_PROFILE.dashboard_metrics" in body
+            )
+
+        return False
+
+    @staticmethod
+    def _extract_single_file_payload_content(payload: Any, file_path: str) -> str:
+        def _normalize(candidate: Any) -> str:
+            if not isinstance(candidate, str):
+                return ""
+            return LLMClient._extract_code_content(candidate).strip()
+
+        def _matches(candidate: Any) -> str:
+            normalized = _normalize(candidate)
+            if normalized and LLMClient._looks_like_requested_single_file(normalized, file_path):
+                return normalized
+            return ""
+
+        if isinstance(payload, dict):
+            files = payload.get("files")
+            if isinstance(files, dict):
+                direct = _normalize(files.get(file_path))
+                if direct:
+                    return direct
+
+                basename_key = next(
+                    (
+                        key
+                        for key in files
+                        if str(key).strip().endswith(os.path.basename(file_path))
+                    ),
+                    None,
+                )
+                if basename_key is not None:
+                    basename_match = _normalize(files.get(basename_key))
+                    if basename_match:
+                        return basename_match
+
+                if len(files) == 1:
+                    sole_value = next(iter(files.values()))
+                    matched = _matches(sole_value)
+                    if matched:
+                        return matched
+
+            for key in ("content", "code", os.path.basename(file_path), os.path.splitext(os.path.basename(file_path))[0]):
+                matched = _matches(payload.get(key))
+                if matched:
+                    return matched
+
+        if isinstance(payload, str):
+            return _matches(payload)
+
+        return ""
+
     async def chat(self, messages: list, response_format: str = "text") -> LLMResponse:
         """Send a chat completion request with model fallback."""
         return await self.chat_with_models(
@@ -974,9 +1058,9 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
                 content = self._extract_code_content(raw_resp.text)
                 if content.lstrip().startswith("{"):
                     parsed, parse_error = self._parse_json_object_content(content)
-                    files = parsed.get("files") if isinstance(parsed, dict) else None
-                    if isinstance(files, dict) and isinstance(files.get(file_path), str):
-                        content = str(files[file_path]).strip()
+                    recovered_content = self._extract_single_file_payload_content(parsed, file_path)
+                    if recovered_content:
+                        content = recovered_content
                     elif parse_error:
                         logger.warning(
                             "single-file plaintext mode received JSON-like content but could not recover: %s",
@@ -1013,15 +1097,12 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
                 if not raw_resp.success:
                     return raw_resp
 
-                files = raw_resp.structured.get("files") if isinstance(raw_resp.structured, dict) else None
-                content = ""
-                if isinstance(files, dict) and isinstance(files.get(file_path), str):
-                    content = str(files[file_path]).strip()
+                content = self._extract_single_file_payload_content(raw_resp.structured, file_path)
                 if not content:
                     parsed, _ = self._parse_json_object_content(raw_resp.text)
-                    parsed_files = parsed.get("files") if isinstance(parsed, dict) else None
-                    if isinstance(parsed_files, dict) and isinstance(parsed_files.get(file_path), str):
-                        content = str(parsed_files[file_path]).strip()
+                    content = self._extract_single_file_payload_content(parsed, file_path)
+                if not content:
+                    content = self._extract_single_file_payload_content(raw_resp.text, file_path)
 
                 if not content:
                     return LLMResponse(success=False, error="empty code body")
@@ -1058,14 +1139,30 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
                     "single-file plaintext mode still empty for %s with model=%s; retrying with structured json recovery via %s",
                     file_path,
                     TEXT_MODEL,
+                    TEXT_MODEL,
+                )
+                json_recovery_note = (
+                    " 只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}` 这一层结构，"
+                    " 不要省略 files，也不要返回空文件内容。"
+                    " 如果你误生成了其他文件路径，也必须把目标组件源码放回目标文件键中。"
+                )
+                json_recovery_resp = await _request_single_file_json_recovery(
+                    model=TEXT_MODEL,
+                    extra_user_note=(
+                        json_recovery_note
+                    ),
+                )
+                if json_recovery_resp.success and json_recovery_resp.text:
+                    return json_recovery_resp
+                logger.warning(
+                    "single-file json recovery still empty for %s with model=%s; retrying with structured json recovery via %s",
+                    file_path,
+                    TEXT_MODEL,
                     REASONING_MODEL,
                 )
                 return await _request_single_file_json_recovery(
                     model=REASONING_MODEL,
-                    extra_user_note=(
-                        " 只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}` 这一层结构，"
-                        " 不要省略 files，也不要返回空文件内容。"
-                    ),
+                    extra_user_note=json_recovery_note,
                 )
             return fallback_resp
 
