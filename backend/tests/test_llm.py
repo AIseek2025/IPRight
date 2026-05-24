@@ -100,6 +100,19 @@ class TestLLMClient:
         assert parsed["prd_markdown"].startswith("# 电力调度平台 V1.0 产品需求文档")
         assert parsed["prd_summary"]["app_type"] == "admin_web"
 
+    def test_parse_json_object_content_repairs_trailing_commas_in_prd_payload(self):
+        parsed, error = LLMClient._parse_json_object_content(
+            '{\n'
+            '  "prd_markdown": "# 冷链协同平台\\n\\n## 1. 概述",\n'
+            '  "prd_summary": {"app_type": "admin_web", "core_modules": ["监控", "协同"],},\n'
+            '  "work_order_markdown": "# Work",\n'
+            '}\n'
+        )
+        assert not error
+        assert parsed["prd_markdown"].startswith("# 冷链协同平台")
+        assert parsed["prd_summary"]["app_type"] == "admin_web"
+        assert parsed["work_order_markdown"] == "# Work"
+
     def test_generate_app_code_uses_json_object_mode(self, monkeypatch):
         captured = {}
 

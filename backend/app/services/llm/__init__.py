@@ -113,6 +113,84 @@ class LLMClient:
         return "".join(pieces)
 
     @staticmethod
+    def _extract_first_balanced_json_object(raw: str) -> str:
+        text = raw or ""
+        start = text.find("{")
+        if start == -1:
+            return ""
+
+        depth = 0
+        in_string = False
+        escaping = False
+        for idx in range(start, len(text)):
+            char = text[idx]
+            if in_string:
+                if escaping:
+                    escaping = False
+                    continue
+                if char == "\\":
+                    escaping = True
+                    continue
+                if char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+                continue
+            if char == "{":
+                depth += 1
+                continue
+            if char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:idx + 1].strip()
+        return ""
+
+    @staticmethod
+    def _strip_trailing_commas(raw: str) -> str:
+        if not raw:
+            return raw
+
+        pieces: list[str] = []
+        in_string = False
+        escaping = False
+        idx = 0
+        length = len(raw)
+
+        while idx < length:
+            char = raw[idx]
+            if in_string:
+                pieces.append(char)
+                if escaping:
+                    escaping = False
+                elif char == "\\":
+                    escaping = True
+                elif char == '"':
+                    in_string = False
+                idx += 1
+                continue
+
+            if char == '"':
+                in_string = True
+                pieces.append(char)
+                idx += 1
+                continue
+
+            if char == ",":
+                look_ahead = idx + 1
+                while look_ahead < length and raw[look_ahead] in " \t\r\n":
+                    look_ahead += 1
+                if look_ahead < length and raw[look_ahead] in "}]":
+                    idx += 1
+                    continue
+
+            pieces.append(char)
+            idx += 1
+
+        return "".join(pieces)
+
+    @staticmethod
     def _parse_json_object_content(content: str) -> tuple[dict, str]:
         text = (content or "").strip()
         if not text:
@@ -128,6 +206,9 @@ class LLMClient:
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
             candidates.append(text[start:end + 1].strip())
+        balanced = LLMClient._extract_first_balanced_json_object(text)
+        if balanced:
+            candidates.append(balanced)
 
         last_error = "JSON object not found"
         seen: set[str] = set()
@@ -139,6 +220,7 @@ class LLMClient:
                 parsed = json.loads(candidate)
             except json.JSONDecodeError as exc:
                 repaired = LLMClient._escape_string_control_chars(candidate)
+                repaired = LLMClient._strip_trailing_commas(repaired)
                 if repaired != candidate:
                     try:
                         parsed = json.loads(repaired)
