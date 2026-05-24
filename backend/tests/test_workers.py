@@ -2634,6 +2634,32 @@ export default function StatisticsPage() {
 
         assert any("const recentEvents = [" in hint for hint in hints)
         assert any("温度超标 / 运输延迟 / 处理中 / 待处理" in hint for hint in hints)
+        assert any("E-001" in hint and "2025-06-01 10:30" in hint for hint in hints)
+        assert any("E-002" in hint and "2025-06-01 09:15" in hint for hint in hints)
+
+    def test_statistics_retry_hints_include_exact_product_name_shell_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "statistics",
+                        "route": "/statistics",
+                        "title": "统计报表",
+                        "primary_action": "生成统计分析",
+                        "filter_placeholder": "搜索统计报表相关主题",
+                        "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                        "rows": [["AN-001", "图书借阅统计", "借阅量", "管理员"]],
+                        "page_variant": "reports",
+                    }
+                ]
+            },
+            ["frontend/src/pages/StatisticsPage.tsx"],
+        )
+
+        assert any("function StatisticsPage() { const productName = APP_PROFILE.productName" in hint for hint in hints)
+        assert any("fontWeight: 600" in hint and "统计分析" in hint for hint in hints)
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support

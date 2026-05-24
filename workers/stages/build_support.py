@@ -1159,6 +1159,12 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             "Dashboard.tsx 也不要再写 `const recentEvents = [` 这类事件数组，并搭配“温度超标 / 运输延迟 / 处理中 / 待处理”之类通用异常事件卡片；这仍然是泛化监控首页壳，不是当前任务首页。"
         )
         hints.append(
+            "Dashboard.tsx 若上一版又写成 `import { Card, Statistic } from 'antd';`，"
+            "并在组件里声明 `const recentEvents = [`，数组项字段继续使用 `code/type/status/time`，"
+            "再配合 `E-001 / 温度超标 / 处理中 / 2025-06-01 10:30`、`E-002 / 运输延迟 / 待处理 / 2025-06-01 09:15` 这类通用异常事件，"
+            "那么同样一律判失败；必须整体改回当前业务首页，而不是异常监控事件流模板。"
+        )
+        hints.append(
             "Dashboard.tsx 不要导入 `Typography`、不要写 `const { Title } = Typography`，也不要用 `Title`/`Paragraph` 这一类通用展示壳；请直接使用原生 `h1`、`p` 或最少量 `Card/Statistic` 组织首页。"
         )
         hints.append(
@@ -1421,6 +1427,12 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
                 "再配合 `<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>`、"
                 "把 H1 写成“统计分析”或其他通用统计标题，那么同样一律判失败；"
                 "必须改回当前模块标题逐字命中的真实统计页，并直接落下当前任务的筛选提示、摘要块和样例表格。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版仍是 `function StatisticsPage() {{ const productName = APP_PROFILE.productName || '...'` 开头，"
+                "再配合 `<h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600 }}>统计分析</h1>`、"
+                "`<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>` 这类通用统计轻壳，"
+                "那么同样一律判失败；必须整体改写成当前模块标题逐字命中的真实统计页。"
             )
     return hints
 

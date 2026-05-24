@@ -306,6 +306,8 @@ class TestLLMClient:
         assert "`<h1>冷链履约异常协同工作台</h1>`" in captured["messages"][0]["content"]
         assert "`<div style={{ padding: 24 }}>`" in captured["messages"][0]["content"]
         assert "`<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>`" in captured["messages"][0]["content"]
+        assert "`const recentEvents = [`" in captured["messages"][0]["content"]
+        assert "`{ code: 'E-001', type: '温度超标', status: '处理中', time: '2025-06-01 10:30' }`" in captured["messages"][0]["content"]
         assert "当前只允许输出 Dashboard.tsx" in captured["messages"][1]["content"]
         assert "不要再导入 BriefcaseOutlined" in captured["messages"][1]["content"]
         assert "直接输出短版 `export default function Dashboard()`" in captured["messages"][1]["content"]
@@ -332,6 +334,8 @@ class TestLLMClient:
         assert "`<h1>冷链履约异常协同工作台</h1>`" in captured["messages"][1]["content"]
         assert "`<div style={{ padding: 24 }}>`" in captured["messages"][1]["content"]
         assert "`<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>`" in captured["messages"][1]["content"]
+        assert "`const recentEvents = [`" in captured["messages"][1]["content"]
+        assert "`{ code: 'E-002', type: '运输延迟', status: '待处理', time: '2025-06-01 09:15' }`" in captured["messages"][1]["content"]
         assert "原生 `<table>`" in captured["messages"][1]["content"]
 
     def test_generate_app_code_uses_compact_mode_for_single_module_retry(self, monkeypatch):
@@ -860,12 +864,14 @@ class TestLLMClient:
         assert "<div style={{ padding: '24px 32px', background: '#f3f6fb' }}>" in captured["messages"][0]["content"]
         assert "const productName = APP_PROFILE.productName" in captured["messages"][0]["content"]
         assert "<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>" in captured["messages"][0]["content"]
+        assert "fontWeight: 600" in captured["messages"][0]["content"]
         assert "当前是 StatisticsPage.tsx 回补" in captured["messages"][1]["content"]
         assert "通用重型统计页模板" in captured["messages"][1]["content"]
         assert "使用原生 input + 少量摘要块 + 原生 table" in captured["messages"][1]["content"]
         assert "<div style={{ padding: '24px 32px', background: '#f3f6fb' }}>" in captured["messages"][1]["content"]
         assert "const productName = APP_PROFILE.productName" in captured["messages"][1]["content"]
         assert "H1 写成“统计分析”" in captured["messages"][1]["content"]
+        assert "fontWeight: 600" in captured["messages"][1]["content"]
 
     def test_generate_app_code_supports_plaintext_single_file_retry(self, monkeypatch):
         captured = {}
