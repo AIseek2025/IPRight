@@ -158,6 +158,58 @@ def _looks_like_complete_typescript_source(content: str) -> bool:
     return text[-1] in {"}", ")", ";", "]"}
 
 
+def _imports_appear_before_runtime_code(content: str) -> bool:
+    in_block_comment = False
+    in_import = False
+    saw_runtime_code = False
+
+    for raw_line in str(content or "").splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if in_block_comment:
+            if "*/" not in stripped:
+                continue
+            stripped = stripped.split("*/", 1)[1].strip()
+            in_block_comment = False
+            if not stripped:
+                continue
+        if stripped.startswith("/*"):
+            if "*/" not in stripped:
+                in_block_comment = True
+                continue
+            stripped = stripped.split("*/", 1)[1].strip()
+            if not stripped:
+                continue
+        if stripped.startswith("//"):
+            continue
+        if in_import:
+            if ";" in stripped:
+                in_import = False
+            continue
+        if re.match(r"^import(?:\s+type\b|\s|{|\*)", stripped):
+            if saw_runtime_code:
+                return False
+            if ";" not in stripped:
+                in_import = True
+            continue
+        saw_runtime_code = True
+
+    return not in_import
+
+
+def _has_component_default_export(content: str, component_name: str) -> bool:
+    escaped_name = re.escape(component_name)
+    return any(
+        re.search(pattern, content)
+        for pattern in (
+            rf"\bexport\s+default\s+function\s+{escaped_name}\b",
+            rf"\bfunction\s+{escaped_name}\b[\s\S]*?\bexport\s+default\s+{escaped_name}\s*;",
+            rf"\bconst\s+{escaped_name}\b[\s\S]*?\bexport\s+default\s+{escaped_name}\s*;",
+        )
+    )
+
+
 def _write_text(path: str, content: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -200,7 +252,9 @@ def build_seed_copy_ignore(extra_names: set[str] | None = None):
         ignored = {
             name
             for name in names
-            if name in {"node_modules", "dist", ".vite", "__pycache__"} or name.endswith(".pyc")
+            if name in {"node_modules", "dist", ".vite", "__pycache__", "__MACOSX", ".DS_Store"}
+            or name.startswith("._")
+            or name.endswith(".pyc")
         }
         ignored.update(name for name in names if name in extra_names)
         return ignored
@@ -763,6 +817,21 @@ def repair_invalid_core_files(
             )
         )
 
+    def _uses_disallowed_dashboard_recent_events_shell(content: str) -> bool:
+        return (
+            "import { Card, Statistic } from 'antd';" in content
+            and "const recentEvents = [" in content
+            and _contains_any(
+                content,
+                [
+                    "温度超标",
+                    "运输延迟",
+                    "处理中",
+                    "待处理",
+                ],
+            )
+        )
+
     validators = {
         "frontend/src/App.tsx": lambda content: (
             "PlaceholderPage" not in content
@@ -800,6 +869,7 @@ def repair_invalid_core_files(
             and "const metrics = (APP_PROFILE as any).dashboard_metrics" not in content
             and "const fallbackMetrics = [" not in content
             and "const recentActivities = [" not in content
+            and "const recentEvents = [" not in content
             and "const iconMap" not in content
             and "React.ReactNode" not in content
             and "Typography" not in content
@@ -809,6 +879,7 @@ def repair_invalid_core_files(
             and "ColumnsType" not in content
             and not _uses_disallowed_dashboard_light_shell(content)
             and not _uses_disallowed_dashboard_icon_stats_shell(content)
+            and not _uses_disallowed_dashboard_recent_events_shell(content)
             and _contains_any(
                 content,
                 [
@@ -860,7 +931,21 @@ def repair_invalid_module_pages(
             if str(cell).strip()
         ]
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
-        must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
+        title = str(module.get("title") or "").strip()
+        highlight_tokens = [str(item).strip() for item in list(module.get("highlights", []))[:3] if str(item).strip()]
+        anchor_candidates = []
+        for token in [
+            *header_tokens,
+            *row_tokens,
+            *highlight_tokens,
+            str(module.get("primary_action") or "").strip(),
+            str(module.get("filter_placeholder") or "").strip(),
+        ]:
+            if token and token not in anchor_candidates:
+                anchor_candidates.append(token)
+        exact_title_hit = bool(title) and title in content
+        business_anchor_hits = sum(1 for token in anchor_candidates if token in content)
+        required_anchor_hits = min(2, len(anchor_candidates)) if anchor_candidates else 0
         uses_disallowed_records_light_shell = (
             relative_path.endswith("RecordsPage.tsx")
             and "background: '#f8f5ef'" in content
@@ -868,6 +953,12 @@ def repair_invalid_module_pages(
             and any(token in content for token in ["minHeight: '100vh'", 'minHeight: "100vh"'])
             and any(token in content for token in ["justifyContent: 'space-between'", 'justifyContent: "space-between"'])
             and any(token in content for token in ["alignItems: 'center'", 'alignItems: "center"'])
+        )
+        uses_disallowed_records_array_shell = (
+            relative_path.endswith("RecordsPage.tsx")
+            and "const records = [" in content
+            and any(token in content for token in ["updateTime:", "updateTime :", "'REC-001'", '"REC-001"', "'REC-002'", '"REC-002"'])
+            and any(token in content for token in ["topic:", "tag:", "status:"])
         )
         uses_disallowed_workflow_white_shell = (
             relative_path.endswith("WorkflowPage.tsx")
@@ -917,6 +1008,13 @@ def repair_invalid_module_pages(
             and "padding: '24px 32px'" in content
             and "fontFamily:" in content
         )
+        uses_disallowed_statistics_generic_shell = (
+            relative_path.endswith("StatisticsPage.tsx")
+            and "APP_PROFILE.productName" in content
+            and "fontFamily:" in content
+            and any(token in content for token in ["统计分析", "统计中心", "数据统计中心"])
+            and any(token in content for token in ["padding: 24", "padding:'24px'", "padding: '24px'", 'padding: "24px"'])
+        )
         uses_disallowed_statistics_heavy_shell = (
             relative_path.endswith("StatisticsPage.tsx")
             and any(
@@ -949,13 +1047,18 @@ def repair_invalid_module_pages(
             and not _contains_disallowed_frontend_reporting_copy(content)
             and "const mockData" not in content
             and "mockData:" not in content
-            and must_have_task_data
+            and exact_title_hit
+            and business_anchor_hits >= required_anchor_hits
             and _looks_like_complete_typescript_source(content)
+            and _imports_appear_before_runtime_code(content)
+            and _has_component_default_export(content, component_name)
             and not uses_disallowed_records_light_shell
+            and not uses_disallowed_records_array_shell
             and not uses_disallowed_workflow_white_shell
             and not uses_disallowed_analytics_heavy_shell
             and not uses_disallowed_reports_blue_shell
             and not uses_disallowed_statistics_blue_shell
+            and not uses_disallowed_statistics_generic_shell
             and not uses_disallowed_statistics_heavy_shell
         )
         if is_valid:
@@ -1053,6 +1156,9 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             "Dashboard.tsx 不要再写 `const recentActivities = [`、`const activities = [` 或其他顶部最近动态数组；若需要列表，请在组件内部直接内联 2~3 行轻量记录。"
         )
         hints.append(
+            "Dashboard.tsx 也不要再写 `const recentEvents = [` 这类事件数组，并搭配“温度超标 / 运输延迟 / 处理中 / 待处理”之类通用异常事件卡片；这仍然是泛化监控首页壳，不是当前任务首页。"
+        )
+        hints.append(
             "Dashboard.tsx 不要导入 `Typography`、不要写 `const { Title } = Typography`，也不要用 `Title`/`Paragraph` 这一类通用展示壳；请直接使用原生 `h1`、`p` 或最少量 `Card/Statistic` 组织首页。"
         )
         hints.append(
@@ -1141,7 +1247,16 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
             f"{relative_path} 导入 APP_PROFILE 时必须使用命名导入 `import {{ APP_PROFILE }} from '../generated/appProfile';`；禁止 `import APP_PROFILE from '../generated/appProfile'` 这类默认导入写法。"
         )
         hints.append(
+            f"{relative_path} 必须导出默认组件，优先使用 `export default function {component_name}()`；如果先声明 `function {component_name}()` 或 `const {component_name} = ...`，文件末尾也必须显式 `export default {component_name};`。"
+        )
+        hints.append(
+            f"{relative_path} 所有 import 必须放在文件顶部；禁止在组件定义、JSX 或其他运行时代码后面再出现 `import` 语句，否则 verify_run 会直接编译失败。"
+        )
+        hints.append(
             f"{relative_path} 的首屏主标题（H1、页面标题或最显著标题）必须逐字等于 `{title}`，不能改写成历史模块名、近义标题或通用业务名称。"
+        )
+        hints.append(
+            f"{relative_path} 除了主标题命中 `{title}` 之外，正文还必须至少命中 2 个当前模块业务锚点（表头、样例数据、主操作、筛选提示或 highlight），不能只剩标题 + 产品名轻壳。"
         )
         hints.append(
             f"{relative_path} 必须是正式面向最终用户的产品界面，不得出现任务简报、平台说明、开发情况汇报、面向研发团队的提示或演示口径。"
@@ -1230,6 +1345,11 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
                 "并把 H1 写成“面试流程管理”或把 `APP_PROFILE.productName` 当成正文说明，那么同样一律判失败；"
                 "AssetsPage 必须改回当前模块标题逐字命中的真实业务页。"
             )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `<div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>` 居中轻壳，"
+                "并把 H1 写成“读者证管理”等其他资产/证照主题，顶部再用彩色产品名摘要替代真实业务筛选与台账内容，那么同样一律判失败；"
+                "必须改回当前模块标题逐字命中的真实业务页，并直接落下当前任务样例字段。"
+            )
         if relative_path.endswith("RecordsPage.tsx"):
             hints.append(
                 f"{relative_path} 若上一版仍出现 `import React, {{ useState }} from 'react'`、`React.FC`、"
@@ -1250,6 +1370,11 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
                 "再配合 `<div style={{ padding: 24, background: '#f8f5ef', minHeight: '100vh' }}>`、"
                 "`display: 'flex' + justifyContent: 'space-between' + alignItems: 'center'` 的米色通用轻壳页，"
                 "那么同样一律判失败；必须改回当前模块标题逐字命中的真实检索表页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `const records = [`，并在数组项里复用 `id/topic/role/status/tag/updateTime` 这一套通用档案字段，"
+                "再配合 `REC-001/REC-002`、`图书档案管理协同跟进` 这类泛化主题，那么同样一律判失败；"
+                "必须改回当前模块真实表头、真实样例行和真实主操作，不要再输出 records 演示数组壳。"
             )
         if page_variant == "assets":
             hints.append(
@@ -1290,6 +1415,12 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
             hints.append(
                 f"{relative_path} 若上一版又回退成 `<div style={{ padding: '24px 32px', background: '#f3f6fb' }}>` 这类蓝色通用轻壳，"
                 "那么同样一律判失败；必须改回当前模块标题逐字命中的轻量统计页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `const productName = APP_PROFILE.productName || '...'`，"
+                "再配合 `<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>`、"
+                "把 H1 写成“统计分析”或其他通用统计标题，那么同样一律判失败；"
+                "必须改回当前模块标题逐字命中的真实统计页，并直接落下当前任务的筛选提示、摘要块和样例表格。"
             )
     return hints
 

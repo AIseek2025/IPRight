@@ -20,6 +20,7 @@ from workers.orchestrator.runner import (
     STAGE_HANDLERS,
 )
 from workers.stages.build_support import (
+    build_seed_copy_ignore,
     build_codegen_batches,
     build_codegen_requirements,
     generate_task_app_code,
@@ -1488,6 +1489,83 @@ export default function WorkflowPage() {
         assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
         assert "候选人管理" in repaired["frontend/src/pages/WorkflowPage.tsx"]
 
+    def test_repair_invalid_module_pages_rejects_trailing_import_and_missing_default_export(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+function WorkflowPage() {
+  return (
+    <section>
+      <h1>借阅归还管理</h1>
+      <button>新建借阅归还管理事项</button>
+      <table>
+        <tbody>
+          <tr><td>借阅编号</td><td>BR-001</td><td>图书馆</td></tr>
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+import { APP_PROFILE } from '../generated/appProfile';
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "借阅归还管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "新建借阅归还管理事项",
+                    "filter_placeholder": "搜索借阅编号 / 归还状态 / 经办人",
+                    "table_headers": ["借阅编号", "借阅主题", "归还状态"],
+                    "rows": [["BR-001", "图书借阅", "待归还"]],
+                    "page_variant": "workflow",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "import { APP_PROFILE } from '../generated/appProfile';" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+        assert "export default function WorkflowPage" not in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_title_only_inventory_shell_without_two_business_anchors(self):
+        generated_files = {
+            "frontend/src/pages/InventoryPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function InventoryPage() {
+  return (
+    <section>
+      <h1>库存监控</h1>
+      <div>{APP_PROFILE.product_name}</div>
+    </section>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "库存监控",
+                    "key": "inventory",
+                    "route": "/inventory",
+                    "primary_action": "登记温区批次",
+                    "filter_placeholder": "搜索批次号 / 仓库 / 温区",
+                    "table_headers": ["批次号", "仓库", "温区", "库存箱数"],
+                    "rows": [["LOT-009", "前海保税仓", "-18C", "128箱"]],
+                    "highlights": ["追踪冷链温区波动", "盘点异常库存"],
+                    "page_variant": "assets",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/InventoryPage.tsx"]
+        assert "库存监控" in repaired["frontend/src/pages/InventoryPage.tsx"]
+        assert "LOT-009" not in repaired["frontend/src/pages/InventoryPage.tsx"]
+
     def test_repair_invalid_module_pages_rejects_truncated_typescript_source(self):
         generated_files = {
             "frontend/src/pages/StatisticsPage.tsx": """
@@ -1608,6 +1686,36 @@ export default function RecordsPage() {
 
         assert repaired_paths == ["frontend/src/pages/RecordsPage.tsx"]
         assert "background: '#f8f5ef'" in repaired["frontend/src/pages/RecordsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_records_generic_array_shell(self):
+        generated_files = {
+            "frontend/src/pages/RecordsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function RecordsPage() {
+  const records = [
+    { id: 'REC-001', topic: '图书管理平台图书档案管理', role: '图书管理员', status: '处理中', tag: '图书档案管理', updateTime: '2026-05-02' },
+    { id: 'REC-002', topic: '图书档案管理协同跟进', role: '图书馆主管', status: '待审核', tag: '图书管理平台', updateTime: '2026-05-03' },
+  ];
+  return <section><h1>图书档案管理</h1><div>{APP_PROFILE.product_name}</div></section>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "图书档案管理",
+                    "key": "records",
+                    "route": "/records",
+                    "table_headers": ["档案编号", "图书名称", "馆藏位置", "借阅状态"],
+                    "rows": [["BK-001", "操作系统导论", "A-01书架", "可借阅"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/RecordsPage.tsx"]
+        assert "const records = [" in repaired["frontend/src/pages/RecordsPage.tsx"]
 
     def test_repair_invalid_module_pages_rejects_statistics_heavy_antd_shell(self):
         generated_files = {
@@ -1777,6 +1885,45 @@ export default function StatisticsPage() {
         assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
         assert "padding: '24px 32px'" in repaired["frontend/src/pages/StatisticsPage.tsx"]
 
+    def test_repair_invalid_module_pages_rejects_statistics_product_name_light_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function StatisticsPage() {
+  const productName = APP_PROFILE.productName || '图书管理平台';
+  return (
+    <div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <h1>统计分析</h1>
+      <p>{productName}</p>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>图书借阅统计</td><td>借阅量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "图书借阅统计", "借阅量"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "APP_PROFILE.productName" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
         profile = {
@@ -1796,6 +1943,18 @@ export default function StatisticsPage() {
         assert (app_root / "frontend/src/App.css").exists()
         assert "import './font.css';" in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
         assert (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
+
+    def test_build_seed_copy_ignore_skips_macos_metadata(self):
+        ignored = build_seed_copy_ignore()(
+            "/tmp/source",
+            ["src", "._src", "__MACOSX", ".DS_Store", "node_modules", "main.tsx"],
+        )
+
+        assert "._src" in ignored
+        assert "__MACOSX" in ignored
+        assert ".DS_Store" in ignored
+        assert "node_modules" in ignored
+        assert "main.tsx" not in ignored
 
     def test_generate_task_app_code_self_heals_core_and_support_when_llm_fails(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -2412,6 +2571,69 @@ export default function StatisticsPage() {
 
         assert any("function WorkflowPage() { return (" in hint and "padding: 24" in hint for hint in hints)
         assert any("APP_PROFILE.product_name" in hint and "灰色小字" in hint for hint in hints)
+        assert any("export default function WorkflowPage()" in hint for hint in hints)
+        assert any("所有 import 必须放在文件顶部" in hint for hint in hints)
+        assert any("至少命中 2 个当前模块业务锚点" in hint for hint in hints)
+
+    def test_assets_retry_hints_include_reader_card_centered_shell_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "assets",
+                        "route": "/assets",
+                        "title": "馆藏资产管理",
+                        "primary_action": "新建馆藏资产台账",
+                        "filter_placeholder": "搜索资产编号 / 馆藏位置 / 状态",
+                        "table_headers": ["资产编号", "资产名称", "馆藏位置", "当前状态"],
+                        "rows": [["AST-001", "馆藏图书一批", "A区书库", "在库"]],
+                        "page_variant": "assets",
+                    }
+                ]
+            },
+            ["frontend/src/pages/AssetsPage.tsx"],
+        )
+
+        assert any("padding: '24px', maxWidth: '1200px', margin: '0 auto'" in hint for hint in hints)
+        assert any("读者证管理" in hint for hint in hints)
+
+    def test_records_retry_hints_include_records_array_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "records",
+                        "route": "/records",
+                        "title": "图书档案管理",
+                        "primary_action": "新建图书档案",
+                        "filter_placeholder": "搜索档案编号 / 图书名称 / 馆藏位置",
+                        "table_headers": ["档案编号", "图书名称", "馆藏位置", "借阅状态"],
+                        "rows": [["BK-001", "操作系统导论", "A-01书架", "可借阅"]],
+                        "page_variant": "records",
+                    }
+                ]
+            },
+            ["frontend/src/pages/RecordsPage.tsx"],
+        )
+
+        assert any("const records = [" in hint for hint in hints)
+        assert any("REC-001/REC-002" in hint for hint in hints)
+        assert any("图书档案管理协同跟进" in hint for hint in hints)
+
+    def test_dashboard_retry_hints_include_recent_events_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_core_validation_hints(
+            {"modules": []},
+            ["frontend/src/pages/Dashboard.tsx"],
+        )
+
+        assert any("const recentEvents = [" in hint for hint in hints)
+        assert any("温度超标 / 运输延迟 / 处理中 / 待处理" in hint for hint in hints)
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -2878,6 +3100,34 @@ export default function StatisticsPage() {
         updated = package_json.read_text(encoding="utf-8")
         assert '"echarts": "^5.5.0"' in updated
         assert '"echarts-for-react": "^3.0.2"' in updated
+        assert '"@ant-design/pro-components"' not in updated
+
+    def test_sync_frontend_dependencies_ignores_appledouble_sidecar_files(self, tmp_path):
+        frontend_root = tmp_path / "frontend"
+        src_root = frontend_root / "src"
+        src_root.mkdir(parents=True, exist_ok=True)
+        package_json = frontend_root / "package.json"
+        package_json.write_text(
+            json.dumps(
+                {
+                    "dependencies": {
+                        "react": "^18.3.0",
+                        "@ant-design/pro-components": "^2.8.6",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_root / "Dashboard.tsx").write_text(
+            "export default function Dashboard(){ return <div />; }\n",
+            encoding="utf-8",
+        )
+        (src_root / "._Dashboard.tsx").write_bytes(b"\x00\x01\x02\xa3binary")
+
+        sync_frontend_dependencies(str(frontend_root))
+
+        updated = package_json.read_text(encoding="utf-8")
+        assert '"react": "^18.3.0"' in updated
         assert '"@ant-design/pro-components"' not in updated
 
     def test_ensure_backend_dependencies_adds_pyjwt(self, tmp_path):
