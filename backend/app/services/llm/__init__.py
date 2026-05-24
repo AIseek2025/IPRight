@@ -402,10 +402,13 @@ class LLMClient:
                         choice = data["choices"][0]
                         message = choice.get("message", {})
                         content = self._coerce_message_text(message.get("content"))
+                        reasoning_content = self._coerce_message_text(message.get("reasoning_content"))
 
                         structured = {}
                         if response_format == "json_object" or parse_json_response:
                             structured, parse_error = self._parse_json_object_content(content)
+                            if parse_error and reasoning_content:
+                                structured, parse_error = self._parse_json_object_content(reasoning_content)
                             if parse_error:
                                 logger.warning(
                                     "LLM parse failure metadata: model=%s finish_reason=%s message_keys=%s "
@@ -414,7 +417,7 @@ class LLMClient:
                                     choice.get("finish_reason"),
                                     sorted(message.keys()),
                                     len(content or ""),
-                                    len(self._coerce_message_text(message.get("reasoning_content")) or ""),
+                                    len(reasoning_content or ""),
                                     data.get("usage"),
                                     resp.text[:800],
                                 )
@@ -1015,7 +1018,7 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
             max_tokens_override = 5200
             temperature_override = 0.1
         elif is_single_dashboard_batch:
-            max_tokens_override = 3200
+            max_tokens_override = 5200
             temperature_override = 0.1
         elif is_single_module_retry:
             max_tokens_override = 2600 if (

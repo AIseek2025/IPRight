@@ -287,7 +287,7 @@ class TestLLMClient:
         asyncio.run(_run())
         assert captured["response_format"] == "json_object"
         assert captured["parse_json_response"] is False
-        assert captured["max_tokens_override"] == 3200
+        assert captured["max_tokens_override"] == 5200
         assert captured["temperature_override"] == 0.1
         assert "当前仅允许重写 `frontend/src/pages/Dashboard.tsx`" in captured["messages"][0]["content"]
         assert "禁止 `BriefcaseOutlined`" in captured["messages"][0]["content"]
@@ -1007,7 +1007,7 @@ class TestLLMClient:
         assert captured["response_format"] == "text"
         assert captured["primary_model"] == REASONING_MODEL
         assert captured["parse_json_response"] is False
-        assert captured["max_tokens_override"] == 3200
+        assert captured["max_tokens_override"] == 5200
         assert captured["temperature_override"] == 0.1
         assert "当前目标文件是 `frontend/src/pages/Dashboard.tsx`" in captured["messages"][0]["content"]
         assert "当前文件是 Dashboard.tsx，请从第一行开始直接输出完整源码" in captured["messages"][1]["content"]
@@ -1151,6 +1151,61 @@ class TestLLMClient:
         assert "前两次单文件纯文本返回为空" in calls[2]["messages"][1]["content"]
         assert "只允许返回 `{\"files\": {\"目标文件路径\": \"完整源码\"}}`" in calls[2]["messages"][1]["content"]
         assert "如果你误生成了其他文件路径" in calls[2]["messages"][1]["content"]
+
+    def test_chat_with_models_parses_json_from_reasoning_content_when_content_empty(self, monkeypatch):
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "reasoning_content": (
+                                    "先整理约束。\n"
+                                    "{\"files\":{\"frontend/src/pages/Dashboard.tsx\":\"export default function Dashboard(){ return null; }\"}}"
+                                ),
+                            },
+                        }
+                    ],
+                    "usage": {},
+                }
+
+            text = '{"choices":[{"message":{"content":"","reasoning_content":"...json..."}}]}'
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        import httpx
+        import asyncio
+
+        monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+        async def _run():
+            client = LLMClient(LLMConfig(api_key="sk-test"))
+            resp = await client.chat_with_models(
+                [{"role": "user", "content": "hi"}],
+                response_format="json_object",
+                primary_model=TEXT_MODEL,
+            )
+            assert resp.success
+            assert resp.structured["files"]["frontend/src/pages/Dashboard.tsx"].startswith("export default function Dashboard")
+
+        asyncio.run(_run())
 
     def test_generate_app_code_retries_json_recovery_with_reasoning_model_when_text_model_still_empty(self, monkeypatch):
         calls = []
