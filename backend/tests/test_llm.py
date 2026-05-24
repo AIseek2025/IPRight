@@ -193,6 +193,7 @@ class TestLLMClient:
         assert captured["temperature_override"] == 0.1
         assert "当前仅允许重写 `frontend/src/App.tsx`" in captured["messages"][0]["content"]
         assert "不要导入或使用 `Layout`、`Sider`、`Menu`、`Dropdown`" in captured["messages"][0]["content"]
+        assert "不要都收敛成“纯色顶栏 + 一行文字导航 + 下方单一内容画布”" in captured["messages"][0]["content"]
         assert "`useMemo`、`useLocation`、`useNavigate`、`NavLink`" in captured["messages"][0]["content"]
         assert "`Row, Col, Card, Button, Space`" in captured["messages"][0]["content"]
         assert "这次只修复 App.tsx" in captured["messages"][1]["content"]
@@ -239,6 +240,7 @@ class TestLLMClient:
         assert captured["temperature_override"] == 0.1
         assert "当前仅允许重写 `frontend/src/App.tsx`" in captured["messages"][0]["content"]
         assert "即便这是首轮 `App.tsx` 生成" in captured["messages"][0]["content"]
+        assert "禁止把所有项目固定成同一种壳层" in captured["messages"][0]["content"]
         assert "`useMemo`、`useLocation`、`useNavigate`、`NavLink`" in captured["messages"][0]["content"]
         assert "当前只允许输出 App.tsx" in captured["messages"][1]["content"]
 
@@ -662,6 +664,7 @@ class TestLLMClient:
         assert "当前模块首屏主标题（H1、页面标题或最显著标题）必须逐字使用 `职位与岗位管理`" in captured["messages"][0]["content"]
         assert "当前模块正文至少逐字保留这些业务锚点中的 2 个以上" in captured["messages"][0]["content"]
         assert "当前模块 page_variant=workspace" in captured["messages"][0]["content"]
+        assert "不要所有任务都收敛成同一套“检索输入 + 主按钮 + 单表格”骨架" in captured["messages"][0]["content"]
         assert "const RecordsPage: React.FC = ..." in captured["messages"][0]["content"]
         assert "import APP_PROFILE from '../generated/appProfile'" in captured["messages"][0]["content"]
         assert "招聘需求管理" in captured["messages"][0]["content"]

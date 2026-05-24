@@ -850,6 +850,9 @@ def test_task_profile_avoids_duplicate_topic_phrasing_when_keyword_equals_produc
     assert "量化策略研究" in profile["scene"]
     assert "AI股票量化投资平台在AI股票量化投资平台相关的" not in profile["technical_features"]
     assert "围绕“AI股票量化投资平台”对应的" in profile["technical_features"]
+    assert "统一导航、标准表格、状态标签、结果导出和截图留痕" not in profile["technical_features"]
+    assert "避免回落到固定后台套板" in profile["technical_features"]
+    assert "不得把所有任务压成同一套顶栏+表格后台骨架" in profile["differentiation_hint"]
 
 
 def test_codebook_empty_workspace():

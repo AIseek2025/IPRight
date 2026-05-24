@@ -716,7 +716,7 @@ def _pick_experience_blueprint(product_code: str, preset_key: str, design_seed: 
         "top_tabs": [
             "强调任务节奏、横向信息组织与首页工作入口",
             "强调主题切换、内容分镜与宽屏工作台",
-            "强调统一导航、模块区块和操作聚焦",
+            "强调导航编排、模块分镜和操作聚焦",
         ],
         "indexed": [
             "强调分析结论、关键洞察与对比视图",
@@ -2593,7 +2593,7 @@ def _build_technical_features(
     return _ensure_min_length(
         (
             f"{product_name}采用前后端分层、模块化页面与任务画像驱动的生成方式，围绕“{topic}”对应的{scene_scope}需求组织软件结构。"
-            f"系统通过统一导航、标准表格、状态标签、结果导出和截图留痕等机制，把{module_titles}等模块纳入一致的交互风格。"
+            f"系统会结合当前任务画像重新组织导航、信息分区、数据承载方式与结果出口，使{module_titles}等模块保持业务连贯的同时避免回落到固定后台套板。"
             f"在使用层面，系统支持{role_phrase}按职责访问对应页面；在工程层面，系统保留 FastAPI、React、TypeScript、PostgreSQL 等通用技术原名，"
             "便于开发、测试、部署和后续扩展协同。"
         ),
@@ -2861,7 +2861,7 @@ def build_task_profile(
         "differentiation_hint": (
             "当前任务必须以 raw_user_request 中的原始用户输入为唯一主题源，"
             f"页面、截图与说明书围绕{'、'.join(focus_terms[:3]) or product_name}展开；"
-            "平台画像仅用于补充结构与运行约束，不得改写行业、模块主线或产品定位。"
+            "平台画像仅用于补充结构与运行约束，不得改写行业、模块主线或产品定位，也不得把所有任务压成同一套顶栏+表格后台骨架。"
         ),
         "nav_items": [
             {"path": "/dashboard", "label": "首页", "icon": "📊", "code": _nav_code("/dashboard", "首页", 1)},
