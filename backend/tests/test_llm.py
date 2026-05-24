@@ -865,6 +865,10 @@ class TestLLMClient:
         assert "const productName = APP_PROFILE.productName" in captured["messages"][0]["content"]
         assert "<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>" in captured["messages"][0]["content"]
         assert "fontWeight: 600" in captured["messages"][0]["content"]
+        assert "const { productName } = APP_PROFILE;" in captured["messages"][0]["content"]
+        assert "{productName} - 分析中心" in captured["messages"][0]["content"]
+        assert "数据分析与看板" in captured["messages"][0]["content"]
+        assert "style={styles.container}" in captured["messages"][0]["content"]
         assert "当前是 StatisticsPage.tsx 回补" in captured["messages"][1]["content"]
         assert "通用重型统计页模板" in captured["messages"][1]["content"]
         assert "使用原生 input + 少量摘要块 + 原生 table" in captured["messages"][1]["content"]
@@ -872,6 +876,10 @@ class TestLLMClient:
         assert "const productName = APP_PROFILE.productName" in captured["messages"][1]["content"]
         assert "H1 写成“统计分析”" in captured["messages"][1]["content"]
         assert "fontWeight: 600" in captured["messages"][1]["content"]
+        assert "const { productName } = APP_PROFILE;" in captured["messages"][1]["content"]
+        assert "{productName} - 分析中心" in captured["messages"][1]["content"]
+        assert "数据分析与看板" in captured["messages"][1]["content"]
+        assert "style={styles.container}" in captured["messages"][1]["content"]
 
     def test_generate_app_code_supports_plaintext_single_file_retry(self, monkeypatch):
         captured = {}

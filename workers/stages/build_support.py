@@ -1015,6 +1015,23 @@ def repair_invalid_module_pages(
             and any(token in content for token in ["统计分析", "统计中心", "数据统计中心"])
             and any(token in content for token in ["padding: 24", "padding:'24px'", "padding: '24px'", 'padding: "24px"'])
         )
+        uses_disallowed_statistics_centered_shell = (
+            relative_path.endswith("StatisticsPage.tsx")
+            and "const { productName } = APP_PROFILE" in content
+            and "maxWidth: 1200" in content
+            and "margin: '0 auto'" in content
+            and "统计分析" in content
+            and "分析中心" in content
+        )
+        uses_disallowed_statistics_title_shell = (
+            relative_path.endswith("StatisticsPage.tsx")
+            and "import React from 'react';" in content
+            and "styles.container" in content
+            and "styles.title" in content
+            and "styles.subtitle" in content
+            and "APP_PROFILE.productName" in content
+            and "数据分析与看板" in content
+        )
         uses_disallowed_statistics_heavy_shell = (
             relative_path.endswith("StatisticsPage.tsx")
             and any(
@@ -1059,6 +1076,8 @@ def repair_invalid_module_pages(
             and not uses_disallowed_reports_blue_shell
             and not uses_disallowed_statistics_blue_shell
             and not uses_disallowed_statistics_generic_shell
+            and not uses_disallowed_statistics_centered_shell
+            and not uses_disallowed_statistics_title_shell
             and not uses_disallowed_statistics_heavy_shell
         )
         if is_valid:
@@ -1433,6 +1452,18 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
                 "再配合 `<h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600 }}>统计分析</h1>`、"
                 "`<div style={{ padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>` 这类通用统计轻壳，"
                 "那么同样一律判失败；必须整体改写成当前模块标题逐字命中的真实统计页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又写成 `const {{ productName }} = APP_PROFILE;`，"
+                "再配合 `<div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>`、"
+                "`<h1 style={{ margin: 0 }}>统计分析</h1>`、`{productName} - 分析中心` 这类居中通用统计壳，"
+                "那么同样一律判失败；必须改回当前模块标题逐字命中的真实统计页。"
+            )
+            hints.append(
+                f"{relative_path} 若上一版又回退成 `import React from 'react';` 开头，"
+                "并使用 `style={styles.container}`、`style={styles.title}`、`style={styles.subtitle}`，"
+                "再把主标题写成“数据分析与看板”并直接展示 `APP_PROFILE.productName`，"
+                "那么同样一律判失败；必须整体改写，不能再走通用数据看板模板。"
             )
     return hints
 

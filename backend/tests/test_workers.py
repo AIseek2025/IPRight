@@ -2660,6 +2660,9 @@ export default function StatisticsPage() {
 
         assert any("function StatisticsPage() { const productName = APP_PROFILE.productName" in hint for hint in hints)
         assert any("fontWeight: 600" in hint and "统计分析" in hint for hint in hints)
+        assert any("const { productName } = APP_PROFILE;" in hint for hint in hints)
+        assert any("maxWidth: 1200" in hint and "分析中心" in hint for hint in hints)
+        assert any("数据分析与看板" in hint and "style={styles.container}" in hint for hint in hints)
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
