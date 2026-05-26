@@ -30,12 +30,16 @@ from workers.stages.build_support import (
     prepare_seed_application,
     repair_invalid_core_files,
     repair_invalid_module_pages,
+    _repair_generated_typescript_syntax,
+    _repair_typescript_import_syntax,
 )
 from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
 from workers.stages.handlers import (
     _load_prd_summary,
+    _load_manifest,
     _merge_manual_llm_content,
     _derive_run_ports,
+    _write_manifest,
     run_plan_stage,
     run_build_stage,
     run_capture_stage,
@@ -125,6 +129,73 @@ class TestStageHandlers:
             result = asyncio.run(_run())
             assert isinstance(result, StageResult)
             assert result.success
+
+    def test_plan_stage_normalizes_legacy_route_family_before_writing_summary(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from app.core.config import settings
+        from app.services.llm import LLMResponse
+
+        task_id = str(uuid.uuid4())
+        build_id = str(uuid.uuid4())
+        mock_session = AsyncMock()
+        mock_session.add = MagicMock()
+        mock_session.get = AsyncMock(
+            return_value=SimpleNamespace(
+                id=uuid.UUID(task_id),
+                keyword="跨境冷链履约异常协同平台",
+                product_name="跨境冷链履约异常协同平台 V1.0",
+                version="V1.0",
+                industry="供应链协同",
+                notes=None,
+            )
+        )
+        mock_session_factory = MagicMock()
+        mock_session_scope = AsyncMock()
+        mock_session_scope.__aenter__.return_value = mock_session
+        mock_session_factory.return_value.return_value = mock_session_scope
+
+        class FakeLLM:
+            async def generate_prd(self, **kwargs):
+                return LLMResponse(
+                    success=True,
+                    structured={
+                        "prd_markdown": "# PRD",
+                        "work_order_markdown": "# Work Order",
+                        "prd_summary": {
+                            "app_type": "admin_web",
+                            "core_modules": ["异常事件管理", "协同任务管理", "冷链数据监控", "履约看板", "报表与分析"],
+                            "required_pages": ["/login", "/dashboard", "/events", "/tasks", "/monitor", "/reports", "/settings"],
+                            "user_roles": ["管理员", "调度主管", "异常专员"],
+                            "scene": "跨境冷链履约过程中的异常发现、协同处理与闭环管理",
+                            "industry_scope": "冷链履约协同",
+                            "core_entities": ["异常事件", "协同任务", "温控节点"],
+                        },
+                    },
+                )
+
+        from app.services import llm as llm_module
+
+        async def _run():
+            ctx = StageContext(
+                task_id=task_id,
+                build_id=build_id,
+                db_factory=mock_session_factory,
+            )
+            return await run_plan_stage(ctx)
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setattr(llm_module, "get_llm_client", lambda: FakeLLM())
+
+        result = asyncio.run(_run())
+
+        assert result.success
+        summary_path = tmp_path / "tasks" / task_id / "workspace" / "prd" / "product_summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        assert summary["core_modules"] == ["采购管理", "销售管理", "库存管理", "供应商管理", "订单履约中心"]
+        assert summary["required_pages"] == ["/login", "/dashboard", "/purchases", "/sales", "/inventory", "/suppliers", "/orders"]
+        assert summary["user_roles"] == ["管理员", "调度主管", "异常专员"]
+        assert summary["scene"] == "跨境冷链履约过程中的异常发现、协同处理与闭环管理"
 
     def test_plan_stage_fails_without_template_fallback_when_llm_unavailable(self):
         from types import SimpleNamespace
@@ -420,6 +491,31 @@ class TestStageHandlers:
         assert batches[0]["requirements"]["project_dna"]["module_signature"] == ["运单调度中心", "线路监控台"]
         assert batches[0]["requirements"]["topic_label"] == "智慧物流调度台"
 
+    def test_build_codegen_requirements_dedupes_duplicate_page_paths(self):
+        profile = {
+            "modules": [
+                {
+                    "route": "/statistics",
+                    "title": "温控数据看板",
+                    "key": "temperature-dashboard",
+                    "description": "查看温控节点",
+                    "primary_action": "查看温控数据",
+                },
+                {
+                    "route": "/statistics",
+                    "title": "统计与报告",
+                    "key": "statistics-report",
+                    "description": "查看统计结果",
+                    "primary_action": "导出统计报告",
+                },
+            ],
+        }
+
+        requirements = build_codegen_requirements(profile)
+
+        assert requirements["required_files"].count("frontend/src/pages/StatisticsPage.tsx") == 1
+        assert [page["title"] for page in requirements["module_pages"]] == ["温控数据看板"]
+
     def test_plan_seed_normalization_preserves_llm_modules_and_routes(self):
         plan_seed = {
             "preset_key": "media",
@@ -476,6 +572,36 @@ class TestStageHandlers:
         assert normalized["core_entities"] == plan_seed["core_entities"]
         assert normalized["scene"] == plan_seed["scene"]
         assert normalized["industry_scope"] == plan_seed["industry_scope"]
+
+    def test_plan_seed_normalization_replaces_legacy_route_family_with_plan_seed(self):
+        plan_seed = {
+            "preset_key": "supply_chain",
+            "core_modules": ["采购管理", "销售管理", "库存管理", "供应商管理", "订单履约中心"],
+            "required_pages": ["/login", "/dashboard", "/purchases", "/sales", "/inventory", "/suppliers", "/orders"],
+            "user_roles": ["管理员", "采购经理", "仓储主管"],
+            "core_entities": ["采购单", "库存批次"],
+            "raw_user_request": {"keyword": "跨境冷链履约异常协同平台", "product_name": "跨境冷链履约异常协同平台 V1.0"},
+            "scene": "采购协同、库存控制、订单履约与供应商联动",
+            "industry_scope": "供应链协同",
+        }
+        prd_summary = {
+            "app_type": "admin_web",
+            "core_modules": ["异常事件管理", "协同任务管理", "冷链数据监控", "履约看板", "报表与分析"],
+            "required_pages": ["/login", "/dashboard", "/events", "/tasks", "/monitor", "/reports", "/settings"],
+            "user_roles": ["管理员", "调度主管", "异常专员"],
+            "scene": "跨境冷链履约过程中的异常发现、协同处理与闭环管理",
+            "industry_scope": "冷链履约协同",
+            "core_entities": ["异常事件", "协同任务", "温控节点"],
+        }
+
+        normalized = normalize_prd_summary_with_plan_seed(prd_summary, plan_seed)
+
+        assert normalized["core_modules"] == plan_seed["core_modules"]
+        assert normalized["required_pages"] == plan_seed["required_pages"]
+        assert normalized["user_roles"] == prd_summary["user_roles"]
+        assert normalized["core_entities"] == prd_summary["core_entities"]
+        assert normalized["scene"] == prd_summary["scene"]
+        assert normalized["industry_scope"] == prd_summary["industry_scope"]
 
     def test_hydrate_missing_files_from_template_skips_llm_required_frontend_pages(self, tmp_path):
         app_root = tmp_path / "app"
@@ -1295,6 +1421,49 @@ export default function Login() {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_with_slice_metrics_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <div style={{ padding: '16px' }}>
+      <h1>工作台</h1>
+      <p style={{ color: '#555' }}>{APP_PROFILE.product_name}</p>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+        {APP_PROFILE.dashboard_metrics.slice(0, 4).map((item, index) => (
+          <Card key={item.title || index}>
+            <Statistic title={item.title} value={item.value} />
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_rejects_dashboard_with_green_icon_shell(self, tmp_path):
         app_root = tmp_path / "app"
         _, invalid_paths = repair_invalid_core_files(
@@ -1323,6 +1492,130 @@ export default function Dashboard() {
         <ClockCircleOutlined />
         <FileTextOutlined />
       </div>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_recent_borrows_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import React from 'react';
+import { Card, Statistic } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const recentBorrows = [
+    { id: 1, book: '《计算机程序设计艺术》', reader: '张三', date: '2025-06-01', status: '借出' },
+    { id: 2, book: '《数据结构》', reader: '李四', date: '2025-06-02', status: '归还' },
+    { id: 3, book: '《算法导论》', reader: '王五', date: '2025-06-03', status: '逾期' },
+  ];
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <h1>工作台</h1>
+      <p style={{ color: '#666', margin: '4px 0 16px' }}>{APP_PROFILE.product_name}</p>
+      <Card>
+        <Statistic title="业务项目" value={APP_PROFILE.dashboard_metrics.length} />
+      </Card>
+      <h2>最近借阅记录</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>图书</th>
+            <th>读者</th>
+            <th>日期</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recentBorrows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.book}</td>
+              <td>{row.reader}</td>
+              <td>{row.date}</td>
+              <td>{row.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_with_recent_exceptions_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() {
+  return <div>{APP_PROFILE.product_name}</div>;
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { Card, Statistic } from 'antd';
+import { ExclamationCircleOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  const recentExceptions = [
+    { id: 'EXC-101', order: 'ORD-3201', type: '温度超标', status: '处理中' },
+    { id: 'EXC-102', order: 'ORD-3202', type: '运输延迟', status: '已恢复' },
+  ];
+
+  return (
+    <div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>
+      <h1>系统首页</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <Card><Statistic title="异常待处理" value={2} prefix={<ExclamationCircleOutlined />} /></Card>
+      <Card><Statistic title="已恢复" value={1} prefix={<CheckCircleOutlined />} /></Card>
+      <Card><Statistic title="平均处理时长" value={18} prefix={<ClockCircleOutlined />} /></Card>
+      <table>
+        <tbody>
+          {recentExceptions.map((item) => (
+            <tr key={item.id}>
+              <td>{item.id}</td>
+              <td>{item.order}</td>
+              <td>{item.type}</td>
+              <td>{item.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1476,6 +1769,73 @@ export default function WorkflowPage() {
 
         assert "frontend/src/App.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_navigate_link_app_shell(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import React from 'react';
+import { Routes, Route, Navigate, Link } from 'react-router-dom';
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import OrdersPage from './pages/OrdersPage';
+import ExceptionsPage from './pages/ExceptionsPage';
+
+export default function App() {
+  return (
+    <div>
+      <header>
+        <h1>{APP_PROFILE.product_name}</h1>
+        <nav>
+          <Link to="/orders">订单履约</Link>
+          <Link to="/exceptions">异常处置</Link>
+        </nav>
+      </header>
+      <Routes>
+        <Route path="/login" element={<Login onLogin={() => undefined} />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/orders" element={<OrdersPage />} />
+        <Route path="/exceptions" element={<ExceptionsPage />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section><h1>系统首页</h1><div>{APP_PROFILE.product_name}</div><div>{APP_PROFILE.dashboard_metrics.map((item) => <article key={item.title}>{item.title}{item.value}</article>)}</div></section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }) {
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+                "frontend/src/pages/OrdersPage.tsx": """
+export default function OrdersPage() {
+  return <div>跨境冷链订单履约管理</div>;
+}
+""",
+                "frontend/src/pages/ExceptionsPage.tsx": """
+export default function ExceptionsPage() {
+  return <div>冷链异常事件管理</div>;
+}
+""",
+            },
+            profile={
+                "modules": [
+                    {"route": "/orders", "key": "orders"},
+                    {"route": "/exceptions", "key": "exceptions"},
+                ]
+            },
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_reports_invalid_outputs_without_template_rewrite(self):
         generated_files = {
             "frontend/src/pages/WorkflowPage.tsx": """
@@ -1538,6 +1898,156 @@ export default function WorkflowPage() {
         assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
         assert "任务简报" in repaired["frontend/src/pages/WorkflowPage.tsx"]
 
+    def test_repair_invalid_module_pages_rejects_settings_heavy_shell(self):
+        generated_files = {
+            "frontend/src/pages/SettingsPage.tsx": """
+import React from 'react';
+import { Input, Button, Tag, Space, Typography } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title, Text } = Typography;
+const thStyle: React.CSSProperties = { padding: '12px 16px', borderBottom: '2px solid #e5e7eb' };
+
+export default function SettingsPage() {
+  return (
+    <div style={{ padding: 24 }}>
+      <Space direction="vertical" size={16}>
+        <Title level={2}>系统设置</Title>
+        <Text>{APP_PROFILE.product_name}</Text>
+        <Input prefix={<SearchOutlined />} placeholder="搜索配置项 / 关键字" />
+        <Button type="primary">保存设置</Button>
+        <Tag color="blue">启用</Tag>
+        <table>
+          <thead><tr><th style={thStyle}>配置项</th></tr></thead>
+          <tbody><tr><td>通知策略</td></tr></tbody>
+        </table>
+      </Space>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "系统配置",
+                    "key": "settings",
+                    "route": "/settings",
+                    "primary_action": "保存设置",
+                    "filter_placeholder": "搜索配置项 / 关键字",
+                    "table_headers": ["配置项", "当前值", "说明", "维护人"],
+                    "rows": [["CFG-101", "通知策略", "站内+邮件", "管理员"]],
+                    "page_variant": "records",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SettingsPage.tsx"]
+        assert "SearchOutlined" in repaired["frontend/src/pages/SettingsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_settings_green_shell(self):
+        generated_files = {
+            "frontend/src/pages/SettingsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+const cellStyle = {
+  border: '1px solid #bbf7d0',
+  padding: '8px',
+  textAlign: 'left' as const,
+};
+
+export default function SettingsPage() {
+  return (
+    <div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh' }}>
+      <h1 style={{ color: '#14532d', margin: '0 0 4px' }}>系统配置</h1>
+      <p style={{ color: '#166534' }}>{APP_PROFILE.product_name}</p>
+      <input placeholder="搜索配置项 / 关键字" />
+      <button type="button">保存设置</button>
+      <table>
+        <thead>
+          <tr>
+            <th style={cellStyle}>配置项</th>
+            <th style={cellStyle}>当前值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={cellStyle}>通知策略</td>
+            <td style={cellStyle}>站内+邮件</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "系统配置",
+                    "key": "settings",
+                    "route": "/settings",
+                    "primary_action": "保存设置",
+                    "filter_placeholder": "搜索配置项 / 关键字",
+                    "table_headers": ["配置项", "当前值", "说明", "维护人"],
+                    "rows": [["CFG-101", "通知策略", "站内+邮件", "管理员"]],
+                    "page_variant": "records",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SettingsPage.tsx"]
+        assert "border: '1px solid #bbf7d0'" in repaired["frontend/src/pages/SettingsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_monitor_heavy_shell(self):
+        generated_files = {
+            "frontend/src/pages/MonitorPage.tsx": """
+import { useState } from 'react';
+import { Card, Input, Button, Space, Tag, Table } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function MonitorPage() {
+  const [searchText, setSearchText] = useState('');
+  return (
+    <Card title="冷链监控与预警">
+      <Space>
+        <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} prefix={<SearchOutlined />} />
+        <Button icon={<PlusOutlined />}>新增预警规则</Button>
+        <Tag color="green">{APP_PROFILE.product_name}</Tag>
+      </Space>
+      <Table columns={[]} dataSource={[]} />
+    </Card>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "冷链监控与预警",
+                    "key": "monitor",
+                    "route": "/monitor",
+                    "primary_action": "新增预警规则",
+                    "filter_placeholder": "搜索预警编号 / 责任人 / 处理状态",
+                    "table_headers": ["预警编号", "预警主题", "处理状态", "责任人"],
+                    "rows": [["ALT-501", "口岸到港温区超阈值", "待处理", "赵宁"]],
+                    "page_variant": "records",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/MonitorPage.tsx"]
+        assert "SearchOutlined" in repaired["frontend/src/pages/MonitorPage.tsx"]
+
     def test_repair_invalid_module_pages_rejects_workflow_candidate_white_shell(self):
         generated_files = {
             "frontend/src/pages/WorkflowPage.tsx": """
@@ -1571,6 +2081,308 @@ export default function WorkflowPage() {
 
         assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
         assert "候选人管理" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workflow_blue_card_shell(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function WorkflowPage() {
+  return (
+    <div style={{ background: '#f4f6fb', minHeight: '100vh', padding: 24 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', background: '#ffffff', borderRadius: 8, padding: 24 }}>
+        <h1>录用与入职管理</h1>
+        <div>{APP_PROFILE.product_name}</div>
+        <div>发起录用与入职流程</div>
+        <div>搜索候选人姓名 / 录用岗位 / 办理阶段</div>
+        <table><tbody><tr><td>OFF-202605-015</td><td>林晓</td><td>初中数学教研岗</td><td>Offer审批中</td></tr></tbody></table>
+      </div>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "录用与入职管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "发起录用与入职流程",
+                    "filter_placeholder": "搜索候选人姓名 / 录用岗位 / 办理阶段",
+                    "table_headers": ["录用编号", "候选人姓名", "录用岗位", "办理阶段"],
+                    "rows": [["OFF-202605-015", "林晓", "初中数学教研岗", "Offer审批中"]],
+                    "page_variant": "workflow",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "background: '#f4f6fb'" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workflow_records_array_shell(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+const thStyle = { padding: '8px 12px', textAlign: 'left', fontWeight: 600 };
+const tdStyle = { padding: '8px 12px' };
+const records = [
+  { id: 'REC-001', topic: '图书管理平台读者管理', role: '系统管理员', status: '处理中', tag: '图书目录管理', date: '2026-05-02' },
+];
+
+export default function WorkflowPage() {
+  return (
+    <div style={{ padding: 24 }}>
+      <h1>借阅流程协同</h1>
+      <div>{APP_PROFILE.product_name}</div>
+      <table><tbody><tr><td style={thStyle}>记录编号</td><td style={tdStyle}>{records[0].id}</td></tr></tbody></table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "借阅流程协同",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "primary_action": "发起借阅处理",
+                    "filter_placeholder": "搜索借阅编号 / 处理阶段 / 经办人",
+                    "table_headers": ["借阅编号", "借阅主题", "处理阶段", "经办人"],
+                    "rows": [["BR-202605-011", "图书借阅审批", "馆长复核", "王岚"]],
+                    "page_variant": "workflow",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert "const records = [" in repaired["frontend/src/pages/WorkflowPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workspace_heavy_antd_shell(self):
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import React, { useState } from 'react';
+import { Input, Button, Card, Tag, Statistic } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  const [search, setSearch] = useState('');
+  return (
+    <Card title="供应商协同管理">
+      <Statistic title="供应商协同管理" value={4} />
+      <Input value={search} onChange={(event) => setSearch(event.target.value)} prefix={<SearchOutlined />} placeholder="搜索供应商名称 / 负责人 / 协同状态" />
+      <Button icon={<PlusOutlined />}>新增协同供应商</Button>
+      <Tag>{APP_PROFILE.product_name}</Tag>
+      <table><tbody><tr><td>SUP-202605-01</td><td>华东冷链承运商</td><td>周岚</td><td>对接中</td></tr></tbody></table>
+    </Card>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "供应商协同管理",
+                    "key": "suppliers",
+                    "route": "/suppliers",
+                    "primary_action": "新增协同供应商",
+                    "filter_placeholder": "搜索供应商名称 / 负责人 / 协同状态",
+                    "table_headers": ["供应商编号", "供应商名称", "负责人", "协同状态"],
+                    "rows": [["SUP-202605-01", "华东冷链承运商", "周岚", "对接中"]],
+                    "page_variant": "workspace",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SuppliersPage.tsx"]
+        assert "SearchOutlined" in repaired["frontend/src/pages/SuppliersPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workspace_light_antd_shell(self):
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import React from 'react';
+import { Input, Button, Tag } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  return (
+    <div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh' }}>
+      <h1>供应商协同管理</h1>
+      <Tag>{APP_PROFILE.product_name}</Tag>
+      <Input prefix={<SearchOutlined />} placeholder="搜索供应商名称 / 负责人 / 协同状态" />
+      <Button icon={<PlusOutlined />}>新增协同供应商</Button>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "供应商协同管理",
+                    "key": "suppliers",
+                    "route": "/suppliers",
+                    "primary_action": "新增协同供应商",
+                    "filter_placeholder": "搜索供应商名称 / 负责人 / 协同状态",
+                    "table_headers": ["供应商编号", "供应商名称", "负责人", "协同状态"],
+                    "rows": [["SUP-202605-01", "华东冷链承运商", "周岚", "对接中"]],
+                    "page_variant": "workspace",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SuppliersPage.tsx"]
+        assert "background: '#f0fdf9'" in repaired["frontend/src/pages/SuppliersPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workspace_card_use_state_shell(self):
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import { useState } from 'react';
+import { Card, Input, Button, Tag } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  const [search, setSearch] = useState('');
+  return (
+    <Card title="供应商协同管理">
+      <Tag>{APP_PROFILE.product_name}</Tag>
+      <Input value={search} onChange={(event) => setSearch(event.target.value)} prefix={<SearchOutlined />} placeholder="搜索供应商名称 / 负责人 / 协同状态" />
+      <Button icon={<PlusOutlined />}>新增协同供应商</Button>
+    </Card>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "供应商协同管理",
+                    "key": "suppliers",
+                    "route": "/suppliers",
+                    "primary_action": "新增协同供应商",
+                    "filter_placeholder": "搜索供应商名称 / 负责人 / 协同状态",
+                    "table_headers": ["供应商编号", "供应商名称", "负责人", "协同状态"],
+                    "rows": [["SUP-202605-01", "华东冷链承运商", "周岚", "对接中"]],
+                    "page_variant": "workspace",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SuppliersPage.tsx"]
+        assert "const [search, setSearch] = useState('')" in repaired["frontend/src/pages/SuppliersPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_workspace_matrix_shell(self):
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import { useState } from 'react';
+import { Card, Row, Col, Statistic, Input, Button, Space, Tag, Table } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  const [searchText, setSearchText] = useState('');
+  return (
+    <div>
+      <Space>
+        <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} prefix={<SearchOutlined />} />
+        <Button icon={<PlusOutlined />}>新增协同供应商</Button>
+      </Space>
+      <Row gutter={16}>
+        <Col span={8}><Card><Statistic title="待准入" value={8} /></Card></Col>
+        <Col span={8}><Card><Statistic title="履约中" value={16} /></Card></Col>
+      </Row>
+      <Tag>{APP_PROFILE.product_name}</Tag>
+      <Table dataSource={[]} columns={[]} />
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "供应商协同管理",
+                    "key": "suppliers",
+                    "route": "/suppliers",
+                    "primary_action": "新增协同供应商",
+                    "filter_placeholder": "搜索供应商名称 / 负责人 / 协同状态",
+                    "table_headers": ["供应商编号", "供应商名称", "负责人", "协同状态"],
+                    "rows": [["SUP-202605-01", "华东冷链承运商", "周岚", "对接中"]],
+                    "page_variant": "workspace",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/SuppliersPage.tsx"]
+        assert "const [searchText, setSearchText] = useState('')" in repaired["frontend/src/pages/SuppliersPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_orders_supplier_records_shell(self):
+        generated_files = {
+            "frontend/src/pages/OrdersPage.tsx": """
+import React from 'react';
+import { Input, Button, Card, Space, Typography } from 'antd';
+import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title, Text } = Typography;
+
+const OrdersPage = () => {
+  const records = [
+    { no: 'SUP-401', name: '华辰材料', owner: '陈越', status: '已签约' },
+    { no: 'SUP-402', name: '嘉远供应', owner: '林澈', status: '待复核' },
+  ];
+  return (
+    <Card>
+      <Title level={3}>订单协同</Title>
+      <Text>{APP_PROFILE.product_name}</Text>
+      <Space>
+        <Input prefix={<SearchOutlined />} placeholder="搜索供应商名称 / 对接人 / 协同状态" />
+        <Button icon={<PlusOutlined />}>新增供应商</Button>
+      </Space>
+      {records.map((item) => <div key={item.no}>{item.no} {item.name}</div>)}
+    </Card>
+  );
+};
+
+export default OrdersPage;
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "订单协同管理",
+                    "key": "orders",
+                    "route": "/orders",
+                    "primary_action": "新建协同订单",
+                    "filter_placeholder": "搜索订单号 / 客户 / 处理状态",
+                    "table_headers": ["订单号", "客户名称", "履约节点", "处理状态"],
+                    "rows": [["ORD-202605-01", "华东医药", "运输中", "处理中"]],
+                    "page_variant": "workspace",
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/OrdersPage.tsx"]
+        assert "SUP-401" in repaired["frontend/src/pages/OrdersPage.tsx"]
 
     def test_repair_invalid_module_pages_rejects_trailing_import_and_missing_default_export(self):
         generated_files = {
@@ -1676,6 +2488,84 @@ export default function StatisticsPage() {
         assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
         assert "统计报表月报" in repaired["frontend/src/pages/StatisticsPage.tsx"]
 
+
+    def test_repair_invalid_module_pages_rejects_statistics_plain_padding_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function StatisticsPage() {
+  return (
+    <div style={{ padding: '24px' }}>
+      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>统计报表</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>图书借阅统计</td><td>借阅量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "图书借阅统计", "借阅量"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "fontWeight: 600" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
+    def test_repair_invalid_module_pages_rejects_statistics_rows_array_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function StatisticsPage() {
+  const rows = [
+    ['ANL-301', '协同任务看板周报', '跨境冷链履约异常协同平台', '周铭', '跨境冷链履约异常协同平台趋势稳定', '2026-05-02'],
+    ['ANL-302', '协同任务看板月报', 'V1.0', '林嘉', 'V1.0需持续跟踪', '2026-05-01'],
+    ['ANL-303', '跨境冷链履约异常协同平台 V1.0专题分析', '协同任务看板', '唐悦', '输出优化建议', '2026-04-28'],
+  ];
+  return (
+    <div>
+      <h1>统计报表</h1>
+      <p>{APP_PROFILE.product_name}</p>
+      <table><tbody>{rows.map((row) => <tr key={row[0]}><td>{row[0]}</td></tr>)}</tbody></table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "异常任务统计", "处理量"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "协同任务看板周报" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
     def test_repair_invalid_module_pages_rejects_wrong_app_profile_relative_path(self):
         generated_files = {
             "frontend/src/pages/AssetsPage.tsx": """
@@ -1727,6 +2617,51 @@ export default function RecordsPage() {
 
         assert repaired_paths == ["frontend/src/pages/RecordsPage.tsx"]
         assert "import APP_PROFILE from '../generated/appProfile'" in repaired["frontend/src/pages/RecordsPage.tsx"]
+
+    def test_repair_typescript_import_syntax_inserts_missing_separators(self):
+        raw = (
+            "import React from 'react' import { Card, Input, Button } from 'antd' "
+            "import { APP_PROFILE } from '../generated/appProfile' "
+            "const { Title } = Typography const columns = []"
+        )
+        repaired = _repair_typescript_import_syntax(raw)
+        assert "import React from 'react';\nimport { Card, Input, Button } from 'antd'" in repaired
+        assert "import { APP_PROFILE } from '../generated/appProfile';\nconst { Title } = Typography" in repaired
+        assert "const { Title } = Typography;\nconst columns = []" in repaired
+
+    def test_repair_generated_typescript_syntax_only_touches_frontend_sources(self):
+        generated_files = {
+            "frontend/src/pages/DemoPage.tsx": "import React from 'react' import { APP_PROFILE } from '../generated/appProfile';",
+            "backend/app/main.py": "import React from 'react' import os",
+        }
+        repaired = _repair_generated_typescript_syntax(generated_files)
+        assert "import React from 'react';\nimport { APP_PROFILE }" in repaired["frontend/src/pages/DemoPage.tsx"]
+        assert repaired["backend/app/main.py"] == generated_files["backend/app/main.py"]
+
+    def test_codegen_requirements_include_page_design_brief_per_module(self):
+        profile = {
+            "product_name": "设备管理平台",
+            "design_seed": "seed-equipment",
+            "modules": [
+                {
+                    "title": "设备管理台",
+                    "key": "equipment",
+                    "route": "/equipment",
+                    "page_variant": "workspace",
+                },
+                {
+                    "title": "维保计划",
+                    "key": "maintenance",
+                    "route": "/maintenance",
+                    "page_variant": "records",
+                },
+            ],
+        }
+        requirements = build_codegen_requirements(profile)
+        briefs = [page.get("page_design_brief", "") for page in requirements["module_pages"]]
+        assert len(briefs) == 2
+        assert all("layout_pattern=" in brief for brief in briefs)
+        assert briefs[0] != briefs[1]
 
     def test_repair_invalid_module_pages_rejects_records_beige_light_shell(self):
         generated_files = {
@@ -1929,6 +2864,59 @@ export default function ReportsPage() {
         assert repaired_paths == ["frontend/src/pages/ReportsPage.tsx"]
         assert "录用与Offer管理" in repaired["frontend/src/pages/ReportsPage.tsx"]
 
+    def test_repair_invalid_module_pages_rejects_reports_green_shell(self):
+        generated_files = {
+            "frontend/src/pages/ReportsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+const pageStyle: React.CSSProperties = {
+  padding: 20,
+  background: '#f0fdf9',
+  minHeight: '100vh',
+  fontFamily: '"Microsoft YaHei","PingFang SC",sans-serif',
+};
+
+const headerStyle: React.CSSProperties = {
+  borderBottom: '2px solid #16a34a',
+  paddingBottom: 8,
+  marginBottom: 12,
+};
+
+export default function ReportsPage() {
+  return (
+    <div style={pageStyle}>
+      <div style={headerStyle}>
+        <h1>履约数据分析</h1>
+        <p>{APP_PROFILE.product_name}</p>
+      </div>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>履约波动分析</td><td>时效</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "履约数据分析",
+                    "key": "reports",
+                    "route": "/reports",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "履约波动分析", "时效"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/ReportsPage.tsx"]
+        assert "borderBottom: '2px solid #16a34a'" in repaired["frontend/src/pages/ReportsPage.tsx"]
+
     def test_repair_invalid_module_pages_rejects_statistics_blue_shell(self):
         generated_files = {
             "frontend/src/pages/StatisticsPage.tsx": """
@@ -2007,12 +2995,59 @@ export default function StatisticsPage() {
         assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
         assert "APP_PROFILE.productName" in repaired["frontend/src/pages/StatisticsPage.tsx"]
 
+    def test_repair_invalid_module_pages_rejects_statistics_green_shell(self):
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+function StatisticsPage() {
+  return (
+    <div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh', fontFamily: "'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, sans-serif" }}>
+      <h1 style={{ color: '#14532d', fontSize: 24, margin: 0 }}>统计报表</h1>
+      <p style={{ color: '#166534', marginTop: 8 }}>{APP_PROFILE.product_name}</p>
+      <table>
+        <tbody>
+          <tr><td>分析编号</td><td>分析主题</td><td>统计维度</td></tr>
+          <tr><td>AN-001</td><td>图书借阅统计</td><td>借阅量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default StatisticsPage;
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "统计报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["AN-001", "图书借阅统计", "借阅量"]],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == ["frontend/src/pages/StatisticsPage.tsx"]
+        assert "background: '#f0fdf9'" in repaired["frontend/src/pages/StatisticsPage.tsx"]
+
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
         profile = {
             "product_name": "测试系统",
             "modules": [{"route": "/orders", "key": "orders"}],
         }
+        (app_root / "frontend/src").mkdir(parents=True, exist_ok=True)
+        (app_root / "backend").mkdir(parents=True, exist_ok=True)
+        (app_root / "frontend/src/._App.tsx").write_bytes(b"\x00\x01")
+        (app_root / "frontend/src/._pages").write_bytes(b"\x00\x02")
+        (app_root / "frontend/src/.DS_Store").write_text("metadata", encoding="utf-8")
+        (app_root / "backend/__MACOSX").mkdir(parents=True, exist_ok=True)
+        (app_root / "backend/__MACOSX/._app.py").write_bytes(b"\x00\x03")
 
         prepare_seed_application(str(app_root), profile)
 
@@ -2021,6 +3056,10 @@ export default function StatisticsPage() {
         assert not (app_root / "frontend/src/services/api.ts").exists()
         assert not (app_root / "frontend/src/types/constants.ts").exists()
         assert not (app_root / "frontend/src/types/models.ts").exists()
+        assert not (app_root / "frontend/src/._App.tsx").exists()
+        assert not (app_root / "frontend/src/._pages").exists()
+        assert not (app_root / "frontend/src/.DS_Store").exists()
+        assert not (app_root / "backend/__MACOSX").exists()
         assert (app_root / "frontend/src/generated/appProfile.ts").exists()
         assert (app_root / "frontend/src/font.css").exists()
         assert (app_root / "frontend/src/App.css").exists()
@@ -2089,11 +3128,140 @@ export default function StatisticsPage() {
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
+        assert report["applied_required_file_count"] == 0
+        assert report["applied_paths"] == []
+        assert report["apply_skipped_reason"] == "invalid_core_paths"
         assert report["template_ui_fallback_used"] is False
         assert (app_root / "frontend/src/App.tsx").exists() is False
         assert (app_root / "frontend/src/pages/Login.tsx").exists() is False
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists() is False
         assert (app_root / "frontend/src/services/api.ts").exists() is False
+
+    def test_generate_task_app_code_fails_without_module_template_after_invalid_llm_output(
+        self, tmp_path, monkeypatch
+    ):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "跨境冷链履约异常协同平台",
+            "scene": "跨境冷链履约异常协同",
+            "industry_scope": "物流",
+            "user_roles": ["运营专员"],
+            "modules": [
+                {
+                    "title": "履约节点追踪",
+                    "key": "fulfillment-timeline",
+                    "route": "/fulfillment-timeline",
+                    "primary_action": "新建履约节点",
+                    "filter_placeholder": "搜索履约单号 / 当前阶段",
+                    "table_headers": ["履约单号", "当前阶段", "责任人"],
+                    "rows": [["FUL-001", "清关查验", "周可欣"]],
+                    "highlights": ["支持履约节点追踪"],
+                    "description": "追踪履约节点进度。",
+                    "page_variant": "studio",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [{"title": "待处理异常", "value": "12"}],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        invalid_module = (
+            "import React from 'react' import { Card, Input, Button, Table, Typography, Space } from 'antd' "
+            "import { PlusOutlined } from '@ant-design/icons' import { APP_PROFILE } from '../generated/appProfile' "
+            "const { Title, Text } = Typography const columns = [] export default function FulfillmentTimelinePage(){"
+            "return <div>履约节点追踪</div>;}"
+        )
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": (
+                                "import { Routes, Route } from 'react-router-dom';"
+                                "import { APP_PROFILE } from './generated/appProfile';"
+                                "import Login from './pages/Login';"
+                                "import Dashboard from './pages/Dashboard';"
+                                "import FulfillmentTimelinePage from './pages/FulfillmentTimelinePage';"
+                                "export default function App(){"
+                                "return <div>{APP_PROFILE.product_name}"
+                                "<Routes>"
+                                "<Route path='/login' element={<Login onLogin={() => undefined} />} />"
+                                "<Route path='/dashboard' element={<Dashboard />} />"
+                                "<Route path='/fulfillment-timeline' element={<FulfillmentTimelinePage />} />"
+                                "</Routes></div>;}"
+                            ),
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": (
+                                "export default function Login({ onLogin }) {"
+                                "return <button onClick={onLogin}>登录 用户名 密码</button>; }"
+                            ),
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": (
+                                "import { APP_PROFILE } from '../generated/appProfile';"
+                                "export default function Dashboard(){"
+                                "return <section><h1>系统首页</h1>"
+                                "<div>{APP_PROFILE.product_name}</div>"
+                                "<div>{APP_PROFILE.dashboard_metrics.map((item) => "
+                                "<article key={item.title}>{item.title}{item.value}</article>)}</div>"
+                                "</section>; }"
+                            ),
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '跨境冷链履约异常协同平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/FulfillmentTimelinePage.tsx",):
+                    return _Resp({"frontend/src/pages/FulfillmentTimelinePage.tsx": invalid_module})
+                return _Resp({})
+
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: _LLM(), raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: _LLM())
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert report is not None
+        assert error is not None
+        assert "FulfillmentTimelinePage.tsx" in error
+        assert report["template_ui_fallback_used"] is False
+        assert report["apply_skipped_reason"] == "invalid_module_paths"
+        assert not (app_root / "frontend/src/pages/FulfillmentTimelinePage.tsx").exists()
 
     def test_generate_task_app_code_retries_missing_core_files(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -2654,9 +3822,38 @@ export default function StatisticsPage() {
 
         assert any("function WorkflowPage() { return (" in hint and "padding: 24" in hint for hint in hints)
         assert any("APP_PROFILE.product_name" in hint and "灰色小字" in hint for hint in hints)
+        assert any("const thStyle = ..." in hint and "const records = [" in hint for hint in hints)
         assert any("export default function WorkflowPage()" in hint for hint in hints)
         assert any("所有 import 必须放在文件顶部" in hint for hint in hints)
         assert any("至少命中 2 个当前模块业务锚点" in hint for hint in hints)
+
+    def test_workspace_retry_hints_include_heavy_antd_and_blue_card_negative_examples(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "suppliers",
+                        "route": "/suppliers",
+                        "title": "供应商协同管理",
+                        "primary_action": "新增协同供应商",
+                        "filter_placeholder": "搜索供应商名称 / 负责人 / 协同状态",
+                        "table_headers": ["供应商编号", "供应商名称", "负责人", "协同状态"],
+                        "rows": [["SUP-202605-01", "华东冷链承运商", "周岚", "对接中"]],
+                        "page_variant": "workspace",
+                    }
+                ]
+            },
+            ["frontend/src/pages/SuppliersPage.tsx"],
+        )
+
+        assert any("Input, Button, Card, Tag, Statistic" in hint for hint in hints)
+        assert any("SearchOutlined, PlusOutlined" in hint for hint in hints)
+        assert any("const [search, setSearch] = useState('')" in hint for hint in hints)
+        assert any("background: '#f4f6fb'" in hint and "borderRadius: 8" in hint for hint in hints)
+        assert any("Input, Button, Tag" in hint and "#f0fdf9" in hint for hint in hints)
+        assert any("import { useState } from 'react'" in hint and "Card, Input, Button, Tag" in hint for hint in hints)
 
     def test_assets_retry_hints_include_reader_card_centered_shell_negative_example(self):
         import workers.stages.build_support as build_support
@@ -2681,6 +3878,7 @@ export default function StatisticsPage() {
 
         assert any("padding: '24px', maxWidth: '1200px', margin: '0 auto'" in hint for hint in hints)
         assert any("读者证管理" in hint for hint in hints)
+        assert any("const records = [" in hint and "图书管理平台借阅流通管理" in hint for hint in hints)
 
     def test_records_retry_hints_include_records_array_negative_example(self):
         import workers.stages.build_support as build_support
@@ -2723,6 +3921,97 @@ export default function StatisticsPage() {
         assert any("background: '#f0fdf9'" in hint and "BarChartOutlined" in hint for hint in hints)
         assert any('"frontend/src/App.tsx"' in hint and "Routes, Route, Navigate, Link" in hint for hint in hints)
 
+    def test_app_retry_hints_include_navigate_link_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_core_validation_hints(
+            {"modules": [{"route": "/orders"}, {"route": "/exceptions"}]},
+            ["frontend/src/App.tsx"],
+        )
+
+        assert any("import React from 'react';" in hint for hint in hints)
+        assert any("import { Routes, Route, Navigate, Link } from 'react-router-dom';" in hint for hint in hints)
+        assert any("Navigate to=" in hint and "Link to=" in hint for hint in hints)
+
+    def test_settings_retry_hints_include_heavy_shell_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "settings",
+                        "route": "/settings",
+                        "title": "系统配置",
+                        "primary_action": "保存设置",
+                        "filter_placeholder": "搜索配置项 / 关键字",
+                        "table_headers": ["配置项", "当前值", "说明", "维护人"],
+                        "rows": [["CFG-101", "通知策略", "站内+邮件", "管理员"]],
+                        "page_variant": "records",
+                    }
+                ]
+            },
+            ["frontend/src/pages/SettingsPage.tsx"],
+        )
+
+        assert any("import { Input, Button, Tag, Space, Typography } from 'antd'" in hint for hint in hints)
+        assert any("SearchOutlined" in hint for hint in hints)
+        assert any("Title, Text" in hint and "Typography" in hint for hint in hints)
+        assert any("const thStyle: React.CSSProperties" in hint for hint in hints)
+        assert any("background: '#f0fdf9'" in hint and "#bbf7d0" in hint for hint in hints)
+
+    def test_monitor_retry_hints_include_heavy_shell_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "monitor",
+                        "route": "/monitor",
+                        "title": "冷链监控与预警",
+                        "primary_action": "新增预警规则",
+                        "filter_placeholder": "搜索预警编号 / 责任人 / 处理状态",
+                        "table_headers": ["预警编号", "预警主题", "处理状态", "责任人"],
+                        "rows": [["ALT-501", "口岸到港温区超阈值", "待处理", "赵宁"]],
+                        "page_variant": "records",
+                    }
+                ]
+            },
+            ["frontend/src/pages/MonitorPage.tsx"],
+        )
+
+        assert any("import { useState } from 'react'" in hint for hint in hints)
+        assert any("Card, Input, Button, Space, Tag, Table" in hint for hint in hints)
+        assert any("SearchOutlined" in hint and "PlusOutlined" in hint for hint in hints)
+        assert any("setSearchText" in hint for hint in hints)
+
+    def test_reports_retry_hints_include_green_shell_negative_example(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "reports",
+                        "route": "/reports",
+                        "title": "履约数据分析",
+                        "primary_action": "导出履约数据分析",
+                        "filter_placeholder": "搜索履约单号 / 责任人 / 当前阶段",
+                        "table_headers": ["分析编号", "分析主题", "统计维度"],
+                        "rows": [["AN-001", "履约波动分析", "时效"]],
+                        "page_variant": "reports",
+                    }
+                ]
+            },
+            ["frontend/src/pages/ReportsPage.tsx"],
+        )
+
+        assert any("pageStyle: React.CSSProperties" in hint for hint in hints)
+        assert any("headerStyle: React.CSSProperties" in hint for hint in hints)
+        assert any("borderBottom: '2px solid #16a34a'" in hint for hint in hints)
+        assert any("background: '#f0fdf9'" in hint for hint in hints)
+
     def test_statistics_retry_hints_include_exact_product_name_shell_negative_example(self):
         import workers.stages.build_support as build_support
 
@@ -2749,6 +4038,35 @@ export default function StatisticsPage() {
         assert any("const { productName } = APP_PROFILE;" in hint for hint in hints)
         assert any("maxWidth: 1200" in hint and "分析中心" in hint for hint in hints)
         assert any("数据分析与看板" in hint and "style={styles.container}" in hint for hint in hints)
+        assert any("export default function StatisticsPage()" in hint and "padding: '24px'" in hint for hint in hints)
+        assert any("const rows = [" in hint and "协同任务看板周报" in hint for hint in hints)
+
+    def test_statistics_retry_hints_include_studio_variant_structure(self):
+        import workers.stages.build_support as build_support
+
+        hints = build_support._build_module_validation_hints(
+            {
+                "modules": [
+                    {
+                        "key": "履约数据分析",
+                        "route": "/statistics",
+                        "title": "履约数据分析",
+                        "primary_action": "创建履约任务",
+                        "filter_placeholder": "搜索履约单号 / 责任人 / 当前阶段",
+                        "table_headers": ["履约单号", "任务主题", "责任人", "当前阶段", "结果摘要", "更新时间"],
+                        "rows": [
+                            ["FUL-501", "跨境冷链履约异常协同平台履约任务", "沈清和", "备货排程", "待仓配确认", "2026-05-02"]
+                        ],
+                        "page_variant": "studio",
+                    }
+                ]
+            },
+            ["frontend/src/pages/StatisticsPage.tsx"],
+        )
+
+        assert any("标题区 + 阶段摘要带 + 主结果表/列表" in hint for hint in hints)
+        assert any("page_variant=studio" in hint and "履约单号" in hint for hint in hints)
+        assert any("统计分析 / 分析中心 / 数据分析与看板" in hint for hint in hints)
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -3936,11 +5254,41 @@ def test_run_build_stage_writes_codegen_report_on_codegen_failure(tmp_path, monk
 
     result = asyncio.run(_run())
     assert result.success is False
+    build_report_path = tmp_path / "tasks" / task_id / "builds" / build_id / "manifests" / "app_codegen_report.json"
     report_path = tmp_path / "tasks" / task_id / "workspace" / "manifests" / "app_codegen_report.json"
+    assert build_report_path.exists()
     assert report_path.exists()
-    report = report_path.read_text(encoding="utf-8")
+    report = build_report_path.read_text(encoding="utf-8")
     assert "invalid_core_paths" in report
     assert "frontend/src/App.tsx" in report
+    assert report_path.read_text(encoding="utf-8") == report
+
+
+def test_load_manifest_prefers_build_scoped_manifest_and_falls_back(tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    task_id = str(uuid.uuid4())
+    build_id = str(uuid.uuid4())
+    monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+    workspace_manifest_dir = tmp_path / "tasks" / task_id / "workspace" / "manifests"
+    build_manifest_dir = tmp_path / "tasks" / task_id / "builds" / build_id / "manifests"
+    workspace_manifest_dir.mkdir(parents=True, exist_ok=True)
+    build_manifest_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_manifest_dir / "capture_manifest.json").write_text(
+        json.dumps({"scenarios": [{"route": "/latest-task"}]}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (build_manifest_dir / "capture_manifest.json").write_text(
+        json.dumps({"scenarios": [{"route": "/build-specific"}]}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    loaded = _load_manifest(task_id, "capture_manifest", build_id=build_id)
+    assert loaded == {"scenarios": [{"route": "/build-specific"}]}
+
+    fallback_loaded = _load_manifest(task_id, "capture_manifest", build_id=str(uuid.uuid4()))
+    assert fallback_loaded == {"scenarios": [{"route": "/latest-task"}]}
 
 
 def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
@@ -4022,6 +5370,20 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
     report, error = asyncio.run(_run())
     assert error is None
     assert report is not None
+    assert report["applied_required_file_count"] == 6
+    assert sorted(report["applied_paths"]) == [
+        "frontend/src/App.tsx",
+        "frontend/src/pages/Dashboard.tsx",
+        "frontend/src/pages/Login.tsx",
+        "frontend/src/services/api.ts",
+        "frontend/src/types/constants.ts",
+        "frontend/src/types/models.ts",
+    ]
+    assert report["cleaned_metadata_paths"] == []
+    assert report["apply_skipped_reason"] is None
+    assert (app_root / "frontend/src/App.tsx").exists()
+    assert (app_root / "frontend/src/pages/Login.tsx").exists()
+    assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
     phases = [event["phase"] for event in progress_events]
     assert "batch_started" in phases
     assert "attempt_started" in phases
@@ -4182,10 +5544,19 @@ def test_run_capture_stage_fails_when_essential_pages_are_missing(tmp_path, monk
     async def _fake_log_task_progress(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr("workers.stages.handlers._load_manifest", lambda _task_id, name: {"scenarios": []} if name == "capture_manifest" else {})
-    monkeypatch.setattr("workers.stages.handlers.reset_screenshots_dir", lambda _task_id: str(tmp_path / "screenshots"))
+    monkeypatch.setattr(
+        "workers.stages.handlers._load_manifest",
+        lambda _task_id, name, build_id=None: {"scenarios": []} if name == "capture_manifest" else {},
+    )
+    monkeypatch.setattr(
+        "workers.stages.handlers.reset_screenshots_dir",
+        lambda _task_id, build_id=None: str(tmp_path / "screenshots"),
+    )
     monkeypatch.setattr("workers.stages.handlers.workspace_path", lambda _task_id: str(tmp_path / "workspace"))
-    monkeypatch.setattr("workers.stages.handlers.artifacts_dir", lambda _task_id: str(tmp_path / "artifacts"))
+    monkeypatch.setattr(
+        "workers.stages.handlers.artifacts_dir",
+        lambda _task_id, build_id=None: str(tmp_path / "artifacts"),
+    )
     monkeypatch.setattr("workers.stages.handlers.execute_capture_flow", _fake_execute_capture_flow)
     monkeypatch.setattr("workers.stages.handlers._log_task_progress", _fake_log_task_progress)
 

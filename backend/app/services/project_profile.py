@@ -1205,13 +1205,13 @@ def _match_preset_module(preset_modules: list[dict], title: str, index: int) -> 
 
 
 def _module_route(title: str, index: int, fallback_route: str, page_routes: list[str]) -> str:
+    if len(page_routes) > index + 2 and page_routes[index + 2]:
+        return page_routes[index + 2]
     hinted_route = _module_route_hint(title)
     if hinted_route:
         return hinted_route
     if fallback_route:
         return fallback_route
-    if len(page_routes) > index + 2 and page_routes[index + 2]:
-        return page_routes[index + 2]
     return f"/{_slug_key(title)}"
 
 

@@ -14,9 +14,16 @@ from app.models.db import Artifact
 from app.services.document.application_form import ApplicationFormGenerator
 from app.services.document.codebook import SourceCodeBookGenerator
 from app.services.document.diagrams import generate_system_architecture_diagram
-from app.services.document.manual import SoftwareManualGenerator
+from app.services.document.manual_compose import (
+    build_variation_seed,
+    render_manual_markdown_to_docx,
+    validate_optional_manual_modules,
+    validate_required_manual_modules,
+)
 
 logger = logging.getLogger(__name__)
+
+_MANUAL_LLM_MAX_ATTEMPTS = 4
 
 
 def load_screenshots_meta(
@@ -63,49 +70,128 @@ async def generate_manual_delivery(
     merge_manual_llm_content: Callable[[dict, dict, list[dict]], dict],
     db_factory,
 ) -> tuple[str, str, int, str]:
-    manual_llm_used = "deepseek-v4-flash"
+    manual_llm_used = "deepseek-markdown"
+    export_dir = exports_dir_fn(task_id, build_id)
+    variation_seed = build_variation_seed(task_id, build_id, task.product_name, project_profile.get("design_seed", ""))
+    project_profile = dict(project_profile or {})
+    project_profile["variation_seed"] = variation_seed
+
+    arch_diagram_path = os.path.join(export_dir, "system_architecture.png")
+    diagram_spec: dict | None = None
     try:
         from app.services.llm import get_llm_client
 
         llm = get_llm_client()
-        manual_resp = await llm.generate_manual_content(
+        diagram_resp = await llm.generate_architecture_diagram_spec(
             product_name=task.product_name,
-            version=task.version,
             profile=project_profile,
-            prd_summary=prd_summary,
-            screenshots_meta=screenshots_meta,
+            task_id=task_id,
         )
-        if manual_resp.success and manual_resp.structured:
-            project_profile = merge_manual_llm_content(
-                project_profile,
-                manual_resp.structured,
-                screenshots_meta,
-            )
-        else:
-            manual_llm_used = "template_fallback"
+        if diagram_resp.success and isinstance(diagram_resp.structured, dict):
+            candidate = diagram_resp.structured.get("diagram_spec") or diagram_resp.structured
+            if isinstance(candidate, dict) and candidate.get("nodes"):
+                diagram_spec = candidate
+                manual_llm_used = "deepseek-markdown+diagram"
     except Exception:
-        manual_llm_used = "template_fallback"
+        logger.exception("Architecture diagram LLM spec generation failed for task %s", task_id)
 
-    generator = SoftwareManualGenerator(
-        product_name=task.product_name,
-        version=task.version,
-        profile=project_profile,
-    )
-    export_dir = exports_dir_fn(task_id, build_id)
-    arch_diagram_path = generate_system_architecture_diagram(
-        os.path.join(export_dir, "system_architecture.png"),
+    generate_system_architecture_diagram(
+        arch_diagram_path,
         task.product_name,
         profile=project_profile,
-    )
-    generator.generate_full(
-        prd_summary=prd_summary,
-        screenshots_meta=screenshots_meta,
-        modules=[module.get("title", "") for module in project_profile.get("modules", [])],
-        arch_diagram_path=arch_diagram_path,
+        diagram_spec=diagram_spec,
     )
 
+    manual_markdown = ""
+    selected_optional_modules: list[str] = []
+    last_missing_required: list[str] = []
+    last_missing_optional: list[str] = []
+
+    try:
+        from app.services.llm import get_llm_client
+
+        llm = get_llm_client()
+        for attempt in range(1, _MANUAL_LLM_MAX_ATTEMPTS + 1):
+            attempt_profile = {
+                **project_profile,
+                "variation_seed": build_variation_seed(variation_seed, str(attempt)),
+                "manual_retry_attempt": attempt - 1,
+            }
+            markdown_resp = await llm.generate_manual_markdown(
+                product_name=task.product_name,
+                version=task.version,
+                profile=attempt_profile,
+                prd_summary=prd_summary,
+                screenshots_meta=screenshots_meta,
+                task_id=task_id,
+            )
+            if not markdown_resp.success or not isinstance(markdown_resp.structured, dict):
+                logger.warning(
+                    "Manual markdown LLM attempt %s failed for task %s: %s",
+                    attempt,
+                    task_id,
+                    getattr(markdown_resp, "error", "unknown"),
+                )
+                continue
+
+            candidate_markdown = str(markdown_resp.structured.get("manual_markdown", "")).strip()
+            optional_modules = markdown_resp.structured.get("selected_optional_modules")
+            candidate_optional: list[str] = []
+            if isinstance(optional_modules, list):
+                candidate_optional = [str(item).strip() for item in optional_modules if str(item).strip()]
+
+            required_ok, missing_required = validate_required_manual_modules(candidate_markdown)
+            optional_ok = True
+            missing_optional: list[str] = []
+            if len(candidate_optional) >= 4:
+                optional_ok, missing_optional = validate_optional_manual_modules(
+                    candidate_markdown, candidate_optional
+                )
+
+            last_missing_required = missing_required
+            last_missing_optional = missing_optional
+
+            if candidate_markdown and required_ok and optional_ok:
+                manual_markdown = candidate_markdown
+                selected_optional_modules = candidate_optional
+                manual_llm_used = "deepseek-markdown" if attempt == 1 else f"deepseek-markdown-retry-{attempt}"
+                break
+
+            logger.warning(
+                "Manual markdown validation failed on attempt %s for task %s: missing_required=%s missing_optional=%s",
+                attempt,
+                task_id,
+                missing_required,
+                missing_optional,
+            )
+    except Exception:
+        logger.exception("Manual markdown LLM generation failed for task %s", task_id)
+
+    if manual_markdown and selected_optional_modules:
+        project_profile["selected_optional_modules"] = selected_optional_modules
+
+    if not manual_markdown:
+        detail_parts = []
+        if last_missing_required:
+            detail_parts.append("缺少必选章节: " + ", ".join(last_missing_required))
+        if last_missing_optional:
+            detail_parts.append("缺少选做章节: " + ", ".join(last_missing_optional))
+        detail = "；".join(detail_parts) if detail_parts else "LLM 未返回可通过校验的说明书 Markdown"
+        raise RuntimeError(
+            f"软件说明书生成失败（已重试 {_MANUAL_LLM_MAX_ATTEMPTS} 次，禁止回退固定模板）: {detail}"
+        )
+
+    doc = render_manual_markdown_to_docx(
+        markdown=manual_markdown,
+        product_name=task.product_name,
+        version=task.version,
+        screenshots_meta=screenshots_meta,
+        arch_diagram_path=arch_diagram_path,
+        variation_seed=variation_seed,
+    )
     output_path = os.path.join(export_dir, "software_manual.docx")
-    generator.save(output_path)
+    doc.save(output_path)
+
     await create_artifact(
         db_factory,
         task_id,

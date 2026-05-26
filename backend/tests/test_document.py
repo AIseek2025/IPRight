@@ -579,6 +579,28 @@ def test_task_profile_prefers_content_route_hints_over_old_preset_routes():
     assert route_by_title["播放数据统计"] == "/statistics"
 
 
+def test_task_profile_prefers_required_pages_over_title_route_hints():
+    profile = build_task_profile(
+        keyword="跨境冷链履约异常协同平台 V1.0",
+        product_name="跨境冷链履约异常协同平台 V1.0",
+        version="V1.0",
+        industry="冷链物流",
+        prd_summary={
+            "core_modules": ["温控数据看板", "统计与报告", "告警处理台", "系统设置"],
+            "required_pages": ["/login", "/dashboard", "/collaboration", "/reports", "/alerts", "/settings"],
+            "user_roles": ["管理员", "调度主管", "履约专员"],
+        },
+    )
+
+    route_by_title = {module["title"]: module["route"] for module in profile["modules"]}
+
+    assert route_by_title["温控数据看板"] == "/collaboration"
+    assert route_by_title["统计与报告"] == "/reports"
+    assert route_by_title["告警处理台"] == "/alerts"
+    assert route_by_title["系统设置"] == "/settings"
+    assert len({module["route"] for module in profile["modules"]}) == len(profile["modules"])
+
+
 def test_media_plan_seed_is_stable_for_same_product():
     first = build_plan_seed(keyword="短剧平台", product_name="短剧平台", industry="内容平台")
     second = build_plan_seed(keyword="短剧平台", product_name="短剧平台", industry="内容平台")
@@ -926,3 +948,129 @@ def test_codebook_skips_binary_files():
         gen.generate(code_index, tmpdir)
         joined = "\n".join(p.text for p in gen.doc.paragraphs)
         assert "[跳过二进制文件: IPRightCJK.ttf]" in joined
+
+
+def test_manual_markdown_validation_detects_missing_required_modules():
+    from app.services.document.manual_compose import validate_required_manual_modules
+
+    ok, missing = validate_required_manual_modules("## 引言\n内容")
+    assert not ok
+    assert "软件概述" in missing
+
+
+def test_manual_markdown_renderer_supports_screenshot_markers():
+    from app.services.document.manual_compose import render_manual_markdown_to_docx
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        image_path = os.path.join(tmpdir, "page.png")
+        Image.new("RGB", (20, 20), "white").save(image_path)
+        arch_path = os.path.join(tmpdir, "arch.png")
+        generate_system_architecture_diagram(arch_path, "测试平台")
+
+        markdown = "\n".join([
+            "# 测试平台",
+            "## 文档说明",
+            "说明正文。",
+            "## 引言",
+            "引言正文。",
+            "## 开发设计 / 系统设计",
+            "[[SCREENSHOT:ARCH]]",
+            "## 软件概述",
+            "概述正文。",
+            "## 开发运行环境 / 软件适配环境",
+            "环境正文。",
+            "## 功能结构说明",
+            "功能正文。",
+            "## 角色权限说明",
+            "角色正文。",
+            "## 业务流程说明",
+            "流程正文。",
+            "## 软件使用说明",
+            "### 登录页",
+            "[[SCREENSHOT:登录页]]",
+            "页面说明。",
+            "## 技术特点说明",
+            "技术正文。",
+        ])
+        doc = render_manual_markdown_to_docx(
+            markdown=markdown,
+            product_name="测试平台",
+            version="V1.0",
+            screenshots_meta=[{"page_title": "登录页", "caption": "图1 登录页", "image_path": image_path}],
+            arch_diagram_path=arch_path,
+        )
+        joined = "\n".join(p.text for p in doc.paragraphs)
+        assert "文档说明" in joined
+        assert "登录页" in joined
+        assert "图1 登录页" in joined
+
+
+def test_fallback_manual_markdown_varies_with_seed():
+    from app.services.document.manual_compose import build_fallback_manual_markdown
+
+    profile = build_task_profile(
+        keyword="物流调度管理后台",
+        product_name="物流调度管理后台",
+        version="V1.0",
+        industry="物流运输",
+    )
+    first = build_fallback_manual_markdown(
+        product_name="物流调度管理后台",
+        version="V1.0",
+        profile=profile,
+        prd_summary={},
+        screenshots_meta=[{"page_title": "登录页", "route": "/login"}],
+        variation_seed="aaaaaaaaaaaaaaaa",
+    )
+    second = build_fallback_manual_markdown(
+        product_name="物流调度管理后台",
+        version="V1.0",
+        profile=profile,
+        prd_summary={},
+        screenshots_meta=[{"page_title": "登录页", "route": "/login"}],
+        variation_seed="bbbbbbbbbbbbbbbb",
+    )
+    assert first != second
+
+
+def test_arrow_endpoints_land_on_box_edges_not_centers():
+    from app.services.document.diagrams import arrow_points_between_boxes
+
+    left = (100, 120, 360, 280)
+    right = (520, 120, 780, 280)
+    x1, y1, x2, y2 = arrow_points_between_boxes(left, right)
+    left_cx, left_cy = (left[0] + left[2]) // 2, (left[1] + left[3]) // 2
+    right_cx, right_cy = (right[0] + right[2]) // 2, (right[1] + right[3]) // 2
+    assert (x1, y1) != (left_cx, left_cy)
+    assert (x2, y2) != (right_cx, right_cy)
+
+    def _on_rect_edge(box, x, y):
+        x1b, y1b, x2b, y2b = box
+        on_vertical = x in (x1b, x2b) and y1b <= y <= y2b
+        on_horizontal = y in (y1b, y2b) and x1b <= x <= x2b
+        return on_vertical or on_horizontal
+
+    assert _on_rect_edge(left, x1, y1)
+    assert _on_rect_edge(right, x2, y2)
+
+
+def test_architecture_diagram_accepts_llm_spec():
+    from app.services.document.diagrams import generate_system_architecture_diagram
+
+    spec = {
+        "title": "测试平台系统架构图",
+        "caption": "图1：测试平台采用模块化协同架构。",
+        "nodes": [
+            {"title": "访问入口", "body": "登录与首页导航", "x": 8, "y": 18, "w": 26, "h": 16, "kind": "primary"},
+            {"title": "业务处理层", "body": "模块协同与状态流转", "x": 38, "y": 18, "w": 26, "h": 16, "kind": "secondary"},
+            {"title": "数据沉淀层", "body": "对象口径与结果留痕", "x": 68, "y": 18, "w": 26, "h": 16, "kind": "accent"},
+            {"title": "交付支撑层", "body": "截图与文档导出", "x": 24, "y": 52, "w": 52, "h": 18, "kind": "accent"},
+        ],
+        "arrows": [{"from_index": 0, "to_index": 1}, {"from_index": 1, "to_index": 2}, {"from_index": 2, "to_index": 3}],
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "arch.png")
+        generate_system_architecture_diagram(output_path, "测试平台", profile={}, diagram_spec=spec)
+        assert os.path.exists(output_path)
+        assert os.path.getsize(output_path) > 0

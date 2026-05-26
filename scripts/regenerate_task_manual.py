@@ -29,15 +29,15 @@ def regenerate_manual(task_id: str, build_id: str) -> None:
     output_path = os.path.join(export_dir, "software_manual.docx")
     arch_path = os.path.join(export_dir, "system_architecture.png")
 
-    project_profile = _load_manifest(task_id, "project_profile") or {}
+    project_profile = _load_manifest(task_id, "project_profile", build_id=build_id) or {}
     prd_summary = _load_prd_summary(task_id)
     product_name = project_profile.get("product_name") or project_profile.get("topic_label") or "IPRight"
     version = project_profile.get("version") or "V1.0"
     screenshots_meta = load_screenshots_meta(
         task_id,
-        artifacts_dir,
-        screenshots_dir,
-        lambda name: _load_manifest(task_id, name),
+        lambda current_task_id: artifacts_dir(current_task_id, build_id),
+        lambda current_task_id: screenshots_dir(current_task_id, build_id),
+        lambda name: _load_manifest(task_id, name, build_id=build_id),
     )
 
     print("font_path", _resolve_cjk_font_path())

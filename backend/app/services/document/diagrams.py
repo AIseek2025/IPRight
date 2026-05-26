@@ -301,11 +301,166 @@ def _build_diagram_spec(product_name: str, profile: dict | None = None) -> dict:
     }
 
 
-def generate_system_architecture_diagram(output_path: str, product_name: str, profile: dict | None = None) -> str:
+def _box_center(box: tuple[int, int, int, int]) -> tuple[float, float]:
+    x1, y1, x2, y2 = box
+    return (x1 + x2) / 2, (y1 + y2) / 2
+
+
+def _rect_border_point(
+    box: tuple[int, int, int, int],
+    target_x: float,
+    target_y: float,
+) -> tuple[int, int]:
+    """从矩形中心指向目标点时，返回射线与矩形边框的交点。"""
+    x1, y1, x2, y2 = box
+    cx, cy = _box_center(box)
+    dx = target_x - cx
+    dy = target_y - cy
+    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+        return int(cx), int(cy)
+
+    candidates: list[tuple[float, float, float]] = []
+    if abs(dx) > 1e-6:
+        for edge_x in (x1, x2):
+            t = (edge_x - cx) / dx
+            if t <= 0:
+                continue
+            py = cy + t * dy
+            if y1 - 0.5 <= py <= y2 + 0.5:
+                candidates.append((t, edge_x, py))
+    if abs(dy) > 1e-6:
+        for edge_y in (y1, y2):
+            t = (edge_y - cy) / dy
+            if t <= 0:
+                continue
+            px = cx + t * dx
+            if x1 - 0.5 <= px <= x2 + 0.5:
+                candidates.append((t, px, edge_y))
+    if not candidates:
+        return int(cx), int(cy)
+    _, px, py = min(candidates, key=lambda item: item[0])
+    return int(round(px)), int(round(py))
+
+
+def arrow_points_between_boxes(
+    start_box: tuple[int, int, int, int],
+    end_box: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    """计算两节点方框之间的连线端点：起点/终点均落在边框上，不穿过节点中心与文字区。"""
+    sx, sy = _box_center(start_box)
+    ex, ey = _box_center(end_box)
+    x1, y1 = _rect_border_point(start_box, ex, ey)
+    x2, y2 = _rect_border_point(end_box, sx, sy)
+    return x1, y1, x2, y2
+
+
+def _scale_box(node: dict, canvas_width: int = 1240, canvas_height: int = 820) -> tuple[int, int, int, int]:
+    x = max(0, min(canvas_width - 40, int(float(node.get("x", 0)) / 100 * canvas_width)))
+    y = max(70, min(canvas_height - 40, int(float(node.get("y", 0)) / 100 * canvas_height)))
+    w = max(120, int(float(node.get("w", 24)) / 100 * canvas_width))
+    h = max(80, int(float(node.get("h", 16)) / 100 * canvas_height))
+    x2 = min(canvas_width - 20, x + w)
+    y2 = min(canvas_height - 20, y + h)
+    return x, y, x2, y2
+
+
+def render_architecture_diagram_from_spec(output_path: str, product_name: str, spec: dict, profile: dict | None = None) -> str:
+    """根据 LLM 输出的 diagram spec 渲染架构图。"""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        raise RuntimeError("Pillow 未安装，无法生成系统架构图图片")
+
+    font_path = _resolve_cjk_font_path()
+    if not font_path:
+        raise RuntimeError("未找到可用的中文字体文件，无法生成系统架构图图片")
+
+    nodes = [node for node in (spec or {}).get("nodes", []) if isinstance(node, dict)]
+    if len(nodes) < 3:
+        raise ValueError("diagram spec 节点数量不足")
+
+    profile = profile or {}
+    palette = _diagram_palette(profile, product_name)
+    if isinstance(spec.get("palette"), dict):
+        for key, value in spec["palette"].items():
+            if isinstance(value, str):
+                palette[key] = _hex_to_rgb(value, palette.get(key, (34, 34, 34)))
+
+    img = Image.new("RGB", (1240, 820), "white")
+    draw = ImageDraw.Draw(img)
+    font_title = _load_cjk_font(28, font_path)
+    font_heading = _load_cjk_font(20, font_path)
+    font_body = _load_cjk_font(15, font_path)
+    font_small = _load_cjk_font(14, font_path)
+
+    draw.rectangle([0, 0, 1240, 70], fill=palette["header"])
+    title_text = str(spec.get("title") or f"{product_name}系统架构图").strip()
+    title_bbox = draw.textbbox((0, 0), title_text, font=font_title)
+    title_x = (1240 - (title_bbox[2] - title_bbox[0])) // 2
+    draw.text((title_x, 18), title_text, fill=palette["title_fg"], font=font_title)
+
+    fill_map = {
+        "primary": (palette["primary_fill"], palette["primary"], palette["primary"]),
+        "secondary": (palette["secondary_fill"], palette["secondary"], palette["secondary"]),
+        "accent": (palette["accent_fill"], palette["accent"], palette["accent"]),
+    }
+    scaled_boxes: list[tuple[int, int, int, int]] = []
+    for node in nodes[:8]:
+        box = _scale_box(node)
+        scaled_boxes.append(box)
+        kind = str(node.get("kind", "primary")).strip() or "primary"
+        fill, outline, title_color = fill_map.get(kind, fill_map["primary"])
+        _draw_box(
+            draw,
+            box,
+            title=str(node.get("title", "")).strip() or "模块节点",
+            body=str(node.get("body", "")).strip(),
+            fill=fill,
+            outline=outline,
+            title_color=title_color,
+            body_font=font_body,
+            heading_font=font_heading,
+            body_color=palette["text"],
+        )
+
+    for arrow in spec.get("arrows", []) or []:
+        if not isinstance(arrow, dict):
+            continue
+        from_idx = arrow.get("from_index", arrow.get("from"))
+        to_idx = arrow.get("to_index", arrow.get("to"))
+        try:
+            start = scaled_boxes[int(from_idx)]
+            end = scaled_boxes[int(to_idx)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        x1, y1, x2, y2 = arrow_points_between_boxes(start, end)
+        _draw_arrow(draw, x1, y1, x2, y2, color=palette["muted"])
+
+    caption = str(spec.get("caption") or f"图1：{product_name}系统架构图").strip()
+    draw.text((120, 768), caption, fill=palette["muted"], font=font_small)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    img.save(output_path, "PNG")
+    return output_path
+
+
+def generate_system_architecture_diagram(
+    output_path: str,
+    product_name: str,
+    profile: dict | None = None,
+    *,
+    diagram_spec: dict | None = None,
+) -> str:
     """
     Generate a system architecture diagram as a PNG image.
     Uses PIL/Pillow to draw boxes and arrows showing the system architecture.
     """
+    if diagram_spec:
+        try:
+            return render_architecture_diagram_from_spec(output_path, product_name, diagram_spec, profile=profile)
+        except Exception:
+            pass
+
     try:
         from PIL import Image, ImageDraw
     except ImportError:
@@ -354,7 +509,19 @@ def generate_system_architecture_diagram(output_path: str, product_name: str, pr
             body_color=black,
         )
 
-    for x1, y1, x2, y2 in spec["arrows"]:
+    for arrow_coords in spec["arrows"]:
+        x1, y1, x2, y2 = arrow_coords
+        from_box = None
+        to_box = None
+        for item in spec["boxes"]:
+            bx1, by1, bx2, by2 = item["box"]
+            bcx, bcy = (bx1 + bx2) / 2, (by1 + by2) / 2
+            if abs(bcx - x1) < 60 and abs(bcy - y1) < 60:
+                from_box = item["box"]
+            if abs(bcx - x2) < 60 and abs(bcy - y2) < 60:
+                to_box = item["box"]
+        if from_box and to_box:
+            x1, y1, x2, y2 = arrow_points_between_boxes(from_box, to_box)
         _draw_arrow(draw, x1, y1, x2, y2, color=gray)
 
     draw.text((120, 768), spec["caption"], fill=gray, font=font_small)

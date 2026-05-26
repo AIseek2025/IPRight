@@ -195,8 +195,10 @@ class TestLLMClient:
         assert "不要导入或使用 `Layout`、`Sider`、`Menu`、`Dropdown`" in captured["messages"][0]["content"]
         assert "不要都收敛成“纯色顶栏 + 一行文字导航 + 下方单一内容画布”" in captured["messages"][0]["content"]
         assert "`useMemo`、`useLocation`、`useNavigate`、`NavLink`" in captured["messages"][0]["content"]
+        assert "`import { Routes, Route, Navigate, Link } from 'react-router-dom'`" in captured["messages"][0]["content"]
         assert "`Row, Col, Card, Button, Space`" in captured["messages"][0]["content"]
         assert "这次只修复 App.tsx" in captured["messages"][1]["content"]
+        assert "`import { Routes, Route, Navigate, Link } from 'react-router-dom'`" in captured["messages"][1]["content"]
 
     def test_generate_app_code_uses_compact_mode_for_initial_single_app_batch(self, monkeypatch):
         captured = {}
@@ -242,6 +244,7 @@ class TestLLMClient:
         assert "即便这是首轮 `App.tsx` 生成" in captured["messages"][0]["content"]
         assert "禁止把所有项目固定成同一种壳层" in captured["messages"][0]["content"]
         assert "`useMemo`、`useLocation`、`useNavigate`、`NavLink`" in captured["messages"][0]["content"]
+        assert "`import { Routes, Route, Navigate, Link } from 'react-router-dom'`" in captured["messages"][0]["content"]
         assert "当前只允许输出 App.tsx" in captured["messages"][1]["content"]
 
     def test_generate_app_code_uses_dashboard_icon_guard_for_invalid_retry(self, monkeypatch):
@@ -304,6 +307,7 @@ class TestLLMClient:
         assert "`const metrics = APP_PROFILE.dashboard_metrics || []`" in captured["messages"][0]["content"]
         assert "`const metrics = (APP_PROFILE as any).dashboard_metrics`" in captured["messages"][0]["content"]
         assert "`metrics.map((item) =>`" in captured["messages"][0]["content"]
+        assert "`APP_PROFILE.dashboard_metrics.slice(0, 4).map(...)`" in captured["messages"][0]["content"]
         assert "`import { CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined, TeamOutlined } from '@ant-design/icons'`" in captured["messages"][0]["content"]
         assert "`import { TeamOutlined, CalendarOutlined, FileTextOutlined, UserOutlined } from '@ant-design/icons'`" in captured["messages"][0]["content"]
         assert "`import { FileTextOutlined, UserOutlined, CalendarOutlined, CheckCircleOutlined } from '@ant-design/icons'`" in captured["messages"][0]["content"]
@@ -326,6 +330,12 @@ class TestLLMClient:
         assert "`<div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>`" in captured["messages"][0]["content"]
         assert "`<div style={{ padding: '24px 32px', background: '#f0fdf9' }}>`" in captured["messages"][0]["content"]
         assert "`BarChartOutlined + ExclamationCircleOutlined + ClockCircleOutlined + FileTextOutlined`" in captured["messages"][0]["content"]
+        assert "`const recentBorrows = [`" in captured["messages"][0]["content"]
+        assert "`最近借阅记录`" in captured["messages"][0]["content"]
+        assert "`《计算机程序设计艺术》`" in captured["messages"][0]["content"]
+        assert "`const recentExceptions = [`" in captured["messages"][0]["content"]
+        assert "`EXC-101 / EXC-102 / ORD-3201 / ORD-3202`" in captured["messages"][0]["content"]
+        assert "`温度超标 / 运输延迟 / 处理中 / 已恢复`" in captured["messages"][0]["content"]
         assert '"frontend/src/App.tsx"' in captured["messages"][0]["content"]
         assert "`import { Routes, Route, Navigate, Link`" in captured["messages"][0]["content"]
         assert "当前只允许输出 Dashboard.tsx" in captured["messages"][1]["content"]
@@ -341,6 +351,7 @@ class TestLLMClient:
         assert "`const metrics = APP_PROFILE.dashboard_metrics || []`" in captured["messages"][1]["content"]
         assert "`const metrics = (APP_PROFILE as any).dashboard_metrics`" in captured["messages"][1]["content"]
         assert "`metrics.map((item) =>`" in captured["messages"][1]["content"]
+        assert "`APP_PROFILE.dashboard_metrics.slice(0, 4).map(...)`" in captured["messages"][1]["content"]
         assert "`import { CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined, TeamOutlined } from '@ant-design/icons'`" in captured["messages"][1]["content"]
         assert "`import { TeamOutlined, CalendarOutlined, FileTextOutlined, UserOutlined } from '@ant-design/icons'`" in captured["messages"][1]["content"]
         assert "`import { FileTextOutlined, UserOutlined, CalendarOutlined, CheckCircleOutlined } from '@ant-design/icons'`" in captured["messages"][1]["content"]
@@ -358,6 +369,12 @@ class TestLLMClient:
         assert "`{ code: 'E-002', type: '运输延迟', status: '待处理', time: '2025-06-01 09:15' }`" in captured["messages"][1]["content"]
         assert "`<div style={{ padding: '32px 40px', maxWidth: 1200, margin: '0 auto' }}>`" in captured["messages"][1]["content"]
         assert "`<div style={{ padding: '24px 32px', background: '#f0fdf9' }}>`" in captured["messages"][1]["content"]
+        assert "`const recentBorrows = [`" in captured["messages"][1]["content"]
+        assert "`最近借阅记录`" in captured["messages"][1]["content"]
+        assert "`《计算机程序设计艺术》 / 《数据结构》 / 《算法导论》`" in captured["messages"][1]["content"]
+        assert "`const recentExceptions = [`" in captured["messages"][1]["content"]
+        assert "`EXC-101 / EXC-102 / ORD-3201 / ORD-3202`" in captured["messages"][1]["content"]
+        assert "`温度超标 / 运输延迟 / 处理中 / 已恢复`" in captured["messages"][1]["content"]
         assert '"frontend/src/App.tsx"' in captured["messages"][1]["content"]
         assert "`import { Routes, Route, Navigate, Link`" in captured["messages"][1]["content"]
         assert "原生 `<table>`" in captured["messages"][1]["content"]
@@ -495,6 +512,8 @@ class TestLLMClient:
         assert "background: '#f3f6fb'" in captured["messages"][0]["content"]
         assert "面试流程管理" in captured["messages"][0]["content"]
         assert "APP_PROFILE.productName" in captured["messages"][0]["content"]
+        assert "const records = [" in captured["messages"][0]["content"]
+        assert "图书管理平台借阅流通管理" in captured["messages"][0]["content"]
         assert "必须使用命名导入 `import { APP_PROFILE } from '../generated/appProfile';`" in captured["messages"][1]["content"]
         assert "不要写资产台账、资产名称、资产类别" in captured["messages"][1]["content"]
         assert "const AssetsPage: React.FC = ..." in captured["messages"][1]["content"]
@@ -585,6 +604,8 @@ class TestLLMClient:
         assert "function WorkflowPage() { return ( <div style={{ padding: 24 }}> ... ) }" in captured["messages"][0]["content"]
         assert "灰色小字显示 `APP_PROFILE.product_name`" in captured["messages"][0]["content"]
         assert "候选人管理" in captured["messages"][0]["content"]
+        assert "const thStyle = ..." in captured["messages"][0]["content"]
+        assert "const records = [" in captured["messages"][0]["content"]
         assert "当前模块的真实业务要素是" in captured["messages"][1]["content"]
         assert "必须使用命名导入 `import { APP_PROFILE } from '../generated/appProfile';`" in captured["messages"][1]["content"]
         assert "不要默认写成流程跟进、步骤条、时间轴或阶段推进页面" in captured["messages"][1]["content"]
@@ -600,6 +621,147 @@ class TestLLMClient:
         assert "{APP_PROFILE.product_name} / 候选人管理" in captured["messages"][1]["content"]
         assert "候选人管理" in captured["messages"][1]["content"]
         assert "不能把 APP_PROFILE.product_name 当成页面标题" in captured["messages"][1]["content"]
+
+    def test_generate_app_code_uses_module_payload_for_workspace_retry(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            captured["parse_json_response"] = parse_json_response
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/OrdersPage.tsx":"ok"}}',
+                structured={"files": {"frontend/src/pages/OrdersPage.tsx": "ok"}},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/OrdersPage.tsx"],
+                    "module_pages": [
+                        {
+                            "file_path": "frontend/src/pages/OrdersPage.tsx",
+                            "title": "订单协同管理",
+                            "route": "/orders",
+                            "primary_action": "新建协同订单",
+                            "filter_placeholder": "搜索订单号 / 客户 / 处理状态",
+                            "table_headers": ["订单号", "客户名称", "履约节点", "处理状态"],
+                            "rows": [
+                                ["ORD-202605-01", "华东医药", "运输中", "处理中"],
+                                ["ORD-202605-02", "嘉兴生物", "待提货", "待确认"],
+                            ],
+                            "page_variant": "workspace",
+                        }
+                    ],
+                    "invalid_module_previews": {
+                        "frontend/src/pages/OrdersPage.tsx": "const records = [{ no: 'SUP-401', name: '华辰材料' }];",
+                    },
+                },
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["parse_json_response"] is False
+        assert captured["max_tokens_override"] == 3200
+        assert captured["temperature_override"] == 0.1
+        assert "page_variant=workspace" in captured["messages"][0]["content"]
+        assert "标题 `订单协同管理`" in captured["messages"][0]["content"]
+        assert "import { Card, Row, Col, Statistic, Input, Button, Space, Tag, Table } from 'antd'" in captured["messages"][0]["content"]
+        assert "const [searchText, setSearchText] = useState('')" in captured["messages"][0]["content"]
+        assert "const { Title, Text } = Typography" in captured["messages"][0]["content"]
+        assert "SUP-401 / SUP-402 / 华辰材料 / 嘉远供应" in captured["messages"][0]["content"]
+        assert "页面正文至少逐字出现这些锚点中的两个以上" in captured["messages"][1]["content"]
+
+    def test_generate_app_code_uses_module_payload_for_studio_retry(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            captured["parse_json_response"] = parse_json_response
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/StatisticsPage.tsx":"ok"}}',
+                structured={"files": {"frontend/src/pages/StatisticsPage.tsx": "ok"}},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/StatisticsPage.tsx"],
+                    "module_pages": [
+                        {
+                            "file_path": "frontend/src/pages/StatisticsPage.tsx",
+                            "title": "履约数据分析",
+                            "route": "/statistics",
+                            "primary_action": "创建履约任务",
+                            "filter_placeholder": "搜索履约单号 / 责任人 / 当前阶段",
+                            "table_headers": ["履约单号", "任务主题", "责任人", "当前阶段", "结果摘要", "更新时间"],
+                            "rows": [
+                                ["FUL-501", "跨境冷链履约异常协同平台履约任务", "沈清和", "备货排程", "待仓配确认", "2026-05-02"],
+                                ["FUL-502", "V1.0交付任务", "周铭", "发运执行", "运输节点同步中", "2026-05-01"],
+                            ],
+                            "page_variant": "studio",
+                        }
+                    ],
+                    "invalid_module_previews": {
+                        "frontend/src/pages/StatisticsPage.tsx": "文件内容...",
+                    },
+                },
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["parse_json_response"] is False
+        assert captured["max_tokens_override"] == 2600
+        assert captured["temperature_override"] == 0.05
+        assert "page_variant=studio" in captured["messages"][0]["content"]
+        assert "运营驾驶舱/执行中台页特征" in captured["messages"][0]["content"]
+        assert "阶段摘要带 + 主结果表" in captured["messages"][0]["content"]
+        assert "统计分析/分析中心" in captured["messages"][0]["content"]
+        assert "履约单号 / 责任人 / 当前阶段" in captured["messages"][0]["content"]
+        assert "FUL-501" in captured["messages"][0]["content"]
+        assert "备货排程" in captured["messages"][0]["content"]
+        assert "结果摘要中的多个真实锚点" in captured["messages"][0]["content"]
 
     def test_generate_app_code_locks_exact_title_and_anchor_tokens_for_records_retry(self, monkeypatch):
         captured = {}
@@ -665,6 +827,15 @@ class TestLLMClient:
         assert "当前模块正文至少逐字保留这些业务锚点中的 2 个以上" in captured["messages"][0]["content"]
         assert "当前模块 page_variant=workspace" in captured["messages"][0]["content"]
         assert "不要所有任务都收敛成同一套“检索输入 + 主按钮 + 单表格”骨架" in captured["messages"][0]["content"]
+        assert "Input, Button, Card, Tag, Statistic" in captured["messages"][0]["content"]
+        assert "SearchOutlined, PlusOutlined" in captured["messages"][0]["content"]
+        assert "const [search, setSearch] = useState('')" in captured["messages"][0]["content"]
+        assert "background: '#f4f6fb'" in captured["messages"][0]["content"]
+        assert "borderRadius: 8" in captured["messages"][0]["content"]
+        assert "Input, Button, Tag" in captured["messages"][0]["content"]
+        assert "background: '#f0fdf9'" in captured["messages"][0]["content"]
+        assert "import { useState } from 'react'" in captured["messages"][0]["content"]
+        assert "Card, Input, Button, Tag" in captured["messages"][0]["content"]
         assert "const RecordsPage: React.FC = ..." in captured["messages"][0]["content"]
         assert "import APP_PROFILE from '../generated/appProfile'" in captured["messages"][0]["content"]
         assert "招聘需求管理" in captured["messages"][0]["content"]
@@ -746,6 +917,80 @@ class TestLLMClient:
         assert "通用重型分析页模板" in captured["messages"][1]["content"]
         assert "使用原生 input + 少量摘要块 + 原生 table" in captured["messages"][1]["content"]
 
+    def test_generate_app_code_uses_compact_mode_for_settings_retry(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            captured["parse_json_response"] = parse_json_response
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/SettingsPage.tsx":"ok"}}',
+                structured={"files": {"frontend/src/pages/SettingsPage.tsx": "ok"}},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/SettingsPage.tsx"],
+                    "module_pages": [
+                        {
+                            "file_path": "frontend/src/pages/SettingsPage.tsx",
+                            "title": "系统配置",
+                            "route": "/settings",
+                            "primary_action": "保存设置",
+                            "filter_placeholder": "搜索配置项 / 关键字",
+                            "table_headers": ["配置项", "当前值", "说明", "维护人"],
+                            "rows": [
+                                ["CFG-101", "通知策略", "站内+邮件", "管理员"],
+                                ["CFG-102", "归档周期", "30天", "管理员"],
+                            ],
+                            "page_variant": "records",
+                        }
+                    ],
+                    "invalid_module_previews": {
+                        "frontend/src/pages/SettingsPage.tsx": "import { Input, Button, Tag, Space, Typography } from 'antd';",
+                    },
+                },
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["parse_json_response"] is False
+        assert captured["max_tokens_override"] == 2600
+        assert captured["temperature_override"] == 0.05
+        assert "当前回补页面是 `SettingsPage.tsx`" in captured["messages"][0]["content"]
+        assert "通用“系统设置中心”“平台参数配置台”" in captured["messages"][0]["content"]
+        assert "import { Input, Button, Tag, Space, Typography } from 'antd'" in captured["messages"][0]["content"]
+        assert "SearchOutlined" in captured["messages"][0]["content"]
+        assert "const thStyle: React.CSSProperties = ..." in captured["messages"][0]["content"]
+        assert "<div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh' }}>" in captured["messages"][0]["content"]
+        assert "const cellStyle = { border: '1px solid #bbf7d0', ... }" in captured["messages"][0]["content"]
+        assert "当前是 SettingsPage.tsx 回补" in captured["messages"][1]["content"]
+        assert "通用重型设置页模板" in captured["messages"][1]["content"]
+        assert "浅绿色通用设置轻壳" in captured["messages"][1]["content"]
+        assert "原生 input + 保存按钮 + 原生 table" in captured["messages"][1]["content"]
+
     def test_generate_app_code_uses_compact_mode_for_reports_retry(self, monkeypatch):
         captured = {}
 
@@ -814,11 +1059,85 @@ class TestLLMClient:
         assert "SearchOutlined, FileTextOutlined" in captured["messages"][0]["content"]
         assert "录用与Offer管理" in captured["messages"][0]["content"]
         assert "<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>" in captured["messages"][0]["content"]
+        assert "const pageStyle: React.CSSProperties = ..." in captured["messages"][0]["content"]
+        assert "borderBottom: '2px solid #16a34a'" in captured["messages"][0]["content"]
         assert "当前是 ReportsPage.tsx 回补" in captured["messages"][1]["content"]
         assert "通用重型报表页模板" in captured["messages"][1]["content"]
         assert "使用原生 input + 少量摘要块 + 原生 table" in captured["messages"][1]["content"]
         assert "录用与Offer管理" in captured["messages"][1]["content"]
         assert "<div style={{ padding: 24, background: '#f3f6fb', minHeight: '100vh' }}>" in captured["messages"][1]["content"]
+        assert "浅绿色报表轻壳页" in captured["messages"][1]["content"]
+
+    def test_generate_app_code_uses_compact_mode_for_monitor_retry(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            captured["parse_json_response"] = parse_json_response
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/pages/MonitorPage.tsx":"ok"}}',
+                structured={"files": {"frontend/src/pages/MonitorPage.tsx": "ok"}},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {
+                    "required_files": ["frontend/src/pages/MonitorPage.tsx"],
+                    "module_pages": [
+                        {
+                            "file_path": "frontend/src/pages/MonitorPage.tsx",
+                            "title": "冷链监控与预警",
+                            "route": "/monitor",
+                            "primary_action": "新增预警规则",
+                            "filter_placeholder": "搜索预警编号 / 责任人 / 处理状态",
+                            "table_headers": ["预警编号", "预警主题", "处理状态", "责任人"],
+                            "rows": [
+                                ["ALT-501", "口岸到港温区超阈值", "待处理", "赵宁"],
+                                ["ALT-502", "在途箱温异常波动", "处理中", "周凯"],
+                            ],
+                            "page_variant": "records",
+                        }
+                    ],
+                    "invalid_module_previews": {
+                        "frontend/src/pages/MonitorPage.tsx": "import { useState } from 'react'; import { Card, Input, Button, Space, Tag, Table } from 'antd';",
+                    },
+                },
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["parse_json_response"] is False
+        assert captured["max_tokens_override"] == 2600
+        assert captured["temperature_override"] == 0.05
+        assert "当前回补页面是 `MonitorPage.tsx`" in captured["messages"][0]["content"]
+        assert "通用“监控中心”“预警工作台”" in captured["messages"][0]["content"]
+        assert "import { useState } from 'react'" in captured["messages"][0]["content"]
+        assert "import { Card, Input, Button, Space, Tag, Table } from 'antd'" in captured["messages"][0]["content"]
+        assert "SearchOutlined, PlusOutlined" in captured["messages"][0]["content"]
+        assert "当前是 MonitorPage.tsx 回补" in captured["messages"][1]["content"]
+        assert "通用重型监控页模板" in captured["messages"][1]["content"]
+        assert "使用原生 input + 主操作 + 原生 table" in captured["messages"][1]["content"]
 
     def test_generate_app_code_uses_compact_mode_for_statistics_retry(self, monkeypatch):
         captured = {}
@@ -892,8 +1211,14 @@ class TestLLMClient:
         assert "fontWeight: 600" in captured["messages"][0]["content"]
         assert "const { productName } = APP_PROFILE;" in captured["messages"][0]["content"]
         assert "{productName} - 分析中心" in captured["messages"][0]["content"]
+        assert "<div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh' }}>" in captured["messages"][0]["content"]
+        assert "APP_PROFILE.product_name" in captured["messages"][0]["content"]
         assert "数据分析与看板" in captured["messages"][0]["content"]
         assert "style={styles.container}" in captured["messages"][0]["content"]
+        assert "export default function StatisticsPage()" in captured["messages"][0]["content"]
+        assert "<div style={{ padding: '24px' }}>" in captured["messages"][0]["content"]
+        assert "const rows = [" in captured["messages"][0]["content"]
+        assert "协同任务看板周报" in captured["messages"][0]["content"]
         assert "当前是 StatisticsPage.tsx 回补" in captured["messages"][1]["content"]
         assert "通用重型统计页模板" in captured["messages"][1]["content"]
         assert "使用原生 input + 少量摘要块 + 原生 table" in captured["messages"][1]["content"]
@@ -903,6 +1228,8 @@ class TestLLMClient:
         assert "fontWeight: 600" in captured["messages"][1]["content"]
         assert "const { productName } = APP_PROFILE;" in captured["messages"][1]["content"]
         assert "{productName} - 分析中心" in captured["messages"][1]["content"]
+        assert "<div style={{ padding: 24, background: '#f0fdf9', minHeight: '100vh' }}>" in captured["messages"][1]["content"]
+        assert "APP_PROFILE.product_name" in captured["messages"][1]["content"]
         assert "数据分析与看板" in captured["messages"][1]["content"]
         assert "style={styles.container}" in captured["messages"][1]["content"]
 
@@ -1451,3 +1778,91 @@ class TestLLMClient:
         assert "提交给版权局的软件著作权申请材料" in captured["messages"][0]["content"]
         assert "不要再使用“该截图展示了”" in captured["messages"][0]["content"]
         assert "以企业申报软件著作权的正式口吻撰写" in captured["messages"][0]["content"]
+
+    def test_generate_manual_markdown_requests_free_layout_markdown(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                structured={
+                    "manual_markdown": "# 电力调度平台\n## 文档说明\n正文",
+                    "selected_optional_modules": ["data_and_output", "security_and_maintenance", "appendix", "development_details"],
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_manual_markdown(
+                product_name="电力调度平台",
+                version="V1.0",
+                profile={"keyword": "电力调度平台", "modules": [], "design_seed": "seed-a"},
+                prd_summary={"required_pages": ["/login"]},
+                screenshots_meta=[{"page_title": "登录页", "route": "/login", "elements": []}],
+                task_id="task-001",
+            )
+            assert resp.success
+            assert "manual_markdown" in resp.structured
+
+        asyncio.run(_run())
+        assert captured["max_tokens_override"] == 9000
+        assert captured["temperature_override"] == 0.65
+        assert "manual_markdown" in captured["messages"][0]["content"]
+        assert "variation_seed" in captured["messages"][1]["content"]
+        assert "禁止套用固定后台说明书骨架" in captured["messages"][0]["content"]
+
+    def test_generate_architecture_diagram_spec_requests_unique_topology(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            return LLMResponse(
+                success=True,
+                structured={
+                    "title": "电力调度平台系统架构图",
+                    "nodes": [{"title": "调度入口", "body": "说明", "x": 5, "y": 10, "w": 20, "h": 15, "kind": "primary"}],
+                    "arrows": [],
+                },
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_architecture_diagram_spec(
+                product_name="电力调度平台",
+                profile={"project_dna": {"architecture_style": "dispatch_flow"}, "modules": []},
+                task_id="task-002",
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert "禁止复用固定五层盒子模板" in captured["messages"][0]["content"]
+        assert "variation_seed" in captured["messages"][1]["content"]
