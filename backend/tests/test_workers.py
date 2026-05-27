@@ -29,6 +29,7 @@ from workers.stages.build_support import (
     normalize_prd_summary_with_plan_seed,
     prepare_seed_application,
     repair_invalid_core_files,
+    repair_invalid_support_files,
     repair_invalid_module_pages,
 )
 from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
@@ -2254,6 +2255,93 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/App.tsx" in invalid_paths
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_requires_typed_login_handler(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+export default function App() { return <div>{APP_PROFILE.product_name}</div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Login.tsx" in invalid_paths
+
+    def test_repair_invalid_support_files_falls_back_from_import_meta_env(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+const baseUrl = import.meta.env.VITE_API_URL;
+export const api = { login: async () => ({ token: 'x' }) };
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface DemoUser { name: string; role: string; }",
+        }
+
+        _, invalid_paths = repair_invalid_support_files(
+            generated_files,
+            profile,
+            [
+                "frontend/src/services/api.ts",
+                "frontend/src/types/constants.ts",
+                "frontend/src/types/models.ts",
+            ],
+        )
+
+        assert "frontend/src/services/api.ts" in invalid_paths
+        assert "frontend/src/types/constants.ts" in invalid_paths
+        assert "frontend/src/types/models.ts" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "records",
+                    "title": "档案管理",
+                    "route": "/records",
+                    "table_headers": ["编号", "名称", "状态"],
+                    "rows": [["REC-1", "北辰项目", "处理中"]],
+                    "highlights": ["支持统一建档"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/RecordsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function RecordsPage() {
+  return (
+    <div style={{ color: APP_PROFILE.visual_profile.panel_background }}>
+      {APP_PROFILE.productName}
+      {APP_PROFILE.visualConfig?.accent}
+      <Statistic title="数量" value={1} />
+      档案管理 编号 北辰项目
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/RecordsPage.tsx" in invalid_paths
 
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source

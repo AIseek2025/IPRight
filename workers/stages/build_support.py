@@ -438,6 +438,48 @@ export interface ApiResult<T = unknown> {
     return synthesized, repaired_paths
 
 
+def repair_invalid_support_files(
+    generated_files: dict[str, str],
+    profile: dict,
+    required_files: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    repaired = dict(generated_files)
+    invalid_paths: list[str] = []
+
+    validators = {
+        "frontend/src/services/api.ts": lambda content: (
+            bool(content)
+            and "import.meta.env" not in content
+            and "ApiResult" in content
+            and "request<" in content
+            and "login:" in content
+        ),
+        "frontend/src/types/constants.ts": lambda content: (
+            bool(content)
+            and "APP_NAME" in content
+            and "APP_VERSION" in content
+            and "DEMO_USERNAME" in content
+            and "DEMO_PASSWORD" in content
+        ),
+        "frontend/src/types/models.ts": lambda content: (
+            bool(content)
+            and "export interface DemoUser" in content
+            and "export interface LoginResponse" in content
+            and "export interface ApiResult" in content
+        ),
+    }
+
+    for relative_path, validator in validators.items():
+        if relative_path not in required_files:
+            continue
+        content = str(repaired.get(relative_path, "") or "")
+        if validator(content):
+            continue
+        invalid_paths.append(relative_path)
+
+    return repaired, invalid_paths
+
+
 def _build_module_route_specs(profile: dict, generated_files: dict[str, str]) -> list[dict[str, str | bool]]:
     route_specs: list[dict[str, str | bool]] = []
     seen_routes: set[str] = set()
@@ -617,6 +659,7 @@ def repair_invalid_core_files(
             "模块开发中" not in content
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
             and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
+            and _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"])
             and _contains_any(content, ["登录", "密码", "用户名"])
         ),
     }
@@ -654,6 +697,9 @@ def repair_invalid_module_pages(
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
         has_valid_profile_import = "../generated/appProfile" in content and "../../generated/appProfile" not in content
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
+        uses_invalid_profile_alias = any(token in content for token in ["productName", "visualConfig"])
+        uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
+        references_statistic_without_import = "Statistic" in content and "import { Statistic" not in content and "Statistic } from 'antd'" not in content and "Statistic," not in content
         is_valid = (
             bool(content)
             and has_valid_profile_import
@@ -663,6 +709,9 @@ def repair_invalid_module_pages(
             and "const mockData" not in content
             and "mockData:" not in content
             and must_have_task_data
+            and not uses_invalid_profile_alias
+            and not uses_unsafe_visual_profile
+            and not references_statistic_without_import
         )
         if is_valid:
             continue
@@ -976,6 +1025,52 @@ async def generate_task_app_code(
         profile,
         codegen_requirements["required_files"],
     )
+    generated_files, invalid_support_paths = repair_invalid_support_files(
+        generated_files,
+        profile,
+        codegen_requirements["required_files"],
+    )
+    if invalid_support_paths:
+        generated_files, repaired_invalid_support_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            invalid_support_paths,
+        )
+        if repaired_invalid_support_paths:
+            repaired_support_paths = sorted(set([*repaired_support_paths, *repaired_invalid_support_paths]))
+            generated_files, invalid_support_paths = repair_invalid_support_files(
+                generated_files,
+                profile,
+                codegen_requirements["required_files"],
+            )
+            batch_reports.append(
+                {
+                    "batch": "support_structural_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_invalid_support_paths),
+                    "generated_paths": sorted(repaired_invalid_support_paths),
+                    "fallback_to_template": bool(invalid_support_paths),
+                    "error": (
+                        "still invalid after structural fallback: " + ", ".join(invalid_support_paths)
+                        if invalid_support_paths
+                        else None
+                    ),
+                }
+            )
+    if invalid_support_paths:
+        invalid_support_previews = {
+            relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
+            for relative_path in invalid_support_paths
+        }
+        return _build_codegen_report(
+            repaired_support_paths=sorted(repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_support_paths),
+            invalid_support_paths=invalid_support_paths,
+            invalid_support_previews=invalid_support_previews,
+        ), (
+            "App code generation failed: missing or invalid LLM-generated support frontend files: "
+            + ", ".join(invalid_support_paths)
+        )
     generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
     if invalid_core_paths and batches:
         llm = get_llm_client()

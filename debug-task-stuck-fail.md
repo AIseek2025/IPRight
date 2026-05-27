@@ -59,3 +59,5 @@
 11. 本地已验证 `examples/demo_app/frontend` 可通过 `node node_modules/typescript/bin/tsc -b` 与 `node node_modules/vite/bin/vite.js build`，说明 seed 模板已满足当前 `verify_run` 构建链要求。
 12. 两条任务在新版本上重试后已越过 seed 模板错误，新的 `verify_run` 失败点转移到任务生成代码本身：核心壳层页引用了 `APP_PROFILE.navigation / name / appName` 等不存在字段，部分模块页 fallback 模板也存在 `style={{panelStyle}}` 和字面量 `pageVariant` 比较导致的 TypeScript 报错。
 13. 已修复 `build_frontend_profile_source()` 的前端类型面，补充 `ModuleProfile.steps / business_value / page_variant`；同时修复模块页 fallback 模板的 `pageVariant` 类型与 `panelStyle` 写法，并在 core 校验器中拦截错误的 `APP_PROFILE` 字段引用，强制回退到模板壳层页。
+14. `3e7...` 在新版本 `build 5` 上已越过上一轮固定卡点，但仍在 `verify_run` 的 `tsc -b` 暴露出新的生成代码问题：`Login` 缺少 `onLogin` 类型签名、模块页混用 `productName / visualConfig`、直接访问可选 `APP_PROFILE.visual_profile`、以及 support 文件可能写出 `import.meta.env`。
+15. 已新增 support 文件校验与模板回退逻辑，并收紧模块页校验规则：一旦检测到 `productName / visualConfig / APP_PROFILE.visual_profile.` 或未导入的 `Statistic`，就改走结构化 fallback，而不是把问题拖到运行验证阶段。
