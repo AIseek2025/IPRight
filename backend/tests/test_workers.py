@@ -2364,6 +2364,27 @@ export default function RecordsPage() {
 
         assert "frontend/src/pages/RecordsPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_allows_statistics_page_name_without_antd_statistic(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "statistics",
+                    "title": "统计分析",
+                    "route": "/statistics",
+                    "table_headers": ["指标", "数值", "趋势"],
+                    "rows": [["转化率", "18%", "上升"]],
+                    "highlights": ["支持按维度查看趋势"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": _render_module_page(profile["modules"][0]),
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/StatisticsPage.tsx" not in invalid_paths
+
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source
 

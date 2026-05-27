@@ -701,7 +701,12 @@ def repair_invalid_module_pages(
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
         uses_invalid_profile_alias = any(token in content for token in ["productName", "visualConfig"])
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
-        references_statistic_without_import = "Statistic" in content and "import { Statistic" not in content and "Statistic } from 'antd'" not in content and "Statistic," not in content
+        references_statistic_without_import = (
+            any(token in content for token in ["<Statistic", " Statistic.", " Statistic "])
+            and "import { Statistic" not in content
+            and "Statistic } from 'antd'" not in content
+            and "Statistic," not in content
+        )
         is_valid = (
             bool(content)
             and has_valid_profile_import

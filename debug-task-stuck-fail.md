@@ -63,3 +63,5 @@
 15. 已新增 support 文件校验与模板回退逻辑，并收紧模块页校验规则：一旦检测到 `productName / visualConfig / APP_PROFILE.visual_profile.` 或未导入的 `Statistic`，就改走结构化 fallback，而不是把问题拖到运行验证阶段。
 16. 两条任务在 `build 6` 上的新失败不是 `verify_run`，而是更早被 support 校验拦下：`frontend/src/services/api.ts`、`frontend/src/types/constants.ts`、`frontend/src/types/models.ts` 被识别为无效，但二次 fallback 没有真正覆盖原有坏文件。
 17. 根因是 `_synthesize_support_runtime_files()` 默认只在目标文件为空时写入模板；对“非空但无效”的 support 文件，第二次调用仍会跳过写入。已补 `overwrite_existing=True` 通道，并增加回归测试锁定“识别无效后必须覆盖”的行为。
+18. `build 7` 穿过 support 批次后，两条任务新的共同失败点收敛到 `frontend/src/pages/StatisticsPage.tsx`。该文件其实已走模块结构化 fallback，但模块校验器误把 `StatisticsPage` 文件名中的 `Statistic` 子串当作 Antd `Statistic` 组件使用，导致统计页被错误判为无效。
+19. 已将 `Statistic` 校验从宽泛子串匹配改为更接近真实 JSX/属性访问的 token 识别（如 `<Statistic` / ` Statistic.` / ` Statistic `），并补回归测试，确保 `StatisticsPage` 这种文件名不再触发误判。
