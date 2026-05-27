@@ -375,6 +375,8 @@ def _synthesize_support_runtime_files(
     generated_files: dict[str, str],
     profile: dict,
     required_files: list[str],
+    *,
+    overwrite_existing: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
     synthesized = dict(generated_files)
     repaired_paths: list[str] = []
@@ -430,7 +432,7 @@ export interface ApiResult<T = unknown> {
     for relative_path, content in support_files.items():
         if relative_path not in required_files:
             continue
-        if str(synthesized.get(relative_path, "")).strip():
+        if not overwrite_existing and str(synthesized.get(relative_path, "")).strip():
             continue
         synthesized[relative_path] = content
         repaired_paths.append(relative_path)
@@ -1035,6 +1037,7 @@ async def generate_task_app_code(
             generated_files,
             profile,
             invalid_support_paths,
+            overwrite_existing=True,
         )
         if repaired_invalid_support_paths:
             repaired_support_paths = sorted(set([*repaired_support_paths, *repaired_invalid_support_paths]))

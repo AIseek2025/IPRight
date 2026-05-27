@@ -61,3 +61,5 @@
 13. 已修复 `build_frontend_profile_source()` 的前端类型面，补充 `ModuleProfile.steps / business_value / page_variant`；同时修复模块页 fallback 模板的 `pageVariant` 类型与 `panelStyle` 写法，并在 core 校验器中拦截错误的 `APP_PROFILE` 字段引用，强制回退到模板壳层页。
 14. `3e7...` 在新版本 `build 5` 上已越过上一轮固定卡点，但仍在 `verify_run` 的 `tsc -b` 暴露出新的生成代码问题：`Login` 缺少 `onLogin` 类型签名、模块页混用 `productName / visualConfig`、直接访问可选 `APP_PROFILE.visual_profile`、以及 support 文件可能写出 `import.meta.env`。
 15. 已新增 support 文件校验与模板回退逻辑，并收紧模块页校验规则：一旦检测到 `productName / visualConfig / APP_PROFILE.visual_profile.` 或未导入的 `Statistic`，就改走结构化 fallback，而不是把问题拖到运行验证阶段。
+16. 两条任务在 `build 6` 上的新失败不是 `verify_run`，而是更早被 support 校验拦下：`frontend/src/services/api.ts`、`frontend/src/types/constants.ts`、`frontend/src/types/models.ts` 被识别为无效，但二次 fallback 没有真正覆盖原有坏文件。
+17. 根因是 `_synthesize_support_runtime_files()` 默认只在目标文件为空时写入模板；对“非空但无效”的 support 文件，第二次调用仍会跳过写入。已补 `overwrite_existing=True` 通道，并增加回归测试锁定“识别无效后必须覆盖”的行为。

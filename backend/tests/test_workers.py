@@ -21,6 +21,7 @@ from workers.orchestrator.runner import (
 )
 from workers.stages.build_support import (
     _synthesize_app_tsx,
+    _synthesize_support_runtime_files,
     build_codegen_batches,
     build_codegen_requirements,
     generate_task_app_code,
@@ -2308,6 +2309,26 @@ export const api = { login: async () => ({ token: 'x' }) };
         assert "frontend/src/services/api.ts" in invalid_paths
         assert "frontend/src/types/constants.ts" in invalid_paths
         assert "frontend/src/types/models.ts" in invalid_paths
+
+    def test_synthesize_support_runtime_files_overwrites_invalid_existing_files(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": "const baseUrl = import.meta.env.VITE_API_URL;",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '坏文件';",
+            "frontend/src/types/models.ts": "export interface UserData { id: number; }",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+            overwrite_existing=True,
+        )
+
+        assert sorted(repaired_paths) == sorted(generated_files.keys())
+        assert "import.meta.env" not in synthesized["frontend/src/services/api.ts"]
+        assert "DEMO_USERNAME" in synthesized["frontend/src/types/constants.ts"]
+        assert "export interface DemoUser" in synthesized["frontend/src/types/models.ts"]
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
         profile = {
