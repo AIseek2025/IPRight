@@ -685,6 +685,37 @@ export default function WorkflowPage() {
         assert "mockData" in workflow_text
         assert "新能源债券组合压力测试" not in workflow_text
 
+    def test_repair_invalid_module_pages_normalizes_wrong_app_profile_import(self):
+        generated_files = {
+            "frontend/src/pages/WorkflowPage.tsx": """
+import { APP_PROFILE } from '../../generated/appProfile';
+
+export default function WorkflowPage() {
+  return <div>风险指标体系与模型管理 {APP_PROFILE.product_name} 分析编号 负责人</div>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "风险指标体系与模型管理",
+                    "key": "workflow",
+                    "route": "/workflow",
+                    "table_headers": ["分析编号", "分析主题", "统计维度", "负责人"],
+                    "rows": [
+                        ["AN-202605-017", "新能源债券组合压力测试", "市场风险", "风险分析师"],
+                    ],
+                }
+            ]
+        }
+
+        repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert repaired_paths == []
+        workflow_text = repaired["frontend/src/pages/WorkflowPage.tsx"]
+        assert "../generated/appProfile" in workflow_text
+        assert "../../generated/appProfile" not in workflow_text
+
     def test_prepare_seed_application_removes_seed_frontend_shell_files(self, tmp_path):
         app_root = tmp_path / "app"
         profile = {

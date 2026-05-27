@@ -619,6 +619,10 @@ def repair_invalid_module_pages(
         component_name = f"{_camel_name(module.get('route', module['key']))}Page"
         relative_path = f"frontend/src/pages/{component_name}.tsx"
         content = str(repaired.get(relative_path, "") or "")
+        normalized_content = content.replace("../../generated/appProfile", "../generated/appProfile")
+        if normalized_content != content:
+            repaired[relative_path] = normalized_content
+            content = normalized_content
         row_tokens = [
             str(cell).strip()
             for row in list(module.get("rows", []))[:2]
@@ -626,10 +630,11 @@ def repair_invalid_module_pages(
             if str(cell).strip()
         ]
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
+        has_valid_profile_import = "../generated/appProfile" in content and "../../generated/appProfile" not in content
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
         is_valid = (
             bool(content)
-            and "generated/appProfile" in content
+            and has_valid_profile_import
             and "APP_PROFILE" in content
             and "ModuleShell" not in content
             and "模块开发中" not in content
@@ -717,7 +722,7 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
         filter_placeholder = str(module.get("filter_placeholder") or "").strip()
 
         hints.append(
-            f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 或 ../../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
+            f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
         )
         if route:
             hints.append(f"{relative_path} 必须围绕路由 {route} 的业务语境组织页面内容，不得复用其他模块页面。")

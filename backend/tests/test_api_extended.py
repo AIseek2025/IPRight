@@ -178,6 +178,49 @@ class TestTaskLifecycle:
             assert builds[0].current_stage == "compose_code_book"
             assert str(builds[0].id) == str(task.active_build_id)
 
+    async def test_recover_interrupted_running_builds_marks_task_and_build_failed(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "中断恢复测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert build is not None
+            task.status = "building"
+            task.current_stage = "building"
+            build.status = "running"
+            build.current_stage = "build"
+            service = TaskService(session)
+            recovered = await service.recover_interrupted_running_builds("worker restarted during build")
+            await session.commit()
+
+            assert task.id in recovered
+            assert task.status == "failed"
+            assert task.current_stage == "failed"
+            assert build.status == "failed"
+            assert build.current_stage == "failed"
+            assert build.failure_reason == "worker restarted during build"
+
+        async with get_session_factory()() as session:
+            events = (
+                await session.execute(
+                    select(TaskEvent)
+                    .where(TaskEvent.task_id == uuid.UUID(task_id))
+                    .order_by(TaskEvent.created_at.desc())
+                )
+            ).scalars().all()
+            event_types = [event.event_type for event in events]
+            assert "task_interrupted" in event_types
+            assert "task_failed" in event_types
+
     async def test_task_service_marks_build_completed(self, async_client):
         create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "构建完成态测试"})
         assert create_resp.status_code == 201

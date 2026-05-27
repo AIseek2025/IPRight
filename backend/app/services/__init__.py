@@ -173,3 +173,33 @@ class TaskService:
             title=f"任务完成: {task.product_name}",
             detail="所有阶段已完成，导出文件可下载",
         )
+
+    async def recover_interrupted_running_builds(self, reason: str) -> list[uuid.UUID]:
+        recovered_task_ids: list[uuid.UUID] = []
+        running_rows = await self.db.execute(
+            select(Build, Task)
+            .join(Task, Task.active_build_id == Build.id)
+            .where(Build.status == StageStatus.RUNNING.value)
+        )
+        for build, task in running_rows.all():
+            previous_stage = build.current_stage
+            build.status = TopLevelStatus.FAILED.value
+            build.current_stage = TopLevelStatus.FAILED.value
+            build.failure_reason = reason
+            build.finished_at = datetime.utcnow()
+            task.updated_at = datetime.utcnow()
+            await self.log_event(
+                task_id=task.id,
+                build_id=build.id,
+                event_type="task_interrupted",
+                title="检测到中断构建",
+                detail=reason,
+                payload_json={
+                    "build_id": str(build.id),
+                    "previous_stage": previous_stage,
+                },
+            )
+            await self.mark_failed(task, reason)
+            recovered_task_ids.append(task.id)
+        await self.db.flush()
+        return recovered_task_ids
