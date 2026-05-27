@@ -663,7 +663,7 @@ const moduleHeaders = {json.dumps(module_headers, ensure_ascii=False)};
 const moduleRows = {json.dumps(module_rows, ensure_ascii=False)};
 const moduleHighlights = {json.dumps(module_highlights, ensure_ascii=False)};
 const routeBadge = {json.dumps(route_badge, ensure_ascii=False)};
-const pageVariant = {json.dumps(page_variant, ensure_ascii=False)};
+const pageVariant: string = {json.dumps(page_variant, ensure_ascii=False)};
 const visualProfile = APP_PROFILE.visual_profile || {{}};
 const moduleRowsSafe = moduleRows.length > 0
   ? moduleRows
@@ -768,7 +768,7 @@ export default function {component_name}() {{
         ))}}
       </section>
 
-      <section style={{{{panelStyle}}}}>
+      <section style={{panelStyle}}>
         <div style={{{{ display: 'flex', gap: 12, marginBottom: 16 }}}}>
           <input
             name="搜索"
@@ -899,7 +899,7 @@ def _render_frontend_app(profile: dict) -> str:
 
 const AUTH_KEY = 'ipright_demo_auth';
 const uiFont = `'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', 'IPRight CJK', sans-serif`;
-const navAliases = {json.dumps(nav_aliases, ensure_ascii=False, indent=2)};
+const navAliases: Record<string, string> = {json.dumps(nav_aliases, ensure_ascii=False, indent=2)};
 
 export default function App() {{
   const [loggedIn, setLoggedIn] = useState(() => localStorage.getItem(AUTH_KEY) === 'true');

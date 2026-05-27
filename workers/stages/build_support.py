@@ -560,6 +560,14 @@ def repair_invalid_core_files(
             "PlaceholderPage" not in content
             and "模块开发中" not in content
             and "ModuleShell" not in content
+            and not _contains_any(
+                content,
+                [
+                    "APP_PROFILE.navigation",
+                    "APP_PROFILE.name",
+                    "APP_PROFILE.appName",
+                ],
+            )
             and not _references_unknown_page_import(content)
             and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
@@ -575,6 +583,19 @@ def repair_invalid_core_files(
         ),
         "frontend/src/pages/Dashboard.tsx": lambda content: (
             "模块开发中" not in content
+            and not _contains_any(
+                content,
+                [
+                    "totalProjects",
+                    "activeTasks",
+                    "environments",
+                    "passedTests",
+                    ".strong",
+                    ".suffix",
+                    ".trend",
+                    ".up",
+                ],
+            )
             and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
             and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
             and _contains_any(

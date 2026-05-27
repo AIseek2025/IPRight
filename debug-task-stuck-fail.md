@@ -57,3 +57,5 @@
 9. 在 `examples/demo_app/frontend/src/hooks/useAppState.ts` 与 `src/types/constants.ts` 中把错误的 Python 三引号注释改为合法的 TS 块注释，并补充回归测试防止 seed 再次混入 `"""`。
 10. 在 `examples/demo_app/frontend/src/utils/validators.ts` 中把 `required / email / phone / number / integer / url / ipAddress / password` 统一为 rule factory，和 `minLength / maxLength / min / max` 一样返回 `ValidationRule`，消除表单 schema 的类型不一致问题。
 11. 本地已验证 `examples/demo_app/frontend` 可通过 `node node_modules/typescript/bin/tsc -b` 与 `node node_modules/vite/bin/vite.js build`，说明 seed 模板已满足当前 `verify_run` 构建链要求。
+12. 两条任务在新版本上重试后已越过 seed 模板错误，新的 `verify_run` 失败点转移到任务生成代码本身：核心壳层页引用了 `APP_PROFILE.navigation / name / appName` 等不存在字段，部分模块页 fallback 模板也存在 `style={{panelStyle}}` 和字面量 `pageVariant` 比较导致的 TypeScript 报错。
+13. 已修复 `build_frontend_profile_source()` 的前端类型面，补充 `ModuleProfile.steps / business_value / page_variant`；同时修复模块页 fallback 模板的 `pageVariant` 类型与 `panelStyle` 写法，并在 core 校验器中拦截错误的 `APP_PROFILE` 字段引用，强制回退到模板壳层页。

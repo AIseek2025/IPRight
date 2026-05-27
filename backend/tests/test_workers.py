@@ -2182,6 +2182,88 @@ const css = `
         assert "aria-label={modulePlaceholder}" in page_code
         assert 'type="search"' in page_code
 
+    def test_render_module_page_is_typescript_safe(self):
+        module = {
+            "key": "alerts",
+            "title": "预警中心",
+            "route": "/alerts",
+            "description": "用于汇总风险告警、处置状态与最新留痕。",
+            "primary_action": "新增预警规则",
+            "filter_placeholder": "搜索告警编号 / 责任人 / 状态",
+            "table_headers": ["告警编号", "主题", "责任人", "状态"],
+            "rows": [["ALT-101", "库存预警", "周可欣", "处理中"]],
+            "highlights": ["支持状态追踪"],
+            "page_variant": "workspace",
+        }
+        page_code = _render_module_page(module)
+        assert "const pageVariant: string" in page_code
+        assert "style={panelStyle}" in page_code
+        assert "style={{panelStyle}}" not in page_code
+
+    def test_repair_invalid_core_files_rejects_unsupported_profile_fields(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [
+                {
+                    "key": "records",
+                    "title": "档案管理",
+                    "route": "/records",
+                }
+            ],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { Routes, Route } from 'react-router-dom';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import RecordsPage from './pages/RecordsPage';
+import { APP_PROFILE } from './generated/appProfile';
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login onLogin={() => undefined} />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/records" element={<RecordsPage title={APP_PROFILE.navigation?.title || APP_PROFILE.name} />} />
+    </Routes>
+  );
+}
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function Dashboard() {
+  return (
+    <section>
+      系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}
+      {String(APP_PROFILE.dashboard_metrics.totalProjects)}
+    </section>
+  );
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/App.tsx" in invalid_paths
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_build_frontend_profile_source_allows_extended_module_fields(self):
+        from app.services.project_profile import build_frontend_profile_source
+
+        source = build_frontend_profile_source({"modules": []})
+
+        assert "steps?: string[];" in source
+        assert "business_value?: string;" in source
+        assert "page_variant?: string;" in source
+
 
 class TestStageContextAndResult:
     def test_stage_context_creation(self):
