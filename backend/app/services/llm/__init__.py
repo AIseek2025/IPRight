@@ -392,7 +392,10 @@ class LLMClient:
                 if response_format == "json_object":
                     body["response_format"] = {"type": "json_object"}
 
-                async with httpx.AsyncClient(timeout=120) as client:
+                timeout_s = 120
+                if max_tokens_override and max_tokens_override > 10000:
+                    timeout_s = max(120, int(max_tokens_override / 60))
+                async with httpx.AsyncClient(timeout=timeout_s) as client:
                     resp = await client.post(
                         f"{api_base}/chat/completions",
                         headers=headers,
@@ -1509,7 +1512,7 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
             messages,
             response_format="json_object",
             primary_model=TEXT_MODEL,
-            max_tokens_override=9000,
+            max_tokens_override=16000,
             temperature_override=min(0.65 + manual_retry_attempt * 0.08, 0.92),
         )
 

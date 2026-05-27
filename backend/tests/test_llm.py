@@ -1821,7 +1821,7 @@ class TestLLMClient:
             assert "manual_markdown" in resp.structured
 
         asyncio.run(_run())
-        assert captured["max_tokens_override"] == 9000
+        assert captured["max_tokens_override"] == 16000
         assert captured["temperature_override"] == 0.65
         assert "manual_markdown" in captured["messages"][0]["content"]
         assert "variation_seed" in captured["messages"][1]["content"]
