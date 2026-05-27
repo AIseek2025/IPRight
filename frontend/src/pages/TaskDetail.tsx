@@ -305,11 +305,21 @@ export default function TaskDetail() {
           />
         )}
 
-        <Descriptions column={3} size="small" bordered>
+        <Descriptions
+          column={{ xs: 1, sm: 1, md: 2, lg: 3 }}
+          size="small"
+          bordered
+          labelStyle={{ whiteSpace: 'nowrap' }}
+          contentStyle={{ wordBreak: 'break-word' }}
+        >
           <Descriptions.Item label="任务 ID">
-            <Text copyable={{ text: task.id }}>{task.id.slice(0, 8)}...</Text>
+            <Text copyable={{ text: task.id }} style={{ wordBreak: 'break-all' }}>
+              {task.id.slice(0, 8)}...
+            </Text>
           </Descriptions.Item>
-          <Descriptions.Item label="关键词">{task.keyword}</Descriptions.Item>
+          <Descriptions.Item label="关键词">
+            <span style={{ wordBreak: 'break-word' }}>{task.keyword}</span>
+          </Descriptions.Item>
           <Descriptions.Item label="行业">{task.industry || '-'}</Descriptions.Item>
           <Descriptions.Item label="当前阶段">
             {STATUS_LABELS[task.current_stage || ''] || task.current_stage || '-'}
@@ -322,7 +332,7 @@ export default function TaskDetail() {
           </Descriptions.Item>
         </Descriptions>
 
-        <Space style={{ marginTop: 16 }}>
+        <Space style={{ marginTop: 16 }} wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void refreshAll()} loading={loading}>
             刷新
           </Button>
