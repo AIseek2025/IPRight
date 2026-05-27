@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Typography,
-  Descriptions,
   Tag,
   Timeline,
   List,
@@ -260,6 +259,21 @@ export default function TaskDetail() {
   const manualExport = readyExports.find((exp) => exp.file_name === 'software_manual.docx');
   const codeBookExport = readyExports.find((exp) => exp.file_name === 'source_code_book.docx');
   const applicationFormExport = readyExports.find((exp) => exp.file_name === 'application_form.docx');
+  const summaryItems = [
+    { label: '任务 ID', value: (
+      <Text copyable={{ text: task.id }} style={{ wordBreak: 'break-all' }}>
+        {task.id}
+      </Text>
+    ) },
+    { label: '关键词', value: <span style={{ wordBreak: 'break-word' }}>{task.keyword}</span> },
+    { label: '行业', value: task.industry || '-' },
+    {
+      label: '当前阶段',
+      value: STATUS_LABELS[task.current_stage || ''] || task.current_stage || '-',
+    },
+    { label: '创建时间', value: dayjs(task.created_at).format('YYYY-MM-DD HH:mm:ss') },
+    { label: '更新时间', value: dayjs(task.updated_at).format('YYYY-MM-DD HH:mm:ss') },
+  ];
   const getExportHref = (exportId: string, exportType: string) => {
     if (exportType === 'bundle_zip') {
       return getTaskBundleDownload(task.id);
@@ -305,32 +319,28 @@ export default function TaskDetail() {
           />
         )}
 
-        <Descriptions
-          column={{ xs: 1, sm: 1, md: 2, lg: 3 }}
-          size="small"
-          bordered
-          labelStyle={{ whiteSpace: 'nowrap' }}
-          contentStyle={{ wordBreak: 'break-word' }}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 12,
+          }}
         >
-          <Descriptions.Item label="任务 ID">
-            <Text copyable={{ text: task.id }} style={{ wordBreak: 'break-all' }}>
-              {task.id.slice(0, 8)}...
-            </Text>
-          </Descriptions.Item>
-          <Descriptions.Item label="关键词">
-            <span style={{ wordBreak: 'break-word' }}>{task.keyword}</span>
-          </Descriptions.Item>
-          <Descriptions.Item label="行业">{task.industry || '-'}</Descriptions.Item>
-          <Descriptions.Item label="当前阶段">
-            {STATUS_LABELS[task.current_stage || ''] || task.current_stage || '-'}
-          </Descriptions.Item>
-          <Descriptions.Item label="创建时间">
-            {dayjs(task.created_at).format('YYYY-MM-DD HH:mm:ss')}
-          </Descriptions.Item>
-          <Descriptions.Item label="更新时间">
-            {dayjs(task.updated_at).format('YYYY-MM-DD HH:mm:ss')}
-          </Descriptions.Item>
-        </Descriptions>
+          {summaryItems.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                padding: 12,
+                minWidth: 0,
+              }}
+            >
+              <div style={{ color: '#666', fontSize: 12, marginBottom: 6 }}>{item.label}</div>
+              <div style={{ fontWeight: 500, wordBreak: 'break-word' }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
 
         <Space style={{ marginTop: 16 }} wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void refreshAll()} loading={loading}>
