@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -9,25 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.state_machine import (
     STAGE_TRANSITIONS,
-    StageName,
     StageStatus,
-    TOPLEVEL_TO_STAGE,
     TopLevelStatus,
 )
 from app.models.db import Build, StageRun, Task, TaskEvent
-
-STALE_BUILD_TIMEOUT = timedelta(hours=6)
-ACTIVE_TASK_STATUSES = {
-    TopLevelStatus.QUEUED.value,
-    TopLevelStatus.PLANNING.value,
-    TopLevelStatus.CODING.value,
-    TopLevelStatus.BUILDING.value,
-    TopLevelStatus.RUNNING.value,
-    TopLevelStatus.CAPTURING.value,
-    TopLevelStatus.WRITING_MANUAL.value,
-    TopLevelStatus.WRITING_CODE_BOOK.value,
-    TopLevelStatus.PUBLISHING.value,
-}
 
 
 class TaskService:
@@ -71,122 +56,7 @@ class TaskService:
         self.db.add(event)
         await self.db.flush()
 
-    def _resolve_retry_entrypoint(self, from_stage: str | None) -> tuple[TopLevelStatus, str]:
-        if not from_stage:
-            return TopLevelStatus.QUEUED, "plan"
-
-        target_stage: StageName | None = None
-        try:
-            target_stage = StageName(from_stage)
-        except ValueError:
-            try:
-                target_status = TopLevelStatus(from_stage)
-            except ValueError:
-                return TopLevelStatus.QUEUED, "plan"
-            target_stage = TOPLEVEL_TO_STAGE.get(target_status)
-
-        if target_stage is None:
-            return TopLevelStatus.QUEUED, "plan"
-
-        stage_status = next(
-            (status for status, stage in TOPLEVEL_TO_STAGE.items() if stage == target_stage),
-            TopLevelStatus.PLANNING,
-        )
-        previous_status = next(
-            (status for status, next_status in STAGE_TRANSITIONS.items() if next_status == stage_status),
-            TopLevelStatus.QUEUED,
-        )
-        return previous_status, target_stage.value
-
-    async def cleanup_stale_builds(
-        self,
-        *,
-        task_id: uuid.UUID | None = None,
-        now: datetime | None = None,
-    ) -> list[Build]:
-        now = now or datetime.utcnow()
-        cutoff = now - STALE_BUILD_TIMEOUT
-        query = select(Build).where(
-            Build.status.in_([StageStatus.QUEUED.value, StageStatus.RUNNING.value]),
-            Build.started_at.is_not(None),
-            Build.started_at < cutoff,
-        )
-        if task_id is not None:
-            query = query.where(Build.task_id == task_id)
-
-        stale_builds = (await self.db.execute(query)).scalars().all()
-        if not stale_builds:
-            return []
-
-        tasks = {
-            build.task_id: await self.db.get(Task, build.task_id)
-            for build in stale_builds
-        }
-        for stale_build in stale_builds:
-            stale_build.status = "aborted"
-            stale_build.current_stage = "aborted"
-            stale_build.failure_reason = "Automatically aborted stale queued/running build after timeout"
-            stale_build.finished_at = now
-            task = tasks.get(stale_build.task_id)
-            if task and task.active_build_id == stale_build.id:
-                task.active_build_id = None
-                if task.status in ACTIVE_TASK_STATUSES:
-                    task.status = TopLevelStatus.FAILED.value
-                    task.current_stage = TopLevelStatus.FAILED.value
-                task.updated_at = now
-        await self.db.flush()
-        return stale_builds
-
-    async def reconcile_task_state(self, task: Task) -> bool:
-        if task.status not in ACTIVE_TASK_STATUSES:
-            return False
-
-        latest_build: Build | None = None
-        if task.active_build_id:
-            latest_build = await self.db.get(Build, task.active_build_id)
-            if latest_build and latest_build.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
-                return False
-
-        if latest_build is None:
-            latest_build_q = await self.db.execute(
-                select(Build)
-                .where(Build.task_id == task.id)
-                .order_by(Build.build_no.desc())
-                .limit(1)
-            )
-            latest_build = latest_build_q.scalar_one_or_none()
-
-        if latest_build is None:
-            return False
-        if latest_build.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
-            return False
-
-        changed = False
-        if latest_build.status == TopLevelStatus.COMPLETED.value:
-            if task.status != TopLevelStatus.COMPLETED.value:
-                task.status = TopLevelStatus.COMPLETED.value
-                task.current_stage = TopLevelStatus.COMPLETED.value
-                changed = True
-        elif latest_build.status in {TopLevelStatus.FAILED.value, "aborted", StageStatus.CANCELLED.value}:
-            if task.status != TopLevelStatus.FAILED.value or task.current_stage != TopLevelStatus.FAILED.value:
-                task.status = TopLevelStatus.FAILED.value
-                task.current_stage = TopLevelStatus.FAILED.value
-                changed = True
-
-        if task.active_build_id is not None and latest_build.status not in {
-            StageStatus.QUEUED.value,
-            StageStatus.RUNNING.value,
-        }:
-            task.active_build_id = None
-            changed = True
-
-        if changed:
-            task.updated_at = datetime.utcnow()
-            await self.db.flush()
-        return changed
-
-    async def start_build(self, task: Task, trigger_type: str = "create", from_stage: str | None = None) -> Build:
-        await self.cleanup_stale_builds()
+    async def start_build(self, task: Task, trigger_type: str = "create") -> Build:
         stale_builds_q = await self.db.execute(
             select(Build).where(
                 Build.task_id == task.id,
@@ -206,7 +76,6 @@ class TaskService:
         last_build = last_build_q.scalar()
         build_no = (last_build.build_no + 1) if last_build else 1
         build_id = uuid.uuid4()
-        resume_status, initial_stage = self._resolve_retry_entrypoint(from_stage if trigger_type == "retry" else None)
 
         build = Build(
             id=build_id,
@@ -214,12 +83,12 @@ class TaskService:
             build_no=build_no,
             status="queued",
             trigger_type=trigger_type,
-            current_stage=initial_stage,
+            current_stage="plan",
         )
         self.db.add(build)
         task.active_build_id = build_id
-        task.status = resume_status.value
-        task.current_stage = resume_status.value
+        task.status = TopLevelStatus.QUEUED.value
+        task.current_stage = TopLevelStatus.QUEUED.value
         task.updated_at = datetime.utcnow()
         await self.db.flush()
         return build

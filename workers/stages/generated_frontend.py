@@ -38,15 +38,6 @@ _OPTIONAL_FRONTEND_DEPENDENCIES = {
 }
 
 
-def _is_ignored_metadata_path(path: Path) -> bool:
-    return any(
-        part == "__MACOSX"
-        or part == ".DS_Store"
-        or part.startswith("._")
-        for part in path.parts
-    )
-
-
 def _iter_frontend_source_imports(frontend_root: str) -> set[str]:
     src_root = Path(frontend_root) / "src"
     if not src_root.exists():
@@ -55,8 +46,6 @@ def _iter_frontend_source_imports(frontend_root: str) -> set[str]:
     imports: set[str] = set()
     import_re = re.compile(r"""(?:from|import)\s+['"](?P<module>[^'"]+)['"]""")
     for source_path in src_root.rglob("*"):
-        if _is_ignored_metadata_path(source_path):
-            continue
         if source_path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
             continue
         content = source_path.read_text(encoding="utf-8")

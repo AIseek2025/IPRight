@@ -191,174 +191,6 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "React" in joined
 
 
-def test_build_task_profile_generic_modules_keep_own_focus_terms():
-    profile = build_task_profile(
-        keyword="融合招聘一体化软件",
-        product_name="融合招聘一体化软件",
-        version="V1.0",
-        industry="教育",
-        prd_summary={
-            "user_roles": ["管理员", "招聘主管", "HR专员"],
-            "core_modules": [
-                "招聘需求管理",
-                "职位与候选人管理",
-                "面试与流程管理",
-                "人才库与资料中心",
-                "招聘数据分析与报表",
-            ],
-        },
-    )
-
-    modules = {module["title"]: module for module in profile["modules"]}
-    workflow_module = modules["职位与候选人管理"]
-    assets_module = modules["面试与流程管理"]
-
-    assert "职位与候选人管理" in workflow_module["description"]
-    assert "招聘需求管理，使用户能够" not in workflow_module["description"]
-    assert "候选人姓名、应聘岗位与推进阶段" in workflow_module["steps"][1]
-    assert "招聘需求管理相关" not in workflow_module["steps"][1]
-
-    assert "面试与流程管理" in assets_module["description"]
-    assert "招聘需求管理，使用户能够" not in assets_module["description"]
-    assert "面试环节、安排状态与面试官" in assets_module["steps"][1]
-    assert "招聘需求管理相关" not in assets_module["steps"][1]
-
-
-def test_build_task_profile_recruitment_modules_have_distinct_realistic_rows():
-    profile = build_task_profile(
-        keyword="融合招聘一体化软件",
-        product_name="融合招聘一体化软件",
-        version="V1.0",
-        industry="教育",
-        prd_summary={
-            "user_roles": ["管理员", "招聘主管", "HR专员", "面试官"],
-            "core_modules": [
-                "招聘需求管理",
-                "职位与候选人管理",
-                "面试与流程管理",
-                "人才库与资料中心",
-                "招聘数据分析与报表",
-            ],
-        },
-    )
-
-    modules = {module["title"]: module for module in profile["modules"]}
-
-    records = modules["招聘需求管理"]
-    workflow = modules["职位与候选人管理"]
-    interview = modules["面试与流程管理"]
-    talent_pool = modules["人才库与资料中心"]
-    reports = modules["招聘数据分析与报表"]
-
-    assert records["table_headers"] == ["需求编号", "需求主题", "用人部门", "招聘阶段", "优先级", "更新时间"]
-    assert workflow["table_headers"] == ["候选人编号", "候选人姓名", "应聘岗位", "当前阶段", "来源渠道", "更新时间"]
-    assert interview["table_headers"] == ["流程编号", "候选人姓名", "面试环节", "安排状态", "面试官", "更新时间"]
-    assert talent_pool["table_headers"] == ["人才编号", "人才方向", "最近进展", "储备等级", "归属顾问", "更新时间"]
-    assert reports["table_headers"] == ["报表编号", "报表主题", "统计周期", "负责人", "核心结论", "更新时间"]
-
-    assert records["rows"][0][0].startswith("REQ-")
-    assert workflow["rows"][0][0].startswith("CAN-")
-    assert interview["rows"][0][0].startswith("INT-")
-    assert talent_pool["rows"][0][0].startswith("TAL-")
-    assert reports["rows"][0][0].startswith("RPT-")
-
-    assert workflow["rows"][0][2] == "初中数学教研岗"
-    assert interview["rows"][0][2] == "试讲评估"
-    assert talent_pool["rows"][0][1] == "理科教师储备"
-    assert "转化率" in reports["rows"][0][4]
-
-    all_rows = json.dumps(profile["modules"], ensure_ascii=False)
-    assert "MOD0-001" not in all_rows
-    assert "重点事项" not in all_rows
-    assert "张三" not in all_rows
-    assert "李四" not in all_rows
-    assert "王五" not in all_rows
-
-
-def test_build_task_profile_recruitment_offer_and_dashboard_modules_avoid_placeholder_text():
-    profile = build_task_profile(
-        keyword="融合招聘一体化软件",
-        product_name="融合招聘一体化软件",
-        version="V1.0",
-        industry="教育",
-        prd_summary={
-            "user_roles": ["系统管理员", "招聘专员", "招聘主管", "校领导"],
-            "core_modules": [
-                "招聘需求管理",
-                "候选人库",
-                "面试流程管理",
-                "录用与入职管理",
-                "数据分析看板",
-            ],
-            "scene": "教育行业的一站式招聘管理平台，涵盖从岗位发布到入职的全流程协同。",
-            "industry_scope": "教育行业，包括学校、教育培训机构等单位的招聘业务。",
-        },
-    )
-
-    modules = {module["title"]: module for module in profile["modules"]}
-    offers = modules["录用与入职管理"]
-    reports = modules["数据分析看板"]
-
-    assert offers["table_headers"] == ["录用编号", "候选人姓名", "录用岗位", "办理阶段", "责任人", "更新时间"]
-    assert offers["rows"][0][0].startswith("OFF-")
-    assert offers["description"].startswith("录用与入职管理模块用于统一跟踪 Offer 审批")
-    assert "中的日常处理" not in offers["description"]
-
-    assert reports["table_headers"] == ["报表编号", "报表主题", "统计周期", "负责人", "核心结论", "更新时间"]
-    assert reports["rows"][0][0].startswith("RPT-")
-    assert reports["description"].startswith("数据分析看板模块面向")
-
-    serialized = json.dumps(profile, ensure_ascii=False)
-    for banned in [
-        "MOD0-001",
-        "MOD0-301",
-        "重点事项",
-        "场景进行设计",
-        "中的任务目标",
-        "中的日常处理",
-        "。中的",
-    ]:
-        assert banned not in serialized
-
-
-def test_manual_profile_text_excludes_placeholder_and_broken_phrases_for_recruitment_flow():
-    profile = build_task_profile(
-        keyword="融合招聘一体化软件",
-        product_name="融合招聘一体化软件",
-        version="V1.0",
-        industry="教育",
-        prd_summary={
-            "user_roles": ["系统管理员", "招聘专员", "招聘主管", "校领导"],
-            "core_modules": [
-                "招聘需求管理",
-                "候选人库",
-                "面试流程管理",
-                "录用与入职管理",
-                "数据分析看板",
-            ],
-            "scene": "教育行业的一站式招聘管理平台，涵盖从岗位发布到入职的全流程协同。",
-            "industry_scope": "教育行业，包括学校、教育培训机构等单位的招聘业务。",
-        },
-    )
-    screenshots = [
-        {
-            "page_title": item["title"],
-            "caption": f"图{index + 1} {item['title']}",
-            "image_path": "",
-            "elements": [item["title"], item["primary_action"]],
-        }
-        for index, item in enumerate(profile["modules"][:5])
-    ]
-    gen = SoftwareManualGenerator(product_name="融合招聘一体化软件", version="V1.0", profile=profile)
-    gen.generate_full(prd_summary={"user_roles": profile["user_roles"]}, screenshots_meta=screenshots)
-    joined = "\n".join(p.text for p in gen.doc.paragraphs)
-
-    assert "录用与入职管理" in joined
-    assert "数据分析看板" in joined
-    for banned in ["MOD0-", "重点事项", "场景进行设计", "中的任务目标", "中的日常处理", "。中的"]:
-        assert banned not in joined
-
-
 def test_manual_renders_only_selected_optional_modules():
     selected = [
         "data_and_output",
@@ -429,51 +261,8 @@ def test_application_form_main_functions_is_padded_to_minimum_length():
         if row.cells[0].text == "软件的主要功能"
     )
     assert len(main_functions_text) >= 500
-    assert main_functions_text.count("系统还支持统一登录、信息检索、状态跟踪、结果留痕、导出归档与权限控制等能力") == 1
+    assert main_functions_text.count("系统还支持统一登录、信息检索、状态跟踪、结果留痕、导出归档与权限控制等能力") < 4
     assert "在交付层面，系统可输出说明书、申请表、源码文档和截图材料" in main_functions_text
-    assert "补充说明" not in main_functions_text
-
-
-def test_application_form_dedupes_repeated_main_function_sentences():
-    gen = ApplicationFormGenerator(product_name="测试平台", version="V1.0")
-    gen.generate({
-        "product_name": "测试平台",
-        "version": "V1.0",
-        "main_functions": (
-            "系统支持统一登录、统一登录。"
-            "系统可输出说明书、申请表和源码文档。"
-            "系统可输出说明书、申请表和源码文档。"
-        ),
-    })
-    main_functions_text = next(
-        row.cells[1].text
-        for table in gen.doc.tables
-        for row in table.rows
-        if row.cells[0].text == "软件的主要功能"
-    )
-    assert main_functions_text.count("系统支持统一登录、统一登录。") == 1
-    assert main_functions_text.count("系统可输出说明书、申请表和源码文档。") == 1
-
-
-def test_manual_data_dictionary_notes_use_distinct_field_explanations():
-    profile = {
-        "modules": [
-            {
-                "title": "供应商与承运商协同门户",
-                "description": "用于处理供应商协同、承运计划和运输反馈。",
-                "primary_action": "发起协同处理",
-                "table_headers": ["供应商编号", "供应商名称", "协同状态", "更新时间", "处理说明"],
-                "highlights": ["支持供应商协同", "支持运输反馈"],
-            }
-        ]
-    }
-    gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0", profile=profile)
-    gen.generate_function_structure()
-    joined = "\n".join(p.text for p in gen.doc.paragraphs)
-    assert "字段“供应商编号”作为供应商与承运商协同门户的唯一定位标识" in joined
-    assert "字段“协同状态”用于描述供应商与承运商协同门户当前所处的处理阶段或状态" in joined
-    assert "字段“更新时间”用于记录供应商与承运商协同门户的关键时间节点" in joined
-    assert "既服务于页面检索和列表展示，也用于说明书、导出文件和后续归档中的统一口径" not in joined
 
 
 def test_manual_compacts_filtered_variant_pages():
@@ -577,28 +366,6 @@ def test_task_profile_prefers_content_route_hints_over_old_preset_routes():
     assert route_by_title["创作者与演员管理"] == "/actors"
     assert route_by_title["广告投放管理"] == "/campaigns"
     assert route_by_title["播放数据统计"] == "/statistics"
-
-
-def test_task_profile_prefers_required_pages_over_title_route_hints():
-    profile = build_task_profile(
-        keyword="跨境冷链履约异常协同平台 V1.0",
-        product_name="跨境冷链履约异常协同平台 V1.0",
-        version="V1.0",
-        industry="冷链物流",
-        prd_summary={
-            "core_modules": ["温控数据看板", "统计与报告", "告警处理台", "系统设置"],
-            "required_pages": ["/login", "/dashboard", "/collaboration", "/reports", "/alerts", "/settings"],
-            "user_roles": ["管理员", "调度主管", "履约专员"],
-        },
-    )
-
-    route_by_title = {module["title"]: module["route"] for module in profile["modules"]}
-
-    assert route_by_title["温控数据看板"] == "/collaboration"
-    assert route_by_title["统计与报告"] == "/reports"
-    assert route_by_title["告警处理台"] == "/alerts"
-    assert route_by_title["系统设置"] == "/settings"
-    assert len({module["route"] for module in profile["modules"]}) == len(profile["modules"])
 
 
 def test_media_plan_seed_is_stable_for_same_product():
@@ -801,10 +568,7 @@ def test_task_profile_visual_profile_uses_non_sidebar_blueprint():
         }[payload["experience_blueprint"]["navigation_variant"]]
         assert payload["visual_profile"]["chrome_treatment"] == expected_treatment
         assert any(token in payload["visual_profile"]["layout_signal"] for token in ("顶部", "分段", "索引"))
-        assert any(
-            token in payload["visual_profile"]["layout_signal"]
-            for token in ("避免左侧竖栏后台", "避免左侧栏", "避免统一后台", "避免复用单一后台骨架")
-        )
+        assert "避免左侧竖栏后台" in payload["visual_profile"]["layout_signal"]
 
 
 def test_architecture_diagram_changes_with_project_profile():
@@ -832,31 +596,6 @@ def test_architecture_diagram_changes_with_project_profile():
         assert open(logistics_path, "rb").read() != open(finance_path, "rb").read()
 
 
-def test_task_profile_design_seed_produces_distinct_visual_profiles_for_similar_projects():
-    cold_chain = build_task_profile(
-        keyword="冷链履约异常协同平台",
-        product_name="冷链履约异常协同平台",
-        version="V1.0",
-        industry="冷链物流",
-    )
-    dispatch = build_task_profile(
-        keyword="冷链在途调度联控平台",
-        product_name="冷链在途调度联控平台",
-        version="V1.0",
-        industry="冷链物流",
-    )
-
-    assert cold_chain["experience_blueprint"]["shell_layout_hint"] != dispatch["experience_blueprint"]["shell_layout_hint"]
-    assert cold_chain["visual_profile"]["name"] != dispatch["visual_profile"]["name"]
-    assert (
-        cold_chain["visual_profile"]["nav_background"],
-        cold_chain["visual_profile"]["accent"],
-    ) != (
-        dispatch["visual_profile"]["nav_background"],
-        dispatch["visual_profile"]["accent"],
-    )
-
-
 def test_task_profile_avoids_duplicate_topic_phrasing_when_keyword_equals_product_name():
     profile = build_task_profile(
         keyword="AI股票量化投资平台",
@@ -872,9 +611,6 @@ def test_task_profile_avoids_duplicate_topic_phrasing_when_keyword_equals_produc
     assert "量化策略研究" in profile["scene"]
     assert "AI股票量化投资平台在AI股票量化投资平台相关的" not in profile["technical_features"]
     assert "围绕“AI股票量化投资平台”对应的" in profile["technical_features"]
-    assert "统一导航、标准表格、状态标签、结果导出和截图留痕" not in profile["technical_features"]
-    assert "避免回落到固定后台套板" in profile["technical_features"]
-    assert "不得把所有任务压成同一套顶栏+表格后台骨架" in profile["differentiation_hint"]
 
 
 def test_codebook_empty_workspace():
@@ -948,129 +684,3 @@ def test_codebook_skips_binary_files():
         gen.generate(code_index, tmpdir)
         joined = "\n".join(p.text for p in gen.doc.paragraphs)
         assert "[跳过二进制文件: IPRightCJK.ttf]" in joined
-
-
-def test_manual_markdown_validation_detects_missing_required_modules():
-    from app.services.document.manual_compose import validate_required_manual_modules
-
-    ok, missing = validate_required_manual_modules("## 引言\n内容")
-    assert not ok
-    assert "软件概述" in missing
-
-
-def test_manual_markdown_renderer_supports_screenshot_markers():
-    from app.services.document.manual_compose import render_manual_markdown_to_docx
-    from PIL import Image
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        image_path = os.path.join(tmpdir, "page.png")
-        Image.new("RGB", (20, 20), "white").save(image_path)
-        arch_path = os.path.join(tmpdir, "arch.png")
-        generate_system_architecture_diagram(arch_path, "测试平台")
-
-        markdown = "\n".join([
-            "# 测试平台",
-            "## 文档说明",
-            "说明正文。",
-            "## 引言",
-            "引言正文。",
-            "## 开发设计 / 系统设计",
-            "[[SCREENSHOT:ARCH]]",
-            "## 软件概述",
-            "概述正文。",
-            "## 开发运行环境 / 软件适配环境",
-            "环境正文。",
-            "## 功能结构说明",
-            "功能正文。",
-            "## 角色权限说明",
-            "角色正文。",
-            "## 业务流程说明",
-            "流程正文。",
-            "## 软件使用说明",
-            "### 登录页",
-            "[[SCREENSHOT:登录页]]",
-            "页面说明。",
-            "## 技术特点说明",
-            "技术正文。",
-        ])
-        doc = render_manual_markdown_to_docx(
-            markdown=markdown,
-            product_name="测试平台",
-            version="V1.0",
-            screenshots_meta=[{"page_title": "登录页", "caption": "图1 登录页", "image_path": image_path}],
-            arch_diagram_path=arch_path,
-        )
-        joined = "\n".join(p.text for p in doc.paragraphs)
-        assert "文档说明" in joined
-        assert "登录页" in joined
-        assert "图1 登录页" in joined
-
-
-def test_fallback_manual_markdown_varies_with_seed():
-    from app.services.document.manual_compose import build_fallback_manual_markdown
-
-    profile = build_task_profile(
-        keyword="物流调度管理后台",
-        product_name="物流调度管理后台",
-        version="V1.0",
-        industry="物流运输",
-    )
-    first = build_fallback_manual_markdown(
-        product_name="物流调度管理后台",
-        version="V1.0",
-        profile=profile,
-        prd_summary={},
-        screenshots_meta=[{"page_title": "登录页", "route": "/login"}],
-        variation_seed="aaaaaaaaaaaaaaaa",
-    )
-    second = build_fallback_manual_markdown(
-        product_name="物流调度管理后台",
-        version="V1.0",
-        profile=profile,
-        prd_summary={},
-        screenshots_meta=[{"page_title": "登录页", "route": "/login"}],
-        variation_seed="bbbbbbbbbbbbbbbb",
-    )
-    assert first != second
-
-
-def test_arrow_endpoints_land_on_box_edges_not_centers():
-    from app.services.document.diagrams import arrow_points_between_boxes
-
-    left = (100, 120, 360, 280)
-    right = (520, 120, 780, 280)
-    x1, y1, x2, y2 = arrow_points_between_boxes(left, right)
-    left_cx, left_cy = (left[0] + left[2]) // 2, (left[1] + left[3]) // 2
-    right_cx, right_cy = (right[0] + right[2]) // 2, (right[1] + right[3]) // 2
-    assert (x1, y1) != (left_cx, left_cy)
-    assert (x2, y2) != (right_cx, right_cy)
-
-    def _on_rect_edge(box, x, y):
-        x1b, y1b, x2b, y2b = box
-        on_vertical = x in (x1b, x2b) and y1b <= y <= y2b
-        on_horizontal = y in (y1b, y2b) and x1b <= x <= x2b
-        return on_vertical or on_horizontal
-
-    assert _on_rect_edge(left, x1, y1)
-    assert _on_rect_edge(right, x2, y2)
-
-
-def test_architecture_diagram_accepts_llm_spec():
-    from app.services.document.diagrams import generate_system_architecture_diagram
-
-    spec = {
-        "title": "测试平台系统架构图",
-        "caption": "图1：测试平台采用模块化协同架构。",
-        "nodes": [
-            {"title": "访问入口", "body": "登录与首页导航", "x": 8, "y": 18, "w": 26, "h": 16, "kind": "primary"},
-            {"title": "业务处理层", "body": "模块协同与状态流转", "x": 38, "y": 18, "w": 26, "h": 16, "kind": "secondary"},
-            {"title": "数据沉淀层", "body": "对象口径与结果留痕", "x": 68, "y": 18, "w": 26, "h": 16, "kind": "accent"},
-            {"title": "交付支撑层", "body": "截图与文档导出", "x": 24, "y": 52, "w": 52, "h": 18, "kind": "accent"},
-        ],
-        "arrows": [{"from_index": 0, "to_index": 1}, {"from_index": 1, "to_index": 2}, {"from_index": 2, "to_index": 3}],
-    }
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = os.path.join(tmpdir, "arch.png")
-        generate_system_architecture_diagram(output_path, "测试平台", profile={}, diagram_spec=spec)
-        assert os.path.exists(output_path)
-        assert os.path.getsize(output_path) > 0

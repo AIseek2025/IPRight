@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
+import hashlib
 import logging
 import os
-import re
 import shutil
 import uuid
 
@@ -48,29 +47,20 @@ def workspace_path(task_id: str) -> str:
     return os.path.join(settings.WORKSPACE_ROOT, "tasks", task_id, "workspace")
 
 
-def build_root(task_id: str, build_id: str) -> str:
-    p = os.path.join(settings.WORKSPACE_ROOT, "tasks", task_id, "builds", build_id)
+def artifacts_dir(task_id: str) -> str:
+    p = os.path.join(settings.WORKSPACE_ROOT, "tasks", task_id, "artifacts")
     os.makedirs(p, exist_ok=True)
     return p
 
 
-def artifacts_dir(task_id: str, build_id: str | None = None) -> str:
-    if build_id:
-        p = os.path.join(build_root(task_id, build_id), "artifacts")
-    else:
-        p = os.path.join(settings.WORKSPACE_ROOT, "tasks", task_id, "artifacts")
+def screenshots_dir(task_id: str) -> str:
+    p = os.path.join(artifacts_dir(task_id), "screenshots")
     os.makedirs(p, exist_ok=True)
     return p
 
 
-def screenshots_dir(task_id: str, build_id: str | None = None) -> str:
-    p = os.path.join(artifacts_dir(task_id, build_id), "screenshots")
-    os.makedirs(p, exist_ok=True)
-    return p
-
-
-def reset_screenshots_dir(task_id: str, build_id: str | None = None) -> str:
-    p = screenshots_dir(task_id, build_id)
+def reset_screenshots_dir(task_id: str) -> str:
+    p = screenshots_dir(task_id)
     shutil.rmtree(p, ignore_errors=True)
     os.makedirs(p, exist_ok=True)
     return p
@@ -89,11 +79,8 @@ def _derive_run_ports(task_id: str, build_id: str) -> dict[str, int]:
     return {"frontend": frontend_port, "backend": frontend_port + 1}
 
 
-def manifests_dir(task_id: str, build_id: str | None = None) -> str:
-    if build_id:
-        p = os.path.join(build_root(task_id, build_id), "manifests")
-    else:
-        p = os.path.join(workspace_path(task_id), "manifests")
+def manifests_dir(task_id: str) -> str:
+    p = os.path.join(workspace_path(task_id), "manifests")
     os.makedirs(p, exist_ok=True)
     return p
 
@@ -104,7 +91,7 @@ def _write_text(path: str, content: str) -> None:
         f.write(content)
 
 
-def _write_json(path: str, data: dict | list) -> None:
+def _write_json(path: str, data: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -154,43 +141,16 @@ async def _log_task_progress(
         await db.commit()
 
 
-def _load_manifest(task_id: str, manifest_name: str, build_id: str | None = None) -> dict | list | None:
-    candidate_paths: list[str] = []
-    if build_id:
-        candidate_paths.append(os.path.join(manifests_dir(task_id, build_id), f"{manifest_name}.json"))
-    candidate_paths.append(os.path.join(manifests_dir(task_id), f"{manifest_name}.json"))
-    for path in candidate_paths:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+def _load_manifest(task_id: str, manifest_name: str) -> dict | None:
+    path = os.path.join(manifests_dir(task_id), f"{manifest_name}.json")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     return None
 
 
-def _write_manifest(task_id: str, manifest_name: str, data: dict | list, build_id: str | None = None) -> None:
-    if build_id:
-        _write_json(os.path.join(manifests_dir(task_id, build_id), f"{manifest_name}.json"), data)
+def _write_manifest(task_id: str, manifest_name: str, data: dict) -> None:
     _write_json(os.path.join(manifests_dir(task_id), f"{manifest_name}.json"), data)
-
-
-def _sync_latest_capture_outputs(task_id: str, build_id: str) -> None:
-    latest_artifacts = artifacts_dir(task_id)
-    latest_screenshots = screenshots_dir(task_id)
-    build_artifacts = artifacts_dir(task_id, build_id)
-    build_screenshots = screenshots_dir(task_id, build_id)
-
-    latest_manifest_path = os.path.join(latest_artifacts, "screenshot_manifest.json")
-    build_manifest_path = os.path.join(build_artifacts, "screenshot_manifest.json")
-    if os.path.exists(build_manifest_path):
-        shutil.copy2(build_manifest_path, latest_manifest_path)
-
-    shutil.rmtree(latest_screenshots, ignore_errors=True)
-    os.makedirs(latest_screenshots, exist_ok=True)
-    if os.path.exists(build_screenshots):
-        for name in os.listdir(build_screenshots):
-            source_path = os.path.join(build_screenshots, name)
-            target_path = os.path.join(latest_screenshots, name)
-            if os.path.isfile(source_path):
-                shutil.copy2(source_path, target_path)
 
 
 def _load_prd_summary(task_id: str) -> dict:
@@ -240,47 +200,15 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
         "technical_feature_detail",
         "data_organization",
     ]
-
-    def _normalize_narrative_text(text: str) -> str:
-        return re.sub(r"\s+", " ", str(text or "")).strip()
-
-    def _dedupe_sentences(text: str) -> str:
-        normalized = _normalize_narrative_text(text)
-        if not normalized:
-            return ""
-        parts = re.split(r"(?<=[。！？；])", normalized)
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for part in parts:
-            sentence = _normalize_narrative_text(part)
-            key = re.sub(r"[，。；：！？、】【（）“”\"'《》<>·\-\s]", "", sentence)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            cleaned.append(sentence)
-        return "".join(cleaned)
-
-    def _dedupe_string_list(items: list) -> list[str]:
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for item in items:
-            sentence = _dedupe_sentences(str(item))
-            key = re.sub(r"[，。；：！？、】【（）“”\"'《》<>·\-\s]", "", sentence)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            cleaned.append(sentence)
-        return cleaned
-
     for key in scalar_keys:
         value = llm_content.get(key)
         if isinstance(value, str) and value.strip():
-            merged[key] = _dedupe_sentences(value)
+            merged[key] = value.strip()
 
     for key in ("technical_feature_bullets", "typical_scenarios"):
         value = llm_content.get(key)
         if isinstance(value, list):
-            cleaned = _dedupe_string_list(value)
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
             if cleaned:
                 merged[key] = cleaned
 
@@ -323,11 +251,11 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
         for field in ("description", "primary_action", "business_value", "variant_instruction"):
             value = override.get(field)
             if isinstance(value, str) and value.strip():
-                target[field] = _dedupe_sentences(value)
+                target[field] = value.strip()
         for field in ("highlights", "steps"):
             value = override.get(field)
             if isinstance(value, list):
-                cleaned = _dedupe_string_list(value)
+                cleaned = [str(item).strip() for item in value if str(item).strip()]
                 if cleaned:
                     target[field] = cleaned
     if modules:
@@ -349,11 +277,11 @@ def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screensh
             for field in ("caption", "description", "primary_action", "business_value", "variant_instruction"):
                 value = override.get(field)
                 if isinstance(value, str) and value.strip():
-                    screenshot[field] = _dedupe_sentences(value)
+                    screenshot[field] = value.strip()
             for field in ("highlights", "steps"):
                 value = override.get(field)
                 if isinstance(value, list):
-                    cleaned = _dedupe_string_list(value)
+                    cleaned = [str(item).strip() for item in value if str(item).strip()]
                     if cleaned:
                         screenshot[field] = cleaned
 
@@ -458,7 +386,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         if not task:
             return StageResult(success=False, error="Task not found")
 
-    mdir = manifests_dir(ctx.task_id, ctx.build_id)
+    mdir = manifests_dir(ctx.task_id)
     prd_root = os.path.join(workspace_path(ctx.task_id), "prd")
     product_name = task.product_name
     version = task.version
@@ -543,7 +471,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         )
         if codegen_error:
             if codegen_report_data:
-                _write_manifest(ctx.task_id, "app_codegen_report", codegen_report_data, build_id=ctx.build_id)
+                _write_manifest(ctx.task_id, "app_codegen_report", codegen_report_data)
             return StageResult(success=False, error=codegen_error)
     except Exception as exc:
         return StageResult(success=False, error=f"App code generation failed: {exc}")
@@ -670,12 +598,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
         manifests["app_codegen_report.json"] = codegen_report_data
 
     for filename, data in manifests.items():
-        _write_manifest(
-            ctx.task_id,
-            filename.replace(".json", ""),
-            data,
-            build_id=ctx.build_id,
-        )
+        _write_json(os.path.join(mdir, filename), data)
 
     validation = validator.validate_all({
         "app_manifest": app_manifest,
@@ -724,8 +647,8 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
         detail="正在安装依赖、启动前后端并执行健康检查",
     )
 
-    run_manifest = _load_manifest(ctx.task_id, "run_manifest", build_id=ctx.build_id)
-    app_manifest = _load_manifest(ctx.task_id, "app_manifest", build_id=ctx.build_id)
+    run_manifest = _load_manifest(ctx.task_id, "run_manifest")
+    app_manifest = _load_manifest(ctx.task_id, "app_manifest")
     if not run_manifest:
         return StageResult(success=False, error="run_manifest not found")
 
@@ -733,7 +656,7 @@ async def run_verify_stage(ctx: StageContext) -> StageResult:
         task_id=ctx.task_id,
         build_id=ctx.build_id,
         workspace_root=workspace_path(ctx.task_id),
-        artifacts_root=artifacts_dir(ctx.task_id, ctx.build_id),
+        artifacts_root=artifacts_dir(ctx.task_id),
         run_manifest=run_manifest,
         app_manifest=app_manifest,
         create_artifact=_create_artifact,
@@ -763,20 +686,20 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
         detail="正在启动预览环境并按场景抓取页面截图",
     )
 
-    capture_manifest = _load_manifest(ctx.task_id, "capture_manifest", build_id=ctx.build_id)
-    app_manifest = _load_manifest(ctx.task_id, "app_manifest", build_id=ctx.build_id)
-    run_manifest = _load_manifest(ctx.task_id, "run_manifest", build_id=ctx.build_id)
+    capture_manifest = _load_manifest(ctx.task_id, "capture_manifest")
+    app_manifest = _load_manifest(ctx.task_id, "app_manifest")
+    run_manifest = _load_manifest(ctx.task_id, "run_manifest")
 
     if not capture_manifest:
         return StageResult(success=False, error="capture_manifest not found")
 
-    output_dir = reset_screenshots_dir(ctx.task_id, ctx.build_id)
+    output_dir = reset_screenshots_dir(ctx.task_id)
     total_count, success_count, missing_essential_titles = await execute_capture_flow(
         task_id=ctx.task_id,
         build_id=ctx.build_id,
         workspace_root=workspace_path(ctx.task_id),
         screenshots_root=output_dir,
-        artifacts_root=artifacts_dir(ctx.task_id, ctx.build_id),
+        artifacts_root=artifacts_dir(ctx.task_id),
         capture_manifest=capture_manifest,
         app_manifest=app_manifest,
         run_manifest=run_manifest,
@@ -784,7 +707,6 @@ async def run_capture_stage(ctx: StageContext) -> StageResult:
         db_factory=ctx.db_factory,
         sleep_fn=asyncio_sleep,
     )
-    _sync_latest_capture_outputs(ctx.task_id, ctx.build_id)
     await _log_task_progress(
         ctx,
         event_type="stage_progress",
@@ -829,11 +751,11 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
 
     screenshots_meta = load_screenshots_meta(
         ctx.task_id,
-        lambda task_id: artifacts_dir(task_id, ctx.build_id),
-        lambda task_id: screenshots_dir(task_id, ctx.build_id),
-        lambda manifest_name: _load_manifest(ctx.task_id, manifest_name, build_id=ctx.build_id),
+        artifacts_dir,
+        screenshots_dir,
+        lambda manifest_name: _load_manifest(ctx.task_id, manifest_name),
     )
-    project_profile = _load_manifest(ctx.task_id, "project_profile", build_id=ctx.build_id) or {}
+    project_profile = _load_manifest(ctx.task_id, "project_profile") or {}
     prd_summary = _load_prd_summary(ctx.task_id)
     output_path, application_form_path, screenshot_count, manual_llm_used = await generate_manual_delivery(
         task=task,
@@ -886,7 +808,7 @@ async def run_compose_code_book_stage(ctx: StageContext) -> StageResult:
         if not task:
             return StageResult(success=False, error="Task not found")
 
-    code_index = _load_manifest(ctx.task_id, "code_index_manifest", build_id=ctx.build_id)
+    code_index = _load_manifest(ctx.task_id, "code_index_manifest")
     if not code_index:
         return StageResult(success=False, error="code_index_manifest not found")
 

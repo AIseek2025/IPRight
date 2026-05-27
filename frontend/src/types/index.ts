@@ -37,10 +37,6 @@ export interface ExportItem {
   file_name: string;
   status: string;
   download_url: string | null;
-  build_id?: string | null;
-  build_no?: number | null;
-  build_finished_at?: string | null;
-  is_latest?: boolean;
   created_at: string;
 }
 
