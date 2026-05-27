@@ -736,6 +736,16 @@ export default function WorkflowPage() {
         assert "import './font.css';" in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
         assert (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
 
+    def test_demo_seed_frontend_sources_do_not_use_python_docstrings(self):
+        seed_files = [
+            PROJECT_ROOT / "examples/demo_app/frontend/src/hooks/useAppState.ts",
+            PROJECT_ROOT / "examples/demo_app/frontend/src/types/constants.ts",
+        ]
+
+        for path in seed_files:
+            text = path.read_text(encoding="utf-8")
+            assert not text.lstrip().startswith('"""'), str(path)
+
     def test_generate_task_app_code_self_heals_core_and_support_when_llm_fails(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 

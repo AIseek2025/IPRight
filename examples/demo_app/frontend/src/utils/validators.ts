@@ -4,7 +4,7 @@
  */
 
 export const validators = {
-  required: (value: any, message: string = '此字段为必填'): string | undefined => {
+  required: (message: string = '此字段为必填') => (value: any): string | undefined => {
     if (value === null || value === undefined || (typeof value === 'string' && value.trim().length === 0)) {
       return message;
     }
@@ -25,7 +25,7 @@ export const validators = {
     return undefined;
   },
 
-  email: (value: string, message: string = '请输入有效的邮箱地址'): string | undefined => {
+  email: (message: string = '请输入有效的邮箱地址') => (value: string): string | undefined => {
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (value && !emailRegex.test(value)) {
       return message;
@@ -33,7 +33,7 @@ export const validators = {
     return undefined;
   },
 
-  phone: (value: string, message: string = '请输入有效的手机号码'): string | undefined => {
+  phone: (message: string = '请输入有效的手机号码') => (value: string): string | undefined => {
     const phoneRegex = /^1[3-9]\d{9}$/;
     if (value && !phoneRegex.test(value)) {
       return message;
@@ -41,14 +41,14 @@ export const validators = {
     return undefined;
   },
 
-  number: (value: any, message: string = '请输入有效的数字'): string | undefined => {
+  number: (message: string = '请输入有效的数字') => (value: any): string | undefined => {
     if (value !== null && value !== undefined && value !== '' && isNaN(Number(value))) {
       return message;
     }
     return undefined;
   },
 
-  integer: (value: any, message: string = '请输入有效的整数'): string | undefined => {
+  integer: (message: string = '请输入有效的整数') => (value: any): string | undefined => {
     if (value !== null && value !== undefined && value !== '' && !Number.isInteger(Number(value))) {
       return message;
     }
@@ -76,7 +76,7 @@ export const validators = {
     return undefined;
   },
 
-  url: (value: string, message: string = '请输入有效的URL'): string | undefined => {
+  url: (message: string = '请输入有效的URL') => (value: string): string | undefined => {
     const urlRegex = /^https?:\/\/[^\s/$.?#].[^\s]*$/i;
     if (value && !urlRegex.test(value)) {
       return message;
@@ -84,7 +84,7 @@ export const validators = {
     return undefined;
   },
 
-  ipAddress: (value: string, message: string = '请输入有效的IP地址'): string | undefined => {
+  ipAddress: (message: string = '请输入有效的IP地址') => (value: string): string | undefined => {
     const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
     if (value && !ipRegex.test(value)) {
       return message;
@@ -92,7 +92,7 @@ export const validators = {
     return undefined;
   },
 
-  password: (value: string, message: string = '密码至少需要8个字符，包含字母和数字'): string | undefined => {
+  password: (message: string = '密码至少需要8个字符，包含字母和数字') => (value: string): string | undefined => {
     const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/;
     if (value && !passwordRegex.test(value)) {
       return message;

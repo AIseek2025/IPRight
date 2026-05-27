@@ -42,6 +42,7 @@
 3. 在模块页 `module_invalid_retry` 仍然失败时，现有逻辑没有把模板级 `_render_module_page()` 兜底真正落盘，导致 `3e7...` 后续重试直接在 `build` 阶段因缺失/无效模块页失败。
 4. 截图判定对普通业务路由主要只认场景标题；`/statistics` 这类同一路由多标题场景下，页面真实标题为“履约分析与报表”，而另一个场景标题为“冷链监控看板”，因此被误判为空白/不匹配截图。
 5. `verify_run` 仅执行 `vite build`，没有运行 `tsc -b`，会让 TypeScript 级错误延后到运行时或截图阶段才暴露。
+6. demo seed 前端模板本身存在 TypeScript 质量问题：部分文件混入 Python 三引号，且 `validators.ts` 同时混用了“直接返回错误字符串”和“返回校验函数”两种接口，导致 schema 在 `tsc -b` 下统一报类型错误。
 
 # 已实施修复
 
@@ -53,3 +54,6 @@
 6. 在 `workers/stages/handlers.py` 中把前端运行校验升级为 `tsc -b && vite build`，让未导入符号等 TS 错误在 `verify_run` 阶段提前失败。
 7. 在 `backend/app/services/capture/__init__.py` 中为 `statistics / analytics / reports` 等路由补充 route-level marker alias，使同一路由的标题变体不会被误判为空白页。
 8. 已补充针对性测试覆盖模块页 structural fallback、统计页截图 marker alias 和 `run_manifest` 的 TypeScript 构建链。
+9. 在 `examples/demo_app/frontend/src/hooks/useAppState.ts` 与 `src/types/constants.ts` 中把错误的 Python 三引号注释改为合法的 TS 块注释，并补充回归测试防止 seed 再次混入 `"""`。
+10. 在 `examples/demo_app/frontend/src/utils/validators.ts` 中把 `required / email / phone / number / integer / url / ipAddress / password` 统一为 rule factory，和 `minLength / maxLength / min / max` 一样返回 `ValidationRule`，消除表单 schema 的类型不一致问题。
+11. 本地已验证 `examples/demo_app/frontend` 可通过 `node node_modules/typescript/bin/tsc -b` 与 `node node_modules/vite/bin/vite.js build`，说明 seed 模板已满足当前 `verify_run` 构建链要求。

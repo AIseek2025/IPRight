@@ -1,4 +1,4 @@
-"""Additional utility types and constants for the demo application."""
+/** Additional utility types and constants for the demo application. */
 
 export const APP_VERSION = 'V1.0';
 export const APP_NAME = '智慧园区管理平台';

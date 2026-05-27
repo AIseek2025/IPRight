@@ -1,4 +1,4 @@
-"""State management utilities using React Context + useReducer pattern."""
+/** State management utilities using React Context + useReducer pattern. */
 
 import React, { createContext, useContext, useReducer, useCallback } from 'react';
 
