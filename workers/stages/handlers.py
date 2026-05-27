@@ -516,7 +516,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     run_ports = _derive_run_ports(ctx.task_id, ctx.build_id)
     run_manifest = {
         "install_commands": [
-            "cd app/frontend && rm -f package-lock.json && npm install && node node_modules/vite/bin/vite.js build",
+            "cd app/frontend && rm -f package-lock.json && npm install && node node_modules/typescript/bin/tsc -b && node node_modules/vite/bin/vite.js build",
             "/opt/ipright/backend/.venv/bin/python -m pip install -r app/backend/requirements.txt",
         ],
         "start_commands": [

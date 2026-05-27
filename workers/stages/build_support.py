@@ -12,6 +12,7 @@ from workers.stages.generated_frontend import (
     _render_dashboard_page,
     _render_frontend_app,
     _render_login_page,
+    _render_module_page,
     _write_task_specific_app,
     sync_frontend_dependencies,
 )
@@ -649,6 +650,29 @@ def repair_invalid_module_pages(
     return repaired, invalid_paths
 
 
+def synthesize_recoverable_module_files(
+    generated_files: dict[str, str],
+    invalid_module_paths: list[str],
+    profile: dict,
+) -> tuple[dict[str, str], list[str]]:
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+    modules_by_path: dict[str, dict] = {}
+    for module in profile.get("modules", []):
+        component_name = f"{_camel_name(module.get('route', module['key']))}Page"
+        relative_path = f"frontend/src/pages/{component_name}.tsx"
+        modules_by_path[relative_path] = module
+
+    for relative_path in invalid_module_paths:
+        module = modules_by_path.get(relative_path)
+        if not module:
+            continue
+        synthesized[relative_path] = _render_module_page(module)
+        repaired_paths.append(relative_path)
+
+    return synthesized, repaired_paths
+
+
 def _preview_generated_content(content: str, limit: int = 320) -> str:
     snippet = " ".join((content or "").split())
     if len(snippet) <= limit:
@@ -1194,6 +1218,29 @@ async def generate_task_app_code(
                     break
             if not invalid_module_paths:
                 break
+    repaired_module_paths: list[str] = []
+    if invalid_module_paths:
+        generated_files, repaired_module_paths = synthesize_recoverable_module_files(
+            generated_files,
+            invalid_module_paths,
+            profile,
+        )
+        if repaired_module_paths:
+            generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
+            batch_reports.append(
+                {
+                    "batch": "module_structural_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_module_paths),
+                    "generated_paths": sorted(repaired_module_paths),
+                    "fallback_to_template": bool(invalid_module_paths),
+                    "error": (
+                        "still invalid after structural fallback: " + ", ".join(invalid_module_paths)
+                        if invalid_module_paths
+                        else None
+                    ),
+                }
+            )
     if invalid_module_paths:
         invalid_module_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
@@ -1201,9 +1248,9 @@ async def generate_task_app_code(
         }
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
-            repaired_module_paths=[],
+            repaired_module_paths=sorted(repaired_module_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
             invalid_module_paths=invalid_module_paths,
             invalid_module_previews=invalid_module_previews,
         ), (
@@ -1215,9 +1262,9 @@ async def generate_task_app_code(
     if not applied:
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
-            repaired_module_paths=[],
+            repaired_module_paths=sorted(repaired_module_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
             apply_error=apply_error,
         ), f"App code generation failed: {apply_error}"
 
@@ -1225,7 +1272,7 @@ async def generate_task_app_code(
 
     return _build_codegen_report(
         repaired_core_paths=sorted(repaired_core_paths),
-        repaired_module_paths=[],
+        repaired_module_paths=sorted(repaired_module_paths),
         repaired_support_paths=sorted(repaired_support_paths),
-        template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
+        template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
     ), None

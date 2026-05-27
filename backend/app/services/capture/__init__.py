@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+_ROUTE_MARKER_ALIASES = {
+    "statistics": ["统计", "分析", "报表", "看板"],
+    "analytics": ["分析", "洞察", "报表", "趋势"],
+    "reports": ["报表", "分析", "统计"],
+}
+
 
 @dataclass
 class ScreenshotResult:
@@ -279,11 +285,27 @@ class PlaywrightCapture:
 
     def _expected_markers(self, title: str | None, route: str) -> list[str]:
         normalized_title = (title or "").replace("筛选结果", "").strip()
+        route_key = str(route or "").strip("/").split("/")[-1]
         if route == "/login":
-            return ["登录", "登录系统", "用户名", "密码", "平台入口概览"]
+            markers = ["登录", "登录系统", "用户名", "密码", "平台入口概览"]
+            if normalized_title:
+                markers.insert(0, normalized_title)
+            return markers
         if route == "/dashboard":
-            return ["系统首页", "调度总览", "工作台", "概览", "Dashboard"]
-        return [normalized_title] if normalized_title else []
+            markers = ["系统首页", "调度总览", "工作台", "概览", "Dashboard"]
+            if normalized_title:
+                markers.insert(0, normalized_title)
+            return markers
+        markers: list[str] = []
+        if normalized_title:
+            markers.append(normalized_title)
+        markers.extend(_ROUTE_MARKER_ALIASES.get(route_key, []))
+        deduped: list[str] = []
+        for marker in markers:
+            value = str(marker or "").strip()
+            if value and value not in deduped:
+                deduped.append(value)
+        return deduped
 
     def _cleanup_failed_capture(self, image_path: str) -> None:
         if image_path and os.path.exists(image_path):

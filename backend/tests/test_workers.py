@@ -1227,6 +1227,103 @@ export default function WorkflowPage() {
         assert "新能源债券组合压力测试" in page_text
         assert "mockData" not in page_text
 
+    def test_generate_task_app_code_falls_back_to_structural_module_pages_when_retries_stay_invalid(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "冷链履约协同平台",
+            "scene": "围绕冷链履约监控和异常处置进行协同",
+            "industry_scope": "物流供应链",
+            "user_roles": ["调度主管", "库存专员"],
+            "modules": [
+                {
+                    "title": "履约分析与报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "primary_action": "导出统计报表",
+                    "filter_placeholder": "搜索履约单号 / 客户 / 节点",
+                    "table_headers": ["履约单号", "客户", "节点", "状态"],
+                    "rows": [
+                        ["FUL-001", "华东生鲜", "在途监控", "正常"],
+                    ],
+                    "highlights": ["展示冷链履约波动趋势", "支持异常节点复盘"],
+                    "description": "用于查看履约统计和异常分析。",
+                    "page_variant": "insight",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == (
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import StatisticsPage from './pages/StatisticsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/statistics' element={<StatisticsPage />} /></Routes>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} 调度总览</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '冷链履约协同平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/StatisticsPage.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/StatisticsPage.tsx": "const mockData = [{ id: '1' }]; export default function StatisticsPage(){ return <div>冷链监控看板</div>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert report["repaired_module_paths"] == ["frontend/src/pages/StatisticsPage.tsx"]
+        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_structural_fallback")
+        assert fallback_batch["generated_paths"] == ["frontend/src/pages/StatisticsPage.tsx"]
+        page_text = (app_root / "frontend/src/pages/StatisticsPage.tsx").read_text(encoding="utf-8")
+        assert "APP_PROFILE" in page_text
+        assert "导出统计报表" in page_text
+        assert "FUL-001" in page_text
+        assert "mockData" not in page_text
+
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
@@ -1718,6 +1815,41 @@ const css = `
         assert "调度总览" in markers
         assert "工作台" in markers
 
+    def test_capture_statistics_expected_markers_allow_route_level_aliases(self):
+        capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
+        markers = capture._expected_markers("冷链监控看板", "/statistics")
+        assert "冷链监控看板" in markers
+        assert "统计" in markers
+        assert "分析" in markers
+        assert "报表" in markers
+
+    def test_capture_meaningful_content_accepts_statistics_page_with_variant_title(self):
+        capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
+        ok = capture._is_meaningful_content_info(
+            {
+                "readyState": "complete",
+                "textLength": 128,
+                "blocks": 5,
+                "headings": ["履约分析与报表"],
+                "inputs": 1,
+                "buttons": 2,
+                "mainTextLength": 92,
+                "mainBlocks": 4,
+                "mainHeadings": ["履约分析与报表"],
+                "mainInputs": 1,
+                "mainButtons": 2,
+                "height": 980,
+                "hasExpectedTitle": False,
+                "hasExpectedMarker": True,
+                "hasMainExpectedTitle": False,
+                "hasMainExpectedMarker": True,
+                "hasLoginSignals": False,
+            },
+            route="/statistics",
+            expected_markers=["冷链监控看板", "统计", "分析", "报表"],
+        )
+        assert ok is True
+
     def test_capture_meaningful_content_accepts_login_form_without_exact_title(self):
         capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
         ok = capture._is_meaningful_content_info(
@@ -2135,6 +2267,75 @@ def test_run_build_stage_writes_codegen_report_on_codegen_failure(tmp_path, monk
     report = report_path.read_text(encoding="utf-8")
     assert "invalid_core_paths" in report
     assert "frontend/src/App.tsx" in report
+
+
+def test_run_build_stage_run_manifest_requires_typescript_build(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from app.core.config import settings
+
+    task_id = str(uuid.uuid4())
+    build_id = str(uuid.uuid4())
+    prd_dir = tmp_path / "tasks" / task_id / "workspace" / "prd"
+    prd_dir.mkdir(parents=True, exist_ok=True)
+    (prd_dir / "product_summary.json").write_text("{}", encoding="utf-8")
+
+    class _Task:
+        keyword = "冷链履约协同平台"
+        product_name = "冷链履约协同平台"
+        version = "V1.0"
+        industry = "物流"
+
+    mock_session = AsyncMock()
+    mock_session.get.return_value = _Task()
+    mock_session.add = MagicMock()
+    mock_session_factory = MagicMock()
+    mock_session_scope = AsyncMock()
+    mock_session_scope.__aenter__.return_value = mock_session
+    mock_session_factory.return_value.return_value = mock_session_scope
+
+    class _ValidationResult:
+        valid = True
+        errors: list[str] = []
+
+    monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "workers.stages.handlers.build_task_profile",
+        lambda **_kwargs: {
+            "app_type": "admin_web",
+            "modules": [],
+            "screenshot_scenarios": [],
+            "scene": "履约协同",
+            "software_category": "物流软件",
+            "industry_scope": "物流",
+        },
+    )
+    monkeypatch.setattr("workers.stages.handlers.prepare_seed_application", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "workers.stages.handlers.generate_task_app_code",
+        AsyncMock(return_value=({"generated_file_count": 0, "repaired_core_paths": [], "repaired_support_paths": []}, None)),
+    )
+    monkeypatch.setattr("workers.stages.handlers._log_task_progress", AsyncMock())
+    monkeypatch.setattr("workers.stages.handlers._create_artifact", AsyncMock())
+    monkeypatch.setattr(
+        "workers.stages.handlers.validator.validate_all",
+        lambda _payload: {
+            "app_manifest": _ValidationResult(),
+            "run_manifest": _ValidationResult(),
+            "capture_manifest": _ValidationResult(),
+            "code_index_manifest": _ValidationResult(),
+        },
+    )
+    monkeypatch.setattr("workers.stages.handlers.validator.is_all_valid", lambda _validation: True)
+
+    async def _run():
+        ctx = StageContext(task_id=task_id, build_id=build_id, db_factory=mock_session_factory)
+        return await run_build_stage(ctx)
+
+    result = asyncio.run(_run())
+    assert result.success is True
+    run_manifest_path = tmp_path / "tasks" / task_id / "workspace" / "manifests" / "run_manifest.json"
+    run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    assert "node node_modules/typescript/bin/tsc -b" in run_manifest["install_commands"][0]
 
 
 def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):

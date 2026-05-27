@@ -39,6 +39,9 @@
 
 1. Worker 重启/中断时，正在执行的 build 没有被自动回收，导致旧任务永久卡在 `running/building`。
 2. 模块页面校验过于宽松，错误的 `../../generated/appProfile` 导入被当成合法输出放行，导致新任务在运行验证阶段失败。
+3. 在模块页 `module_invalid_retry` 仍然失败时，现有逻辑没有把模板级 `_render_module_page()` 兜底真正落盘，导致 `3e7...` 后续重试直接在 `build` 阶段因缺失/无效模块页失败。
+4. 截图判定对普通业务路由主要只认场景标题；`/statistics` 这类同一路由多标题场景下，页面真实标题为“履约分析与报表”，而另一个场景标题为“冷链监控看板”，因此被误判为空白/不匹配截图。
+5. `verify_run` 仅执行 `vite build`，没有运行 `tsc -b`，会让 TypeScript 级错误延后到运行时或截图阶段才暴露。
 
 # 已实施修复
 
@@ -46,3 +49,7 @@
 2. 在 `workers/celery_app.py` 中启用 `task_reject_on_worker_lost=True`，让 worker 丢失时任务重新入队。
 3. 在 `backend/app/services/__init__.py` 中增加 `recover_interrupted_running_builds()`，worker 启动时自动把上次重启中断的 running build 回收为 failed，并写入事件。
 4. 已补充针对性测试覆盖导入路径自愈和中断 build 回收逻辑。
+5. 在 `workers/stages/build_support.py` 中把 `_render_module_page()` 接入 `module_structural_fallback`，当模块页多轮重试仍无效时直接生成结构化业务页面落盘并重新校验。
+6. 在 `workers/stages/handlers.py` 中把前端运行校验升级为 `tsc -b && vite build`，让未导入符号等 TS 错误在 `verify_run` 阶段提前失败。
+7. 在 `backend/app/services/capture/__init__.py` 中为 `statistics / analytics / reports` 等路由补充 route-level marker alias，使同一路由的标题变体不会被误判为空白页。
+8. 已补充针对性测试覆盖模块页 structural fallback、统计页截图 marker alias 和 `run_manifest` 的 TypeScript 构建链。
