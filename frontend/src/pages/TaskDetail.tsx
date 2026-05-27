@@ -13,6 +13,7 @@ import {
   Alert,
   Result,
   Empty,
+  Grid,
 } from 'antd';
 import {
   DownloadOutlined,
@@ -39,6 +40,7 @@ import type { TaskDashboard, ArtifactItem, ScreenshotItem, EventItem } from '@/t
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const STAGE_ORDER = [
   'queued', 'planning', 'coding', 'building', 'running',
@@ -53,6 +55,7 @@ function getProgress(status: string): number {
 
 export default function TaskDetail() {
   const { taskId } = useParams<{ taskId: string }>();
+  const screens = useBreakpoint();
   const [dashboard, setDashboard] = useState<TaskDashboard | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
   const [screenshots, setScreenshots] = useState<ScreenshotItem[]>([]);
@@ -259,9 +262,10 @@ export default function TaskDetail() {
   const manualExport = readyExports.find((exp) => exp.file_name === 'software_manual.docx');
   const codeBookExport = readyExports.find((exp) => exp.file_name === 'source_code_book.docx');
   const applicationFormExport = readyExports.find((exp) => exp.file_name === 'application_form.docx');
+  const summaryColumns = screens.xl ? 'repeat(3, minmax(0, 1fr))' : screens.lg ? 'repeat(2, minmax(0, 1fr))' : '1fr';
   const summaryItems = [
     { label: '任务 ID', value: (
-      <Text copyable={{ text: task.id }} style={{ wordBreak: 'break-all' }}>
+      <Text copyable={{ text: task.id }} style={{ whiteSpace: 'nowrap' }}>
         {task.id}
       </Text>
     ) },
@@ -322,7 +326,7 @@ export default function TaskDetail() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gridTemplateColumns: summaryColumns,
             gap: 12,
           }}
         >
@@ -337,7 +341,15 @@ export default function TaskDetail() {
               }}
             >
               <div style={{ color: '#666', fontSize: 12, marginBottom: 6 }}>{item.label}</div>
-              <div style={{ fontWeight: 500, wordBreak: 'break-word' }}>{item.value}</div>
+              <div
+                style={{
+                  fontWeight: 500,
+                  wordBreak: item.label === '任务 ID' ? 'normal' : 'break-word',
+                  overflowX: item.label === '任务 ID' ? 'auto' : 'visible',
+                }}
+              >
+                {item.value}
+              </div>
             </div>
           ))}
         </div>
