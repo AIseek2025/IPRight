@@ -362,7 +362,7 @@ def _render_login_page(profile: dict | None = None) -> str:
     return """import { APP_PROFILE } from '../generated/appProfile';
 
 const uiFont = `'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', 'IPRight CJK', sans-serif`;
-const loginVariant = __LOGIN_VARIANT__;
+const loginVariant: string = __LOGIN_VARIANT__;
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const previewModules = APP_PROFILE.modules.slice(0, 4);
@@ -506,7 +506,7 @@ def _render_dashboard_page(profile: dict | None = None) -> str:
 import { APP_PROFILE } from '../generated/appProfile';
 
 const uiFont = `'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', 'IPRight CJK', sans-serif`;
-const dashboardVariant = __DASHBOARD_VARIANT__;
+const dashboardVariant: string = __DASHBOARD_VARIANT__;
 
 const cardStyle: CSSProperties = {
   background: '#fff',

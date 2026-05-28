@@ -34,6 +34,7 @@ from workers.stages.build_support import (
     repair_invalid_module_pages,
 )
 from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
+from workers.stages.generated_frontend import _render_login_page
 from workers.stages.handlers import (
     _load_prd_summary,
     _merge_manual_llm_content,
@@ -2285,6 +2286,78 @@ export default function Login({ onLogin }) {
 
         assert "frontend/src/pages/Login.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_app_login_callback_signature_mismatch(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+
+export default function App() {
+  const handleLogin = (token: string) => token;
+  return <Login onLogin={handleLogin} />;
+}
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_metric_hallucinations(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+export default function App() { return <div>{APP_PROFILE.product_name}<Login onLogin={handleLogin} /><Dashboard /></div>; }
+const handleLogin = () => {};
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.totalCases} <ScheduleOutlined /></div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_render_login_page_types_login_variant_as_string(self):
+        page = _render_login_page({"experience_blueprint": {"login_variant": "workspace"}})
+
+        assert "const loginVariant: string =" in page
+
     def test_repair_invalid_support_files_falls_back_from_import_meta_env(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
         generated_files = {
@@ -2384,6 +2457,32 @@ export default function RecordsPage() {
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
         assert "frontend/src/pages/StatisticsPage.tsx" not in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_app_profile_title_access(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "statistics",
+                    "title": "统计分析",
+                    "route": "/statistics",
+                    "table_headers": ["指标", "数值", "趋势"],
+                    "rows": [["转化率", "18%", "上升"]],
+                    "highlights": ["支持按维度查看趋势"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function StatisticsPage() {
+  return <div>统计分析 指标 转化率 {APP_PROFILE.title}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/StatisticsPage.tsx" in invalid_paths
 
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source

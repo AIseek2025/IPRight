@@ -65,3 +65,5 @@
 17. 根因是 `_synthesize_support_runtime_files()` 默认只在目标文件为空时写入模板；对“非空但无效”的 support 文件，第二次调用仍会跳过写入。已补 `overwrite_existing=True` 通道，并增加回归测试锁定“识别无效后必须覆盖”的行为。
 18. `build 7` 穿过 support 批次后，两条任务新的共同失败点收敛到 `frontend/src/pages/StatisticsPage.tsx`。该文件其实已走模块结构化 fallback，但模块校验器误把 `StatisticsPage` 文件名中的 `Statistic` 子串当作 Antd `Statistic` 组件使用，导致统计页被错误判为无效。
 19. 已将 `Statistic` 校验从宽泛子串匹配改为更接近真实 JSX/属性访问的 token 识别（如 `<Statistic` / ` Statistic.` / ` Statistic `），并补回归测试，确保 `StatisticsPage` 这种文件名不再触发误判。
+20. `build 8` 已真正穿过 build 并进入 `verify_run`，两条任务的新共同失败点重新收敛为前端 `tsc -b`。这轮暴露出的高频问题包括：`App.tsx` 向 `Login` 传递错误回调签名、`Dashboard.tsx` 把 `dashboard_metrics` 数组误当成对象字段、错误使用未导入图标名、`Login.tsx` 中 `loginVariant` 被字面量推断导致 `briefing/workspace` 比较触发 TS2367，以及模块页错误访问 `APP_PROFILE.title`。
+21. 已收紧 core/module 校验器并修正模板：`_render_login_page()` / `_render_dashboard_page()` 的变体常量改为 `string` 显式类型；`repair_invalid_core_files()` 新增对 `handleLogin(token)`、缺失 `onLogin` 传递、`dashboard_metrics.totalCases`、未导入图标、未类型化 variant 常量等错误模式的拦截；模块页新增 `APP_PROFILE.title` 误用拦截。已补 7 条针对性回归测试。

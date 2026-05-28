@@ -616,6 +616,11 @@ def repair_invalid_core_files(
             and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
+            and ("<Login onLogin={handleLogin}" in content or "<Login onLogin={handleLogin} />" in content)
+            and "const handleLogin = (token:" not in content
+            and "const handleLogin = (value:" not in content
+            and "return <Login />" not in content
+            and "return <Login/>" not in content
             and (
                 not requires_route_shell
                 or (
@@ -634,6 +639,16 @@ def repair_invalid_core_files(
                     "activeTasks",
                     "environments",
                     "passedTests",
+                    "totalCases",
+                    "todayExecutions",
+                    "passRate",
+                    "totalEvents",
+                    "processingOrders",
+                    "pendingConfirm",
+                    "avgResponseTime",
+                    "ScheduleOutlined",
+                    "CloudServerOutlined",
+                    "CodeOutlined",
                     ".strong",
                     ".suffix",
                     ".trend",
@@ -642,6 +657,7 @@ def repair_invalid_core_files(
             )
             and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
             and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
+            and ("const dashboardVariant =" not in content or "const dashboardVariant: string =" in content)
             and _contains_any(
                 content,
                 [
@@ -662,6 +678,7 @@ def repair_invalid_core_files(
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
             and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
             and _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"])
+            and ("const loginVariant =" not in content or "const loginVariant: string =" in content)
             and _contains_any(content, ["登录", "密码", "用户名"])
         ),
     }
@@ -699,7 +716,7 @@ def repair_invalid_module_pages(
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
         has_valid_profile_import = "../generated/appProfile" in content and "../../generated/appProfile" not in content
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
-        uses_invalid_profile_alias = any(token in content for token in ["productName", "visualConfig"])
+        uses_invalid_profile_alias = any(token in content for token in ["productName", "visualConfig", "APP_PROFILE.title"])
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
         references_statistic_without_import = (
             any(token in content for token in ["<Statistic", " Statistic.", " Statistic "])
