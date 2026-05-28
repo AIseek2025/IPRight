@@ -646,6 +646,7 @@ def repair_invalid_core_files(
                     "processingOrders",
                     "pendingConfirm",
                     "avgResponseTime",
+                    "metric.icon",
                     "ScheduleOutlined",
                     "CloudServerOutlined",
                     "CodeOutlined",
@@ -716,7 +717,10 @@ def repair_invalid_module_pages(
         header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
         has_valid_profile_import = "../generated/appProfile" in content and "../../generated/appProfile" not in content
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
-        uses_invalid_profile_alias = any(token in content for token in ["productName", "visualConfig", "APP_PROFILE.title"])
+        uses_invalid_profile_alias = any(
+            token in content
+            for token in ["productName", "visualConfig", "APP_PROFILE.title", "APP_PROFILE.description"]
+        )
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
         references_statistic_without_import = (
             any(token in content for token in ["<Statistic", " Statistic.", " Statistic "])

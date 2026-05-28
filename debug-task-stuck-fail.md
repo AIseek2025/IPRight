@@ -67,3 +67,5 @@
 19. 已将 `Statistic` 校验从宽泛子串匹配改为更接近真实 JSX/属性访问的 token 识别（如 `<Statistic` / ` Statistic.` / ` Statistic `），并补回归测试，确保 `StatisticsPage` 这种文件名不再触发误判。
 20. `build 8` 已真正穿过 build 并进入 `verify_run`，两条任务的新共同失败点重新收敛为前端 `tsc -b`。这轮暴露出的高频问题包括：`App.tsx` 向 `Login` 传递错误回调签名、`Dashboard.tsx` 把 `dashboard_metrics` 数组误当成对象字段、错误使用未导入图标名、`Login.tsx` 中 `loginVariant` 被字面量推断导致 `briefing/workspace` 比较触发 TS2367，以及模块页错误访问 `APP_PROFILE.title`。
 21. 已收紧 core/module 校验器并修正模板：`_render_login_page()` / `_render_dashboard_page()` 的变体常量改为 `string` 显式类型；`repair_invalid_core_files()` 新增对 `handleLogin(token)`、缺失 `onLogin` 传递、`dashboard_metrics.totalCases`、未导入图标、未类型化 variant 常量等错误模式的拦截；模块页新增 `APP_PROFILE.title` 误用拦截。已补 7 条针对性回归测试。
+22. `build 9` 结果出现分叉：`3e7...` 已完整通过 `verify_run`、`capture`、`compose_manual`、`compose_code_book` 和 `publish`，成功完成交付；`c6f...` 仍在 `verify_run` 的 `tsc -b` 失败。
+23. `c6f...` 当前最新的真实 TS 失败点已进一步收敛为两类：`Dashboard.tsx` 在 `APP_PROFILE.dashboard_metrics` 上使用 `metric.icon` 造成联合类型不兼容，以及 `InventoryPage.tsx` 误访问不存在的 `APP_PROFILE.description`。已在校验器中新增这两类坏模式的拦截，并补对应回归测试。

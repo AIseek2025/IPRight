@@ -2353,6 +2353,39 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_metric_icon_access(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.map((metric) => <span>{metric.icon}</span>)}</div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_render_login_page_types_login_variant_as_string(self):
         page = _render_login_page({"experience_blueprint": {"login_variant": "workspace"}})
 
@@ -2483,6 +2516,32 @@ export default function StatisticsPage() {
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
         assert "frontend/src/pages/StatisticsPage.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_app_profile_description_access(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "inventory",
+                    "title": "履约节点监控",
+                    "route": "/inventory",
+                    "table_headers": ["履约单号", "阶段", "责任人"],
+                    "rows": [["INV-01", "在途", "陈楠"]],
+                    "highlights": ["支持节点追踪"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/InventoryPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function InventoryPage() {
+  return <div>履约节点监控 履约单号 INV-01 {APP_PROFILE.description}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/InventoryPage.tsx" in invalid_paths
 
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source
