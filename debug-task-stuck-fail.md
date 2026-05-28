@@ -69,3 +69,5 @@
 21. 已收紧 core/module 校验器并修正模板：`_render_login_page()` / `_render_dashboard_page()` 的变体常量改为 `string` 显式类型；`repair_invalid_core_files()` 新增对 `handleLogin(token)`、缺失 `onLogin` 传递、`dashboard_metrics.totalCases`、未导入图标、未类型化 variant 常量等错误模式的拦截；模块页新增 `APP_PROFILE.title` 误用拦截。已补 7 条针对性回归测试。
 22. `build 9` 结果出现分叉：`3e7...` 已完整通过 `verify_run`、`capture`、`compose_manual`、`compose_code_book` 和 `publish`，成功完成交付；`c6f...` 仍在 `verify_run` 的 `tsc -b` 失败。
 23. `c6f...` 当前最新的真实 TS 失败点已进一步收敛为两类：`Dashboard.tsx` 在 `APP_PROFILE.dashboard_metrics` 上使用 `metric.icon` 造成联合类型不兼容，以及 `InventoryPage.tsx` 误访问不存在的 `APP_PROFILE.description`。已在校验器中新增这两类坏模式的拦截，并补对应回归测试。
+24. 在继续推进 `c6f... build 10` 后，新的真实 `verify_run` 失败点进一步收敛为 support 常量缺口：`OrdersPage.tsx` 和 `StatisticsPage.tsx` 都从 `../types/constants` 导入 `COLORS`，但 seed 与 support fallback 的 `constants.ts` 里没有导出该常量，导致 `tsc -b` 与 `vite build` 同时失败。
+25. 已在 seed 常量文件与 support 结构化 fallback 模板中补充 `COLORS` 导出，并把 `repair_invalid_support_files()` 的 `constants.ts` 校验同步升级，确保未来一旦页面引用 `COLORS` 时不会再次因模板缺口而在 `verify_run` 失败。

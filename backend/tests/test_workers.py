@@ -2434,6 +2434,7 @@ export const api = { login: async () => ({ token: 'x' }) };
         assert sorted(repaired_paths) == sorted(generated_files.keys())
         assert "import.meta.env" not in synthesized["frontend/src/services/api.ts"]
         assert "DEMO_USERNAME" in synthesized["frontend/src/types/constants.ts"]
+        assert "COLORS" in synthesized["frontend/src/types/constants.ts"]
         assert "export interface DemoUser" in synthesized["frontend/src/types/models.ts"]
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):

@@ -26,6 +26,18 @@ export const ALERT_LEVELS = [
   { value: '提示', label: '提示', color: '#1890ff' },
 ];
 
+export const COLORS = {
+  primary: '#1677ff',
+  success: '#52c41a',
+  warning: '#faad14',
+  error: '#ff4d4f',
+  info: '#1890ff',
+  text: '#334155',
+  muted: '#64748b',
+  background: '#f8fafc',
+  panel: '#ffffff',
+} as const;
+
 export const USER_ROLES = [
   { value: '管理员', label: '管理员', description: '拥有全部系统权限' },
   { value: '运维人员', label: '运维人员', description: '设备和告警管理' },

@@ -410,6 +410,17 @@ export const api = {
             f"export const APP_VERSION = {_json_text(version)};\n"
             "export const DEMO_USERNAME = 'admin';\n"
             "export const DEMO_PASSWORD = 'admin123';\n"
+            "export const COLORS = {\n"
+            "  primary: '#1677ff',\n"
+            "  success: '#52c41a',\n"
+            "  warning: '#faad14',\n"
+            "  error: '#ff4d4f',\n"
+            "  info: '#1890ff',\n"
+            "  text: '#334155',\n"
+            "  muted: '#64748b',\n"
+            "  background: '#f8fafc',\n"
+            "  panel: '#ffffff',\n"
+            "} as const;\n"
         ),
         "frontend/src/types/models.ts": """export interface DemoUser {
   name: string;
@@ -462,6 +473,7 @@ def repair_invalid_support_files(
             and "APP_VERSION" in content
             and "DEMO_USERNAME" in content
             and "DEMO_PASSWORD" in content
+            and "COLORS" in content
         ),
         "frontend/src/types/models.ts": lambda content: (
             bool(content)
