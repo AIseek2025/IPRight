@@ -372,14 +372,19 @@ class TestStageHandlers:
         assert requirements["app_type"] == "desktop_client"
         assert requirements["visual_profile"]["name"] == "graphite_client"
         assert batches[0]["name"] == "core"
-        assert batches[1]["name"] == "support"
-        assert batches[1]["required_files"] == [
+        assert batches[0]["required_files"] == ["frontend/src/App.tsx"]
+        assert batches[1]["name"] == "core:Login"
+        assert batches[1]["required_files"] == ["frontend/src/pages/Login.tsx"]
+        assert batches[2]["name"] == "core:Dashboard"
+        assert batches[2]["required_files"] == ["frontend/src/pages/Dashboard.tsx"]
+        assert batches[3]["name"] == "support"
+        assert batches[3]["required_files"] == [
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
-        assert batches[2]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
-        assert batches[3]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
+        assert batches[4]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
+        assert batches[5]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
         assert batches[0]["requirements"]["app_type"] == "desktop_client"
         assert batches[0]["requirements"]["experience_blueprint"]["name"] == "command_hub"
         assert batches[0]["requirements"]["visual_profile"]["name"] == "graphite_client"
@@ -847,16 +852,20 @@ export default function WorkflowPage() {
                         "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
                     }
                 )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "export default function App(){ return <div>APP_PROFILE.product_name</div>; }",
                         }
                     )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({})
                 if required == (
                     "frontend/src/services/api.ts",
                     "frontend/src/types/constants.ts",
@@ -869,13 +878,10 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == (
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/pages/Login.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
                         }
                     )
                 if required == ("frontend/src/pages/Dashboard.tsx",):
@@ -897,18 +903,16 @@ export default function WorkflowPage() {
         assert error is None
         assert report is not None
         required_calls = [call["required_files"] for call in llm.calls]
-        assert (
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Login.tsx",
-            "frontend/src/pages/Dashboard.tsx",
-        ) in required_calls
+        assert ("frontend/src/App.tsx",) in required_calls
+        assert ("frontend/src/pages/Login.tsx",) in required_calls
+        assert ("frontend/src/pages/Dashboard.tsx",) in required_calls
         assert (
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ) in required_calls
-        assert ("frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx") in required_calls
-        assert ("frontend/src/pages/Dashboard.tsx",) in required_calls
+        assert required_calls.count(("frontend/src/pages/Login.tsx",)) >= 2
+        assert required_calls.count(("frontend/src/pages/Dashboard.tsx",)) >= 2
         assert report["generated_file_count"] == 6
 
     def test_generate_task_app_code_retries_invalid_core_files(self, tmp_path, monkeypatch):
@@ -952,15 +956,21 @@ export default function WorkflowPage() {
                     }
                 )
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "export default function App(){ return <div>调度工作台</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页 调度工作台</div>; }",
                         }
                     )
@@ -1006,19 +1016,17 @@ export default function WorkflowPage() {
         report, error = asyncio.run(_run())
         assert error is None
         assert report is not None
-        assert [call["required_files"] for call in llm.calls[:2]] == [
-            (
-                "frontend/src/App.tsx",
-                "frontend/src/pages/Login.tsx",
-                "frontend/src/pages/Dashboard.tsx",
-            ),
+        assert [call["required_files"] for call in llm.calls[:4]] == [
+            ("frontend/src/App.tsx",),
+            ("frontend/src/pages/Login.tsx",),
+            ("frontend/src/pages/Dashboard.tsx",),
             (
                 "frontend/src/services/api.ts",
                 "frontend/src/types/constants.ts",
                 "frontend/src/types/models.ts",
             ),
         ]
-        retry_calls = [call for call in llm.calls[2:] if call["validation_hints"]]
+        retry_calls = [call for call in llm.calls[4:] if call["validation_hints"]]
         assert retry_calls
         assert all(len(call["required_files"]) == 1 for call in retry_calls)
         assert ("frontend/src/App.tsx",) in [call["required_files"] for call in retry_calls]

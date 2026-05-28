@@ -196,17 +196,24 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
         "project_dna": codegen_requirements.get("project_dna", {}),
         "differentiation_hint": codegen_requirements.get("differentiation_hint", ""),
     }
-    batches = [
-        {
-            "name": "core",
-            "required_files": primary_core_files,
-            "requirements": {
-                **common_requirements,
-                "required_files": primary_core_files,
-                "module_pages": list(codegen_requirements.get("module_pages", [])),
-            },
-        }
-    ]
+    batches = []
+    for index, relative_path in enumerate(primary_core_files):
+        component_name = Path(relative_path).stem
+        batches.append(
+            {
+                "name": "core" if index == 0 else f"core:{component_name}",
+                "required_files": [relative_path],
+                "requirements": {
+                    **common_requirements,
+                    "required_files": [relative_path],
+                    "module_pages": (
+                        list(codegen_requirements.get("module_pages", []))
+                        if relative_path == "frontend/src/App.tsx"
+                        else []
+                    ),
+                },
+            }
+        )
     if support_core_files:
         batches.append(
             {
