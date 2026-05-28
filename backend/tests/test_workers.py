@@ -2444,6 +2444,52 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_echarts_subpath_imports_and_metric_object_access(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import React from 'react';
+import ReactEChartsCore from 'echarts-for-react/lib/core';
+import * as echarts from 'echarts/core';
+import { LineChart } from 'echarts/charts';
+import { GridComponent } from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import { APP_PROFILE } from '../generated/appProfile';
+echarts.use([LineChart, GridComponent, CanvasRenderer]);
+export default function Dashboard() {
+  const metrics = APP_PROFILE?.dashboard_metrics ?? {
+    todayAlerts: 12,
+    processing: 5,
+    overdueWarnings: 3,
+    closed: 8,
+  };
+  return <div>系统首页 {APP_PROFILE.product_name} {metrics.todayAlerts} <ReactEChartsCore option={{}} /></div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_render_login_page_types_login_variant_as_string(self):
         page = _render_login_page({"experience_blueprint": {"login_variant": "workspace"}})
 
