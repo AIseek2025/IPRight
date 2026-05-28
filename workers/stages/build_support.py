@@ -594,6 +594,51 @@ def repair_invalid_core_files(
         )
         return any(name not in allowed_page_imports for name in imported_pages)
 
+    def _has_duplicate_page_imports_or_routes(content: str) -> bool:
+        imported_pages = [
+            match.group(1)
+            for match in re.finditer(
+                r"import\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\s+['\"]\.\/pages\/[A-Za-z_][A-Za-z0-9_]*['\"]",
+                content,
+            )
+        ]
+        if len(imported_pages) != len(set(imported_pages)):
+            return True
+
+        route_paths = [
+            match.group(1).strip()
+            for match in re.finditer(
+                r"<Route\s+path\s*=\s*['\"]([^'\"]+)['\"]",
+                content,
+            )
+            if match.group(1).strip()
+        ]
+        return len(route_paths) != len(set(route_paths))
+
+    def _uses_valid_login_entry(content: str) -> bool:
+        if "<Login" not in content:
+            return True
+        return _contains_any(
+            content,
+            [
+                "<Login onLogin={handleLogin}",
+                "<Login onLogin={handleLogin} />",
+                "<Login onLogin={() => undefined}",
+                "<Login onLogin={() => undefined} />",
+            ],
+        )
+
+    def _uses_valid_login_component_signature(content: str) -> bool:
+        return _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"]) or _contains_any(
+            content,
+            [
+                "export default function Login()",
+                "function Login()",
+                "const Login = () =>",
+                "const Login=() =>",
+            ],
+        )
+
     def _uses_disallowed_unified_sidebar(content: str) -> bool:
         if app_type == "desktop_client":
             return False
@@ -626,10 +671,11 @@ def repair_invalid_core_files(
                 ],
             )
             and not _references_unknown_page_import(content)
+            and not _has_duplicate_page_imports_or_routes(content)
             and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
-            and ("<Login onLogin={handleLogin}" in content or "<Login onLogin={handleLogin} />" in content)
+            and _uses_valid_login_entry(content)
             and "const handleLogin = (token:" not in content
             and "const handleLogin = (value:" not in content
             and "return <Login />" not in content
@@ -663,6 +709,10 @@ def repair_invalid_core_files(
                     "processing",
                     "overdueWarnings",
                     "closed",
+                    "openIncidents",
+                    "inProgress",
+                    "resolvedToday",
+                    "escalation",
                     "metric.icon",
                     "echarts-for-react/lib/core",
                     "echarts/core",
@@ -706,7 +756,7 @@ def repair_invalid_core_files(
             "模块开发中" not in content
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
             and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
-            and _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"])
+            and _uses_valid_login_component_signature(content)
             and ("const loginVariant =" not in content or "const loginVariant: string =" in content)
             and _contains_any(content, ["登录", "密码", "用户名"])
         ),
@@ -833,6 +883,7 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
             "App.tsx 必须导入并使用 ./generated/appProfile 中的 APP_PROFILE，不能只写静态文案。"
         )
         hints.append("App.tsx 只能引用 Login、Dashboard 和当前任务 required_files 中明确要求的模块页面，不能额外导入不存在的页面组件。")
+        hints.append("App.tsx 不得重复导入同一个页面组件，也不得重复声明相同 path 的 Route。")
         if module_routes:
             hints.append(
                 "App.tsx 必须使用 Routes/Route 或 useRoutes 显式挂接这些模块路由: "
@@ -852,6 +903,9 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
         hints.append(
             "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
+        )
+        hints.append(
+            "Dashboard.tsx 必须把 APP_PROFILE.dashboard_metrics 当作数组使用，不能访问 openIncidents、inProgress、resolvedToday、escalation 等对象字段。"
         )
     if "frontend/src/pages/Login.tsx" in invalid_paths:
         hints.append(

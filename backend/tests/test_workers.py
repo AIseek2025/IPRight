@@ -2333,6 +2333,60 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/App.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_duplicate_page_imports_and_routes(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [
+                {
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "title": "统计分析",
+                }
+            ],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { Routes, Route } from 'react-router-dom';
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import StatisticsPage from './pages/StatisticsPage';
+import SuppliersPage from './pages/SuppliersPage';
+import StatisticsPage from './pages/StatisticsPage';
+
+const handleLogin = () => {};
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login onLogin={handleLogin} />} />
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/statistics" element={<StatisticsPage />} />
+      <Route path="/statistics" element={<StatisticsPage />} />
+      <Route path="/suppliers" element={<SuppliersPage />} />
+      <Route path="/about" element={<div>{APP_PROFILE.product_name}</div>} />
+    </Routes>
+  );
+}
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} Card</div>; }
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_rejects_dashboard_metric_hallucinations(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -2476,6 +2530,53 @@ export default function Dashboard() {
     closed: 8,
   };
   return <div>系统首页 {APP_PROFILE.product_name} {metrics.todayAlerts} <ReactEChartsCore option={{}} /></div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_dashboard_metric_object_access_variants(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+import { Card, Statistic } from 'antd';
+export default function Dashboard() {
+  const metrics = APP_PROFILE.dashboard_metrics || {
+    openIncidents: 42,
+    inProgress: 18,
+    resolvedToday: 7,
+    escalation: 3,
+  };
+  return (
+    <Card title={`系统首页 ${APP_PROFILE.product_name}`}>
+      <Statistic title="待处理异常" value={metrics.openIncidents} />
+      <Statistic title="处理中" value={metrics.inProgress} />
+      <Statistic title="今日已关闭" value={metrics.resolvedToday} />
+      <Statistic title="升级处理" value={metrics.escalation} />
+    </Card>
+  );
 }
 """,
             "frontend/src/pages/Login.tsx": """
