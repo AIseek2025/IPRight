@@ -1611,12 +1611,14 @@ export default function WorkflowPage() {
             if call["invalid_module_previews"]
         ]
         assert retry_calls == [
-            ("frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"),
+            ("frontend/src/pages/PurchasesPage.tsx",),
+            ("frontend/src/pages/InventoryPage.tsx",),
             ("frontend/src/pages/AlertsPage.tsx",),
         ]
         retry_batches = [batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry"]
         assert [batch["required_files"] for batch in retry_batches] == [
-            ["frontend/src/pages/PurchasesPage.tsx", "frontend/src/pages/InventoryPage.tsx"],
+            ["frontend/src/pages/PurchasesPage.tsx"],
+            ["frontend/src/pages/InventoryPage.tsx"],
             ["frontend/src/pages/AlertsPage.tsx"],
         ]
         assert "mockData" not in (app_root / "frontend/src/pages/PurchasesPage.tsx").read_text(encoding="utf-8")

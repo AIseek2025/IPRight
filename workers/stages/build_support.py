@@ -31,7 +31,7 @@ _FRONTEND_FONT_MATCH_TOKENS = (
 _FONT_FAMILY_PROP_RE = re.compile(r"fontFamily\s*:\s*(?P<value>`[^`]*`|'[^'\n]*'|\"[^\"\n]*\")")
 _FONT_FAMILY_CSS_RE = re.compile(r"(font-family\s*:\s*)(?P<value>[^;]+)(;)", re.IGNORECASE)
 _CORE_INVALID_RETRY_BATCH_SIZE = 1
-_MODULE_INVALID_RETRY_BATCH_SIZE = 2
+_MODULE_INVALID_RETRY_BATCH_SIZE = 1
 
 
 def _write_text(path: str, content: str) -> None:
