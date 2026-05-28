@@ -55,8 +55,12 @@ from workers.stages.generated_frontend import (
     _render_login_page,
     _render_module_page,
 )
-from workers.stages.runtime_support import _collect_missing_essential_titles
-from app.services.runtime import SandboxRuntime
+from workers.stages.runtime_support import (
+    _collect_missing_essential_titles,
+    _prepare_runtime_manifest,
+    verify_runtime_execution,
+)
+from app.services.runtime import RuntimeHealthReport, SandboxRuntime
 from app.services.capture import PlaywrightCapture
 from app.services.document.manual import OPTIONAL_MANUAL_MODULES
 
@@ -1954,6 +1958,132 @@ const css = `
         assert first != third
         assert first["backend"] == first["frontend"] + 1
         assert 24000 <= first["frontend"] <= 43998
+
+    def test_prepare_runtime_manifest_moves_busy_port_pair(self, monkeypatch):
+        availability = {
+            24000: False,
+            24001: False,
+            24002: True,
+            24003: True,
+        }
+        monkeypatch.setattr(
+            "workers.stages.runtime_support._port_is_available",
+            lambda port: availability.get(port, True),
+        )
+
+        run_manifest = {
+            "start_commands": [
+                "cd app/frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 24000 --strictPort",
+                "cd app/backend && uvicorn app.main:app --host 127.0.0.1 --port 24001",
+            ],
+            "ports": {"frontend": 24000, "backend": 24001},
+            "health_checks": [
+                "http://127.0.0.1:24000/",
+                "http://127.0.0.1:24001/health",
+            ],
+        }
+
+        prepared = _prepare_runtime_manifest(run_manifest)
+
+        assert prepared["ports"] == {"frontend": 24002, "backend": 24003}
+        assert "--port 24002" in prepared["start_commands"][0]
+        assert "--port 24003" in prepared["start_commands"][1]
+        assert prepared["health_checks"] == [
+            "http://127.0.0.1:24002/",
+            "http://127.0.0.1:24003/health",
+        ]
+        assert run_manifest["ports"] == {"frontend": 24000, "backend": 24001}
+
+    def test_verify_runtime_execution_uses_prepared_runtime_ports(self, monkeypatch, tmp_path):
+        workspace = tmp_path / "workspace"
+        artifacts = tmp_path / "artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        captured: dict[str, dict] = {}
+
+        class _FakeRuntime:
+            def __init__(self, _workspace_root: str):
+                self.workspace_root = _workspace_root
+
+            async def install_dependencies(self, manifest: dict) -> bool:
+                captured["install"] = manifest
+                return True
+
+            async def start_services(self, manifest: dict):
+                captured["start"] = manifest
+                return []
+
+            async def run_health_checks(self, manifest: dict, timeout: int = 30, services=None):
+                captured["health"] = manifest
+                return RuntimeHealthReport(
+                    success=True,
+                    frontend_ok=True,
+                    backend_ok=True,
+                    health_checks=[
+                        {"url": "http://127.0.0.1:23102/", "ok": True, "frontend": True, "backend": False},
+                        {"url": "http://127.0.0.1:23103/health", "ok": True, "frontend": False, "backend": True},
+                    ],
+                )
+
+            async def check_login_page(self, frontend_url: str) -> bool:
+                captured["login_url"] = {"url": frontend_url}
+                return True
+
+            async def check_frontend_markers(self, frontend_url: str, expected_markers: list[str]):
+                captured["markers"] = {"url": frontend_url, "markers": expected_markers}
+                return True, ""
+
+            def stop_all(self) -> None:
+                return None
+
+        async def _fake_create_artifact(*_args, **_kwargs):
+            return None
+
+        async def _fake_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr("app.services.runtime.SandboxRuntime", _FakeRuntime)
+        monkeypatch.setattr(
+            "workers.stages.runtime_support._prepare_runtime_manifest",
+            lambda manifest: {
+                **manifest,
+                "ports": {"frontend": 23102, "backend": 23103},
+                "start_commands": [
+                    "frontend --port 23102",
+                    "backend --port 23103",
+                ],
+                "health_checks": [
+                    "http://127.0.0.1:23102/",
+                    "http://127.0.0.1:23103/health",
+                ],
+            },
+        )
+
+        ok, error, runtime_status = asyncio.run(
+            verify_runtime_execution(
+                task_id=str(uuid.uuid4()),
+                build_id=str(uuid.uuid4()),
+                workspace_root=str(workspace),
+                artifacts_root=str(artifacts),
+                run_manifest={
+                    "ports": {"frontend": 23100, "backend": 23101},
+                    "start_commands": ["frontend --port 23100", "backend --port 23101"],
+                    "health_checks": ["http://127.0.0.1:23100/", "http://127.0.0.1:23101/health"],
+                },
+                app_manifest={"product_name": "供应链管理软件", "version": "V1.0"},
+                create_artifact=_fake_create_artifact,
+                db_factory=lambda: None,
+                sleep_fn=_fake_sleep,
+            )
+        )
+
+        assert ok is True
+        assert error is None
+        assert captured["install"]["ports"] == {"frontend": 23102, "backend": 23103}
+        assert captured["start"]["ports"] == {"frontend": 23102, "backend": 23103}
+        assert captured["health"]["ports"] == {"frontend": 23102, "backend": 23103}
+        assert captured["login_url"]["url"] == "http://127.0.0.1:23102"
+        assert runtime_status["frontend_port"] == 23102
+        assert runtime_status["backend_port"] == 23103
 
     def test_capture_login_page_expected_markers_include_login_form_traits(self):
         capture = PlaywrightCapture(base_url="http://127.0.0.1:3000", output_dir="/tmp")
