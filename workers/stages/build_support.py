@@ -835,11 +835,10 @@ def repair_invalid_module_pages(
                 "visualConfig",
                 "APP_PROFILE.title",
                 "APP_PROFILE.description",
-                "APP_PROFILE.visual",
                 "APP_PROFILE.theme",
                 "editable:",
             ]
-        )
+        ) or bool(re.search(r"APP_PROFILE\.visual(?!_profile)\b", content))
         uses_invalid_modal_header_style = "<Modal" in content and "headerStyle=" in content
         imports_unsupported_shared_models = any(
             token in content
@@ -908,6 +907,22 @@ def synthesize_recoverable_module_files(
         repaired_paths.append(relative_path)
 
     return synthesized, repaired_paths
+
+
+def _apply_retry_module_structural_fallback(
+    generated_files: dict[str, str],
+    required_chunk: list[str],
+    profile: dict,
+) -> tuple[dict[str, str], list[str], list[str]]:
+    synthesized, repaired_paths = synthesize_recoverable_module_files(
+        generated_files,
+        required_chunk,
+        profile,
+    )
+    if not repaired_paths:
+        return generated_files, [], repair_invalid_module_pages(generated_files, profile)[1]
+    synthesized, invalid_module_paths = repair_invalid_module_pages(synthesized, profile)
+    return synthesized, repaired_paths, invalid_module_paths
 
 
 def _preview_generated_content(content: str, limit: int = 320) -> str:
@@ -1446,6 +1461,33 @@ async def generate_task_app_code(
                             "error": codegen_resp.error or "unknown error",
                         }
                     )
+                    (
+                        generated_files,
+                        repaired_retry_module_paths,
+                        invalid_module_paths,
+                    ) = _apply_retry_module_structural_fallback(
+                        generated_files,
+                        list(required_chunk),
+                        profile,
+                    )
+                    if repaired_retry_module_paths:
+                        batch_reports.append(
+                            {
+                                "batch": "module_retry_structural_fallback",
+                                "attempt": attempt_no,
+                                "required_files": list(required_chunk),
+                                "generated_paths": sorted(repaired_retry_module_paths),
+                                "fallback_to_template": bool(invalid_module_paths),
+                                "error": (
+                                    "still invalid after retry structural fallback: "
+                                    + ", ".join(invalid_module_paths)
+                                    if invalid_module_paths
+                                    else None
+                                ),
+                            }
+                        )
+                        if not invalid_module_paths:
+                            break
                     continue
                 batch_files = codegen_resp.structured.get("files", {})
                 if not isinstance(batch_files, dict):
@@ -1471,6 +1513,33 @@ async def generate_task_app_code(
                             "error": "files payload missing",
                         }
                     )
+                    (
+                        generated_files,
+                        repaired_retry_module_paths,
+                        invalid_module_paths,
+                    ) = _apply_retry_module_structural_fallback(
+                        generated_files,
+                        list(required_chunk),
+                        profile,
+                    )
+                    if repaired_retry_module_paths:
+                        batch_reports.append(
+                            {
+                                "batch": "module_retry_structural_fallback",
+                                "attempt": attempt_no,
+                                "required_files": list(required_chunk),
+                                "generated_paths": sorted(repaired_retry_module_paths),
+                                "fallback_to_template": bool(invalid_module_paths),
+                                "error": (
+                                    "still invalid after retry structural fallback: "
+                                    + ", ".join(invalid_module_paths)
+                                    if invalid_module_paths
+                                    else None
+                                ),
+                            }
+                        )
+                        if not invalid_module_paths:
+                            break
                     continue
                 regenerated_paths: list[str] = []
                 for relative_path, content in batch_files.items():
