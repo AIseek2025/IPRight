@@ -2399,6 +2399,51 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_metrics_state_shape_mismatch(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import React, { useEffect, useState } from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  const [metrics, setMetrics] = useState({
+    anomalyTotal: 128,
+    pendingTasks: 35,
+    closureRate: 87.5,
+    avgProcessHours: 4.2,
+  });
+  useEffect(() => {
+    if (APP_PROFILE?.dashboard_metrics) {
+      setMetrics(APP_PROFILE.dashboard_metrics);
+    }
+  }, []);
+  return <div>系统首页 {APP_PROFILE.product_name}</div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_render_login_page_types_login_variant_as_string(self):
         page = _render_login_page({"experience_blueprint": {"login_variant": "workspace"}})
 
