@@ -388,6 +388,21 @@ class TestStageHandlers:
         assert batches[0]["requirements"]["app_type"] == "desktop_client"
         assert batches[0]["requirements"]["experience_blueprint"]["name"] == "command_hub"
         assert batches[0]["requirements"]["visual_profile"]["name"] == "graphite_client"
+        assert batches[0]["requirements"]["module_pages"] == [
+            {
+                "title": "订单管理",
+                "route": "/orders",
+                "file_path": "frontend/src/pages/OrdersPage.tsx",
+                "component_name": "OrdersPage",
+            },
+            {
+                "title": "客户管理",
+                "route": "/customers",
+                "file_path": "frontend/src/pages/CustomersPage.tsx",
+                "component_name": "CustomersPage",
+            },
+        ]
+        assert "rows" not in batches[0]["requirements"]["module_pages"][0]
         assert requirements["project_dna"]["architecture_style"] == "dispatch_flow"
         assert batches[0]["requirements"]["project_dna"]["module_signature"] == ["运单调度中心", "线路监控台"]
         assert batches[0]["requirements"]["topic_label"] == "智慧物流调度台"

@@ -69,6 +69,18 @@ def _chunk_required_files(required_files: list[str], chunk_size: int) -> list[li
     ]
 
 
+def _build_route_shell_module_pages(module_pages: list[dict]) -> list[dict]:
+    return [
+        {
+            "title": page.get("title"),
+            "route": page.get("route"),
+            "file_path": page.get("file_path"),
+            "component_name": page.get("component_name"),
+        }
+        for page in module_pages
+    ]
+
+
 def build_seed_copy_ignore(extra_names: set[str] | None = None):
     extra_names = extra_names or set()
 
@@ -197,6 +209,7 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
         "differentiation_hint": codegen_requirements.get("differentiation_hint", ""),
     }
     batches = []
+    route_shell_module_pages = _build_route_shell_module_pages(list(codegen_requirements.get("module_pages", [])))
     for index, relative_path in enumerate(primary_core_files):
         component_name = Path(relative_path).stem
         batches.append(
@@ -207,7 +220,7 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
                     **common_requirements,
                     "required_files": [relative_path],
                     "module_pages": (
-                        list(codegen_requirements.get("module_pages", []))
+                        route_shell_module_pages
                         if relative_path == "frontend/src/App.tsx"
                         else []
                     ),
