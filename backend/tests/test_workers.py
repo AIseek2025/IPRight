@@ -517,8 +517,11 @@ export default function Dashboard() {
 }
 """,
                 "frontend/src/pages/Login.tsx": """
-export default function Login() {
-  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', '1');
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  const handleSubmit = () => {
+    localStorage.setItem('ipright_demo_auth', '1');
+    onLogin();
+  };
   return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
 }
 """,
@@ -2394,6 +2397,37 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
         assert "frontend/src/App.tsx" in invalid_paths
+
+    def test_repair_invalid_core_files_rejects_login_without_callback_signature_when_app_requires_onlogin(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard />{APP_PROFILE.product_name}</div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  const handleSubmit = () => localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={handleSubmit}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Login.tsx" in invalid_paths
 
     def test_repair_invalid_core_files_rejects_dashboard_metric_hallucinations(self, tmp_path):
         profile = {

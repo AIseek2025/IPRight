@@ -635,8 +635,11 @@ def repair_invalid_core_files(
             ],
         )
 
+    def _supports_login_callback(content: str) -> bool:
+        return _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"])
+
     def _uses_valid_login_component_signature(content: str) -> bool:
-        return _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"]) or _contains_any(
+        return _supports_login_callback(content) or _contains_any(
             content,
             [
                 "export default function Login()",
@@ -663,6 +666,9 @@ def repair_invalid_core_files(
             "左侧导航",
         ]
         return _contains_any(content, sidebar_tokens)
+
+    app_content = str(repaired.get("frontend/src/App.tsx") or "")
+    app_requires_login_callback = "<Login onLogin=" in app_content
 
     validators = {
         "frontend/src/App.tsx": lambda content: (
@@ -763,7 +769,11 @@ def repair_invalid_core_files(
             "模块开发中" not in content
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
             and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
-            and _uses_valid_login_component_signature(content)
+            and (
+                _supports_login_callback(content)
+                if app_requires_login_callback
+                else _uses_valid_login_component_signature(content)
+            )
             and ("const loginVariant =" not in content or "const loginVariant: string =" in content)
             and _contains_any(content, ["登录", "密码", "用户名"])
         ),
