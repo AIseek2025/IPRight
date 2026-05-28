@@ -2544,6 +2544,33 @@ export default function InventoryPage() {
 
         assert "frontend/src/pages/InventoryPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_editable_table_columns(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "alerts",
+                    "title": "异常预警",
+                    "route": "/alerts",
+                    "table_headers": ["配置项", "当前值", "适用范围"],
+                    "rows": [["温控阈值", "-18C", "仓储"]],
+                    "highlights": ["支持异常预警配置"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/AlertsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function AlertsPage() {
+  const columns = [{ title: '当前值', dataIndex: 'currentValue', editable: true }];
+  return <div>异常预警 配置项 温控阈值 {APP_PROFILE.product_name} {String(columns.length)}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/AlertsPage.tsx" in invalid_paths
+
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source
 

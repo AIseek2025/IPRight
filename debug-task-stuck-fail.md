@@ -71,3 +71,4 @@
 23. `c6f...` 当前最新的真实 TS 失败点已进一步收敛为两类：`Dashboard.tsx` 在 `APP_PROFILE.dashboard_metrics` 上使用 `metric.icon` 造成联合类型不兼容，以及 `InventoryPage.tsx` 误访问不存在的 `APP_PROFILE.description`。已在校验器中新增这两类坏模式的拦截，并补对应回归测试。
 24. 在继续推进 `c6f... build 10` 后，新的真实 `verify_run` 失败点进一步收敛为 support 常量缺口：`OrdersPage.tsx` 和 `StatisticsPage.tsx` 都从 `../types/constants` 导入 `COLORS`，但 seed 与 support fallback 的 `constants.ts` 里没有导出该常量，导致 `tsc -b` 与 `vite build` 同时失败。
 25. 已在 seed 常量文件与 support 结构化 fallback 模板中补充 `COLORS` 导出，并把 `repair_invalid_support_files()` 的 `constants.ts` 校验同步升级，确保未来一旦页面引用 `COLORS` 时不会再次因模板缺口而在 `verify_run` 失败。
+26. `c6f... build 11` 再次进入 `verify_run` 后，`vite build` 已通过，但 `tsc -b` 仍收敛到单点失败：`AlertsPage.tsx` 的 `ColumnsType` 列配置中混入 `editable: true`，该属性不属于 antd 表格列定义。已将 `editable:` 纳入模块页坏模式拦截，并补对应回归测试，后续会让这类页面直接回退到结构化模块模板，而不是在 `verify_run` 才报类型错。

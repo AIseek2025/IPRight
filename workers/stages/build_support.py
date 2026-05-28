@@ -731,7 +731,13 @@ def repair_invalid_module_pages(
         must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
         uses_invalid_profile_alias = any(
             token in content
-            for token in ["productName", "visualConfig", "APP_PROFILE.title", "APP_PROFILE.description"]
+            for token in [
+                "productName",
+                "visualConfig",
+                "APP_PROFILE.title",
+                "APP_PROFILE.description",
+                "editable:",
+            ]
         )
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
         references_statistic_without_import = (
