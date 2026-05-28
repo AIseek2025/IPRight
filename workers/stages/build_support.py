@@ -1012,7 +1012,6 @@ async def generate_task_app_code(
     batches = build_codegen_batches(codegen_requirements)
     if batches:
         llm = get_llm_client()
-        allowed_files = set(codegen_requirements["required_files"])
         for batch in batches:
             pending_files = [
                 relative_path
@@ -1106,8 +1105,9 @@ async def generate_task_app_code(
                     continue
 
                 generated_paths: list[str] = []
+                accepted_files = set(current_required_files)
                 for relative_path, content in batch_files.items():
-                    if relative_path in allowed_files and content:
+                    if relative_path in accepted_files and content:
                         generated_files[relative_path] = str(content)
                         generated_paths.append(relative_path)
 

@@ -1043,6 +1043,107 @@ export default function WorkflowPage() {
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
 
+    def test_generate_task_app_code_ignores_unrequested_files_from_page_batches(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "跨境冷链履约异常协同平台",
+            "scene": "冷链履约异常协同",
+            "industry_scope": "冷链供应链",
+            "user_roles": ["运营主管"],
+            "modules": [
+                {
+                    "key": "sales",
+                    "route": "/sales",
+                    "title": "异常事件管理",
+                    "table_headers": ["事件编号", "异常类型", "状态"],
+                    "rows": [["SALE-1", "延迟签收", "处理中"]],
+                    "highlights": ["联动仓配处理"],
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; const handleLogin = () => {}; export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard />{APP_PROFILE.product_name}</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export interface ApiResult<T = unknown> { success: boolean; data?: T; message?: string; } export async function request<T = unknown>(payload: T): Promise<ApiResult<T>> { return { success: true, data: payload }; } export const api = { login: async (username: string, _password: string) => request({ token: 'demo-token', user: { name: username || '管理员', role: '管理员' } }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '跨境冷链履约异常协同平台'; export const APP_VERSION = 'V1.0'; export const DEMO_USERNAME = 'admin'; export const DEMO_PASSWORD = 'admin123'; export const COLORS = { primary: '#1677ff', success: '#52c41a', warning: '#faad14', error: '#ff4d4f', info: '#1890ff', text: '#334155', muted: '#64748b', background: '#f8fafc', panel: '#ffffff' } as const;",
+                            "frontend/src/types/models.ts": "export interface DemoUser { name: string; role: string; } export interface LoginResponse { token: string; user: DemoUser; } export interface ApiResult<T = unknown> { success: boolean; data?: T; message?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/SalesPage.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/SalesPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function SalesPage() { return <div>异常事件管理 SALE-1 延迟签收 处理中 {APP_PROFILE.product_name}</div>; }",
+                            "frontend/src/App.tsx": "export default function App(){ return <div>坏掉的额外 App</div>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login(){ return <div>坏掉的额外 Login</div>; }",
+                            "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>坏掉的额外 Dashboard</div>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert report is not None
+        sales_batch = next(batch for batch in report["batches"] if batch["batch"] == "page:SalesPage")
+        assert sales_batch["generated_paths"] == ["frontend/src/pages/SalesPage.tsx"]
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        login_text = (app_root / "frontend/src/pages/Login.tsx").read_text(encoding="utf-8")
+        dashboard_text = (app_root / "frontend/src/pages/Dashboard.tsx").read_text(encoding="utf-8")
+        assert "坏掉的额外 App" not in app_text
+        assert "坏掉的额外 Login" not in login_text
+        assert "坏掉的额外 Dashboard" not in dashboard_text
+
     def test_generate_task_app_code_structurally_repairs_persistently_invalid_app(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
