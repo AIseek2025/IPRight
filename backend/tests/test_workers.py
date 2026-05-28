@@ -976,13 +976,21 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
                         }
                     )
@@ -998,7 +1006,7 @@ export default function WorkflowPage() {
         report, error = asyncio.run(_run())
         assert error is None
         assert report is not None
-        assert [call["required_files"] for call in llm.calls] == [
+        assert [call["required_files"] for call in llm.calls[:2]] == [
             (
                 "frontend/src/App.tsx",
                 "frontend/src/pages/Login.tsx",
@@ -1009,14 +1017,17 @@ export default function WorkflowPage() {
                 "frontend/src/types/constants.ts",
                 "frontend/src/types/models.ts",
             ),
-            ("frontend/src/App.tsx", "frontend/src/pages/Dashboard.tsx"),
         ]
-        assert llm.calls[-1]["validation_hints"]
-        retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry")
-        assert retry_batch["generated_paths"] == [
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Dashboard.tsx",
-        ]
+        retry_calls = [call for call in llm.calls[2:] if call["validation_hints"]]
+        assert retry_calls
+        assert all(len(call["required_files"]) == 1 for call in retry_calls)
+        assert ("frontend/src/App.tsx",) in [call["required_files"] for call in retry_calls]
+        assert ("frontend/src/pages/Dashboard.tsx",) in [call["required_files"] for call in retry_calls]
+        retry_batches = [batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry"]
+        assert retry_batches
+        assert all(len(batch["required_files"]) == 1 for batch in retry_batches)
+        assert ["frontend/src/App.tsx"] in [batch["required_files"] for batch in retry_batches]
+        assert ["frontend/src/pages/Dashboard.tsx"] in [batch["required_files"] for batch in retry_batches]
         assert (app_root / "frontend/src/App.tsx").exists()
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
@@ -1090,13 +1101,15 @@ export default function WorkflowPage() {
                             "frontend/src/pages/CreditSubjectsPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function CreditSubjectsPage(){ return <section><h1>授信主体</h1><div>{APP_PROFILE.product_name}</div></section>; }",
                         }
                     )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/pages/Login.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>仍然坏掉的 App</div>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
                             "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Card</div>; }",
                         }
                     )
