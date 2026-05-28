@@ -2743,6 +2743,39 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_metric_label_and_item_icon_access(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.map((item) => <span>{item.label} {item.icon}</span>)}</div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_rejects_dashboard_metrics_state_shape_mismatch(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -2965,6 +2998,42 @@ export default function RecordsPage() {
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
         assert "frontend/src/pages/RecordsPage.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_visual_alias_and_message_without_import(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "suppliers",
+                    "title": "供应商协同",
+                    "route": "/suppliers",
+                    "table_headers": ["供应商编号", "供应商名称", "协同状态"],
+                    "rows": [["SUP-1", "华辰材料", "月度协同"]],
+                    "highlights": ["支持供应商协同"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  const visual = APP_PROFILE.visual_profile;
+  const submit = () => {
+    message.success('已提交新增供应商');
+  };
+  return (
+    <div style={{ background: visual.shell_background }}>
+      供应商协同 供应商编号 SUP-1 华辰材料
+      <button onClick={submit}>提交</button>
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/SuppliersPage.tsx" in invalid_paths
 
     def test_repair_invalid_module_pages_allows_statistics_page_name_without_antd_statistic(self):
         profile = {

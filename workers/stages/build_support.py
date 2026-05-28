@@ -740,6 +740,9 @@ def repair_invalid_core_files(
                     "resolvedToday",
                     "escalation",
                     "metric.icon",
+                    "metric.label",
+                    "item.icon",
+                    "item.label",
                     "echarts-for-react/lib/core",
                     "echarts/core",
                     "echarts/charts",
@@ -832,6 +835,7 @@ def repair_invalid_module_pages(
                 "visualConfig",
                 "APP_PROFILE.title",
                 "APP_PROFILE.description",
+                "APP_PROFILE.visual",
                 "APP_PROFILE.theme",
                 "editable:",
             ]
@@ -845,6 +849,14 @@ def repair_invalid_module_pages(
             ]
         )
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
+        uses_visual_profile_alias_without_guard = "const visual = APP_PROFILE.visual_profile" in content
+        references_message_without_import = (
+            "message." in content
+            and "import { message" not in content
+            and "message } from 'antd'" not in content
+            and 'message } from "antd"' not in content
+            and "message," not in content
+        )
         references_statistic_without_import = (
             any(token in content for token in ["<Statistic", " Statistic.", " Statistic "])
             and "import { Statistic" not in content
@@ -864,6 +876,8 @@ def repair_invalid_module_pages(
             and not uses_invalid_modal_header_style
             and not imports_unsupported_shared_models
             and not uses_unsafe_visual_profile
+            and not uses_visual_profile_alias_without_guard
+            and not references_message_without_import
             and not references_statistic_without_import
         )
         if is_valid:
