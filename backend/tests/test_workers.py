@@ -3146,6 +3146,36 @@ export default function SuppliersPage() {
 
         assert "frontend/src/pages/SuppliersPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_typography_without_import(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "sales",
+                    "title": "协同任务工作台",
+                    "route": "/sales",
+                    "table_headers": ["任务编号", "主题", "状态"],
+                    "rows": [["SAL-1", "跨境冷链履约异常协同平台", "处理中"]],
+                    "highlights": ["支持事项跟踪"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/SalesPage.tsx": """
+import { Card, Table } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+const { Title } = Typography;
+
+export default function SalesPage() {
+  return <div><Title>协同任务工作台 任务编号 SAL-1 跨境冷链履约异常协同平台</Title></div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/SalesPage.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_allows_statistics_page_name_without_antd_statistic(self):
         profile = {
             "modules": [

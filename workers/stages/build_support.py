@@ -862,6 +862,13 @@ def repair_invalid_module_pages(
             and "Statistic } from 'antd'" not in content
             and "Statistic," not in content
         )
+        references_typography_without_import = (
+            any(token in content for token in ["<Typography", "Typography.", "= Typography"])
+            and "import { Typography" not in content
+            and "Typography } from 'antd'" not in content
+            and 'Typography } from "antd"' not in content
+            and "Typography," not in content
+        )
         is_valid = (
             bool(content)
             and has_valid_profile_import
@@ -878,6 +885,7 @@ def repair_invalid_module_pages(
             and not uses_visual_profile_alias_without_guard
             and not references_message_without_import
             and not references_statistic_without_import
+            and not references_typography_without_import
         )
         if is_valid:
             continue
