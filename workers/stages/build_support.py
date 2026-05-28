@@ -836,6 +836,7 @@ def repair_invalid_module_pages(
                 "editable:",
             ]
         )
+        uses_invalid_modal_header_style = "<Modal" in content and "headerStyle=" in content
         imports_unsupported_shared_models = any(
             token in content
             for token in [
@@ -860,6 +861,7 @@ def repair_invalid_module_pages(
             and "mockData:" not in content
             and must_have_task_data
             and not uses_invalid_profile_alias
+            and not uses_invalid_modal_header_style
             and not imports_unsupported_shared_models
             and not uses_unsafe_visual_profile
             and not references_statistic_without_import

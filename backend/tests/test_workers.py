@@ -3102,6 +3102,40 @@ export default function AlertsPage() {
 
         assert "frontend/src/pages/AlertsPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_modal_header_style(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "alerts",
+                    "title": "异常预警",
+                    "route": "/alerts",
+                    "table_headers": ["预警编号", "预警主题", "状态"],
+                    "rows": [["ALT-01", "温控波动", "处理中"]],
+                    "highlights": ["支持新增预警规则"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/AlertsPage.tsx": """
+import { Modal } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+export default function AlertsPage() {
+  return (
+    <div>
+      <div>异常预警 预警编号 ALT-01 {APP_PROFILE.product_name}</div>
+      <Modal title="新增预警规则" open={true} headerStyle={{ background: '#fffbeb' }}>
+        <div>温控波动</div>
+      </Modal>
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/AlertsPage.tsx" in invalid_paths
+
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source
 
