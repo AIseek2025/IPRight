@@ -1074,14 +1074,52 @@ def _match_preset_module(preset_modules: list[dict], title: str, index: int) -> 
 
 
 def _module_route(title: str, index: int, fallback_route: str, page_routes: list[str]) -> str:
+    preferred_route = ""
+    if len(page_routes) > index + 2 and page_routes[index + 2]:
+        preferred_route = str(page_routes[index + 2]).strip()
+    if preferred_route:
+        return preferred_route if preferred_route.startswith("/") else f"/{preferred_route.lstrip('/')}"
+
+    fallback_route = str(fallback_route or "").strip()
+    if fallback_route:
+        return fallback_route if fallback_route.startswith("/") else f"/{fallback_route.lstrip('/')}"
+
     hinted_route = _module_route_hint(title)
     if hinted_route:
         return hinted_route
-    if fallback_route:
-        return fallback_route
-    if len(page_routes) > index + 2 and page_routes[index + 2]:
-        return page_routes[index + 2]
     return f"/{_slug_key(title)}"
+
+
+def _ensure_unique_module_routes(modules: list[dict]) -> list[dict]:
+    normalized_modules: list[dict] = []
+    used_routes: set[str] = set()
+
+    for index, module in enumerate(modules, start=1):
+        normalized_module = dict(module)
+        current_route = str(normalized_module.get("route") or "").strip()
+        if current_route:
+            current_route = current_route if current_route.startswith("/") else f"/{current_route.lstrip('/')}"
+        title_route = f"/{_slug_key(str(normalized_module.get('title') or normalized_module.get('key') or f'module-{index}'))}"
+        route_candidates = [current_route, title_route]
+
+        chosen_route = ""
+        for candidate in route_candidates:
+            if candidate and candidate not in {"/", "/login", "/dashboard"} and candidate not in used_routes:
+                chosen_route = candidate
+                break
+        if not chosen_route:
+            base_route = title_route if title_route not in {"/", "/login", "/dashboard"} else f"/module-{index}"
+            suffix = 2
+            chosen_route = base_route
+            while chosen_route in used_routes:
+                chosen_route = f"{base_route}-{suffix}"
+                suffix += 1
+
+        normalized_module["route"] = chosen_route
+        used_routes.add(chosen_route)
+        normalized_modules.append(normalized_module)
+
+    return normalized_modules
 
 
 def _module_headers(kind: str) -> list[str]:
@@ -2490,6 +2528,7 @@ def build_task_profile(
                 page_variant=experience_blueprint["module_variants"][idx % len(experience_blueprint["module_variants"])],
             )
         )
+    profile_modules = _ensure_unique_module_routes(profile_modules)
 
     screenshot_scenarios = [
         {"id": "login-page", "title": "登录页", "route": "/login", "actions": [], "priority": 1},

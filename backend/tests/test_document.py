@@ -10,6 +10,7 @@ from app.services.document.manual import SoftwareManualGenerator
 from app.services.document.codebook import SourceCodeBookGenerator
 from app.services.document.diagrams import generate_system_architecture_diagram
 from app.services.project_profile import build_plan_seed, build_task_profile
+from workers.stages.build_support import repair_invalid_core_files, synthesize_recoverable_core_files
 
 
 def test_manual_can_generate():
@@ -366,6 +367,63 @@ def test_task_profile_prefers_content_route_hints_over_old_preset_routes():
     assert route_by_title["创作者与演员管理"] == "/actors"
     assert route_by_title["广告投放管理"] == "/campaigns"
     assert route_by_title["播放数据统计"] == "/statistics"
+
+
+def test_task_profile_prefers_required_pages_before_generic_route_hints():
+    profile = build_task_profile(
+        keyword="跨境冷链履约异常协同平台",
+        product_name="跨境冷链履约异常协同平台",
+        version="V1.0",
+        industry="冷链物流",
+        prd_summary={
+            "core_modules": ["异常事件管理", "协同处置工作台", "履约监控看板", "知识库与复盘"],
+            "required_pages": ["/login", "/dashboard", "/abnormal-events", "/collaboration", "/monitoring", "/knowledge"],
+            "user_roles": ["运营管理员", "异常处理专员", "冷链运营经理"],
+        },
+    )
+
+    assert [module["route"] for module in profile["modules"]] == [
+        "/abnormal-events",
+        "/collaboration",
+        "/monitoring",
+        "/knowledge",
+    ]
+
+
+def test_task_profile_unique_routes_keep_structural_app_fallback_valid(tmp_path):
+    profile = build_task_profile(
+        keyword="跨境冷链履约异常协同平台",
+        product_name="跨境冷链履约异常协同平台",
+        version="V1.0",
+        industry="冷链物流",
+        prd_summary={
+            "core_modules": ["异常事件管理", "协同处置工作台", "履约监控看板", "知识库与复盘"],
+            "required_pages": ["/login", "/dashboard", "/abnormal-events", "/collaboration", "/monitoring", "/knowledge"],
+            "user_roles": ["运营管理员", "异常处理专员", "冷链运营经理"],
+        },
+    )
+
+    generated_files, repaired_paths = synthesize_recoverable_core_files(
+        {},
+        [
+            "frontend/src/App.tsx",
+            "frontend/src/pages/Dashboard.tsx",
+            "frontend/src/pages/Login.tsx",
+        ],
+        profile,
+    )
+    _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+    assert repaired_paths == [
+        "frontend/src/App.tsx",
+        "frontend/src/pages/Dashboard.tsx",
+        "frontend/src/pages/Login.tsx",
+    ]
+    assert "frontend/src/App.tsx" not in invalid_paths
+    assert generated_files["frontend/src/App.tsx"].count("import MonitoringPage") == 1
+    assert generated_files["frontend/src/App.tsx"].count("import KnowledgePage") == 1
+    assert 'path="/monitoring"' in generated_files["frontend/src/App.tsx"]
+    assert 'path="/knowledge"' in generated_files["frontend/src/App.tsx"]
 
 
 def test_media_plan_seed_is_stable_for_same_product():
