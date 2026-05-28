@@ -3285,6 +3285,59 @@ export default function InventoryPage() {
 
         assert "frontend/src/pages/InventoryPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_app_profile_name_access(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "shipment-tracking",
+                    "title": "跨境冷链追踪",
+                    "route": "/shipment-tracking",
+                    "table_headers": ["记录编号", "主题名称", "责任角色"],
+                    "rows": [["MOD0-001", "跨境冷链履约异常协同平台跨境冷链追踪", "冷链品控专员"]],
+                    "highlights": ["支持冷链追踪事项管理"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/ShipmentTrackingPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function ShipmentTrackingPage() {
+  return <div>跨境冷链追踪 记录编号 MOD0-001 {APP_PROFILE.name}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/ShipmentTrackingPage.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_app_profile_module_pages_access(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "reports",
+                    "title": "异常事件报表分析",
+                    "route": "/reports",
+                    "table_headers": ["分析编号", "分析主题", "统计维度"],
+                    "rows": [["MOD0-301", "异常事件报表分析周报", "跨境冷链履约异常协同平台"]],
+                    "highlights": ["支持报表分析结果输出"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/ReportsPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function ReportsPage() {
+  const moduleInfo = APP_PROFILE.module_pages?.find((page) => page.route === '/reports');
+  return <div>异常事件报表分析 分析编号 MOD0-301 {String(moduleInfo?.title || '')}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/ReportsPage.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_rejects_editable_table_columns(self):
         profile = {
             "modules": [

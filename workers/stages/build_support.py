@@ -833,6 +833,10 @@ def repair_invalid_module_pages(
             for token in [
                 "productName",
                 "visualConfig",
+                "APP_PROFILE.name",
+                "APP_PROFILE.appName",
+                "APP_PROFILE.navigation",
+                "APP_PROFILE.module_pages",
                 "APP_PROFILE.title",
                 "APP_PROFILE.description",
                 "APP_PROFILE.theme",
