@@ -743,7 +743,15 @@ def repair_invalid_module_pages(
                 "visualConfig",
                 "APP_PROFILE.title",
                 "APP_PROFILE.description",
+                "APP_PROFILE.theme",
                 "editable:",
+            ]
+        )
+        imports_unsupported_shared_models = any(
+            token in content
+            for token in [
+                "from '../types/models'",
+                'from "../types/models"',
             ]
         )
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
@@ -763,6 +771,7 @@ def repair_invalid_module_pages(
             and "mockData:" not in content
             and must_have_task_data
             and not uses_invalid_profile_alias
+            and not imports_unsupported_shared_models
             and not uses_unsafe_visual_profile
             and not references_statistic_without_import
         )

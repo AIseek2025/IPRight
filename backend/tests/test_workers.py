@@ -2576,11 +2576,47 @@ export default function StatisticsPage() {
 
         assert "frontend/src/pages/StatisticsPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_theme_alias_and_shared_model_imports(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "orders",
+                    "title": "订单管理",
+                    "route": "/orders",
+                    "table_headers": ["订单号", "客户", "状态"],
+                    "rows": [["ORD-1", "华东客户", "处理中"]],
+                    "highlights": ["支持履约跟踪"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/OrdersPage.tsx": """
+import type { Supplier } from '../types/models';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function OrdersPage() {
+  return (
+    <div style={{ background: APP_PROFILE.theme.background }}>
+      <h1>订单管理</h1>
+      <div>订单号 客户 状态</div>
+      <div>ORD-1 华东客户 处理中</div>
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/OrdersPage.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_rejects_app_profile_description_access(self):
+
         profile = {
             "modules": [
                 {
                     "key": "inventory",
+                    "title": "履约节点监控",
                     "title": "履约节点监控",
                     "route": "/inventory",
                     "table_headers": ["履约单号", "阶段", "责任人"],
