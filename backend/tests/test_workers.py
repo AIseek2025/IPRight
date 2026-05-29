@@ -2932,6 +2932,48 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_dashboard_metric_type_override(self, tmp_path):
+        profile = {
+            "app_type": "web_admin",
+            "experience_blueprint": {},
+            "visual_profile": {},
+            "modules": [],
+        }
+        generated_files = {
+            "frontend/src/App.tsx": """
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+const handleLogin = () => {};
+export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard />{APP_PROFILE.product_name}</div>; }
+""",
+            "frontend/src/pages/Dashboard.tsx": """
+import React from 'react';
+import { Row, Col, Card, Statistic, Typography } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+interface Metric {
+  title: string;
+  value: number;
+}
+
+export default function Dashboard() {
+  const metrics: Metric[] = APP_PROFILE.dashboard_metrics || [];
+  return <div>系统首页 {APP_PROFILE.product_name} <Statistic title={metrics[0]?.title} value={metrics[0]?.value} /></div>;
+}
+""",
+            "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  localStorage.setItem('ipright_demo_auth', 'true');
+  return <button onClick={onLogin}>登录 用户名 密码</button>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
+
+        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_rejects_dashboard_echarts_subpath_imports_and_metric_object_access(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -3337,6 +3379,34 @@ export default function ReportsPage() {
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
         assert "frontend/src/pages/ReportsPage.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_app_profile_any_module_pages_alias(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "coldchain",
+                    "title": "冷链监控集成",
+                    "route": "/coldchain",
+                    "table_headers": ["记录编号", "主题名称", "责任角色"],
+                    "rows": [["MOD0-001", "跨境冷链履约异常协同平台冷链监控集成", "管理员"]],
+                    "highlights": ["支持冷链监控记录检索"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/ColdchainPage.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function ColdchainPage() {
+  const moduleData = (APP_PROFILE as any)?.modulePages?.coldchain;
+  return <div>冷链监控集成 记录编号 MOD0-001 {String(moduleData?.title || '')}</div>;
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/ColdchainPage.tsx" in invalid_paths
 
     def test_repair_invalid_module_pages_rejects_visual_profile_alias_without_guard(self):
         profile = {

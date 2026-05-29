@@ -662,6 +662,14 @@ def repair_invalid_core_files(
             ],
         )
 
+    def _uses_dashboard_metric_type_override(content: str) -> bool:
+        return bool(
+            re.search(
+                r"\bconst\s+\w+\s*:\s*(?:Metric\[\]|Array<Metric>)\s*=\s*APP_PROFILE\.dashboard_metrics\b",
+                content,
+            )
+        )
+
     def _uses_disallowed_unified_sidebar(content: str) -> bool:
         if app_type == "desktop_client":
             return False
@@ -763,6 +771,7 @@ def repair_invalid_core_files(
                     ".up",
                 ],
             )
+            and not _uses_dashboard_metric_type_override(content)
             and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
             and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
             and ("const dashboardVariant =" not in content or "const dashboardVariant: string =" in content)
@@ -851,6 +860,8 @@ def repair_invalid_module_pages(
                 'from "../types/models"',
             ]
         )
+        uses_invalid_profile_any_cast = "APP_PROFILE as any" in content
+        uses_invalid_module_pages_alias = bool(re.search(r"APP_PROFILE[^\n]{0,80}\?\.modulePages\b", content))
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
         visual_profile_aliases = {
             match.group("name")
@@ -895,6 +906,8 @@ def repair_invalid_module_pages(
             and not uses_invalid_profile_alias
             and not uses_invalid_modal_header_style
             and not imports_unsupported_shared_models
+            and not uses_invalid_profile_any_cast
+            and not uses_invalid_module_pages_alias
             and not uses_unsafe_visual_profile
             and not uses_visual_profile_alias_without_guard
             and not references_message_without_import
