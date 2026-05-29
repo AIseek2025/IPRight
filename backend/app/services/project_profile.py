@@ -2545,12 +2545,6 @@ def build_task_profile(
                 "priority": idx,
             }
         )
-    screenshot_scenarios = _ensure_minimum_screenshot_scenarios(
-        screenshot_scenarios,
-        profile_modules,
-        focus_terms,
-        minimum=10,
-    )
     project_dna = _build_project_dna(
         keyword=keyword,
         product_name=product_name,
@@ -2670,8 +2664,8 @@ def build_plan_seed(
         "industry_scope": _compose_industry_scope(keyword, industry, preset, focus_terms),
         "core_entities": list(preset.core_entities[:5]),
         "user_roles": list(preset.user_roles[:4]),
-        "core_modules": module_titles,
-        "required_pages": ["/login", "/dashboard", *[module["route"] for module in preset_modules[:5]]],
+        "core_modules": [],
+        "required_pages": ["/login", "/dashboard"],
         "focus_terms": focus_terms,
         "experience_blueprint": blueprint,
         "visual_profile": visual_profile,
@@ -2679,8 +2673,7 @@ def build_plan_seed(
         "project_dna": seed_dna,
         "differentiation_hint": (
             "必须优先遵循 raw_user_request 中的原始用户输入；"
-            f"平台仅建议围绕{'、'.join(focus_terms[:3]) or product_name}组织模块与页面，"
-            "不得私自改写行业、主题或产品定位。"
+            "平台画像只能补充体验方向与运行约束，不得预置固定模块池、页面骨架或文案模板。"
         ),
     }
 

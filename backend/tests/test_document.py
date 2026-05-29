@@ -84,7 +84,7 @@ def test_manual_normalizes_spacing_and_ui_symbols():
     assert "智慧园区管理平台 采用浏览器访问的软件架构" not in joined
     assert "智慧园区管理平台面向企事业单位的信息化管理场景" in joined
     assert "智慧园区管理平台采用浏览器访问的软件架构" in joined
-    assert "本功能主要包括：智慧园区管理平台V1.0、用户管理。" in joined
+    assert "本页面重点包括：智慧园区管理平台V1.0、用户管理。" in joined
 
 
 def test_manual_includes_generated_architecture_diagram_when_image_exists():
@@ -178,7 +178,7 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "星曜投放协同平台" in joined
     assert "达人库管理" in joined
     assert "结算与对账" in joined
-    assert "后续章节将按页面顺序陈述各项功能用途、处理步骤和页面要点" in joined
+    assert "后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作" in joined
     assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
     assert "典型应用场景" in joined
     assert "数据组织与结果输出说明" in joined
@@ -186,7 +186,7 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "模块实现拆解" in joined
     assert "实施交付与验收说明" in joined
     assert "交互与版式策略" in joined
-    assert "页面研发补充说明" in joined
+    assert "页面重点" in joined
     assert "安全、审计与运维说明" in joined
     assert "FastAPI" in joined
     assert "React" in joined
@@ -306,20 +306,22 @@ def test_manual_compacts_filtered_variant_pages():
     )
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "用户管理筛选结果" in joined
-    assert joined.count("\n详细操作说明\n") == 1
+    assert "详细操作说明" not in joined
+    assert "\n操作流程\n" not in joined
     assert "该功能主要涵盖：用户管理、搜索、导出、筛选结果。" in joined
     assert "该截图展示了" not in joined
     assert "截图中重点可见" not in joined
 
 
-def test_task_profile_builds_more_than_ten_screenshot_scenarios():
+def test_task_profile_uses_only_core_page_screenshot_scenarios():
     profile = build_task_profile(
         keyword="小红书达人投放",
         product_name="星曜投放协同平台",
         version="V2.3",
         industry="品牌营销",
     )
-    assert len(profile["screenshot_scenarios"]) >= 10
+    assert len(profile["screenshot_scenarios"]) == len(profile["modules"]) + 2
+    assert not any("筛选结果" in item["title"] for item in profile["screenshot_scenarios"])
     assert any(item["title"] == "达人库管理" for item in profile["modules"])
 
 
@@ -453,7 +455,7 @@ def test_media_plan_seed_is_stable_for_same_product():
     assert len(set(first["required_pages"][2:])) == len(first["required_pages"][2:])
 
 
-def test_task_profile_pads_screenshot_scenarios_when_module_count_is_small():
+def test_task_profile_keeps_screenshot_scenarios_focused_when_module_count_is_small():
     profile = build_task_profile(
         keyword="AI股票量化投资平台",
         product_name="星河量化决策平台",
@@ -466,13 +468,9 @@ def test_task_profile_pads_screenshot_scenarios_when_module_count_is_small():
         },
     )
     assert len(profile["modules"]) == 5
-    assert len(profile["screenshot_scenarios"]) >= 10
-    assert any(item["id"].startswith("users-filtered-") for item in profile["screenshot_scenarios"])
-    assert any(item["title"].endswith("筛选结果") for item in profile["screenshot_scenarios"])
-    filtered = next(item for item in profile["screenshot_scenarios"] if item["id"].startswith("users-filtered-"))
-    assert filtered["actions"][1]["action"] == "fill_input"
-    assert filtered["actions"][1]["target"] == "搜索"
-    assert filtered["actions"][1]["optional"] is True
+    assert len(profile["screenshot_scenarios"]) == len(profile["modules"]) + 2
+    assert not any(item["id"].startswith("users-filtered-") for item in profile["screenshot_scenarios"])
+    assert not any(item["title"].endswith("筛选结果") for item in profile["screenshot_scenarios"])
 
 
 def test_task_profile_rebuilds_content_for_new_title_and_modules():

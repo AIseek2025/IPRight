@@ -1100,25 +1100,19 @@ class SoftwareManualGenerator(WordTemplateBase):
     def _guess_usage_steps(self, title: str, meta: dict | None = None) -> list[str]:
         if meta and meta.get("steps"):
             return list(meta["steps"])
-        return [
-            "进入该页面后查看顶部标题区和主体操作区，确认当前业务主题。",
-            "根据页面中的搜索框、筛选项或主按钮进入目标业务记录。",
-            "结合列表内容、状态标签和结果反馈完成录入、查询、维护或审核操作。",
-        ]
+        return []
 
     def _guess_usage_description(self, title: str, elements: list[str], meta: dict | None = None) -> list[str]:
         visible = "、".join(self._sanitize_ui_elements(elements)[:10])
         description = meta.get("description") if meta else None
         primary_action = meta.get("primary_action") if meta else ""
-        base = [
-            self._sanitize_doc_text(
-                description
-                or f"{title}页面围绕当前业务主题的核心对象、处理动作和结果反馈组织信息，是用户完成日常处理与复核的重要入口。"
-            ),
-            self._sanitize_doc_text(
-                f"页面中通常可以看到{visible or '标题、按钮、筛选项、表格和状态信息'}等关键元素，用户可围绕这些元素开展查询、录入、审核或配置操作。"
-            ),
-        ]
+        base = []
+        if description:
+            base.append(self._sanitize_doc_text(description))
+        elif visible:
+            base.append(self._sanitize_doc_text(f"{title}围绕{visible}等信息元素组织页面内容，用于承载当前业务主题下的关键处理动作与结果反馈。"))
+        else:
+            base.append(self._sanitize_doc_text(f"{title}用于承载当前业务主题下的关键处理动作、信息呈现与结果反馈。"))
         if primary_action:
             base.append(self._sanitize_doc_text(f"该页面的常用主操作为“{primary_action}”，通常位于页面主体区域或列表工具栏位置。"))
         return base
@@ -1160,7 +1154,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "usage_overview",
-                "系统围绕“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径组织主要功能。后续章节将按页面顺序陈述各项功能用途、处理步骤和页面要点。",
+                "系统围绕“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径组织主要功能。后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作。",
             )
         )
         self.add_title("主要页面操作说明", level=2)
@@ -1191,51 +1185,35 @@ class SoftwareManualGenerator(WordTemplateBase):
                 self.add_image(image_path, width_inches=6.2, max_height_inches=6.2)
                 self.add_caption(caption)
 
-            self.add_title("功能讲解", level=3)
             for paragraph in self._guess_usage_description(title, elements, page_profile):
                 self.add_paragraph(paragraph)
 
-            self.add_title("详细操作说明", level=3)
-            for j, step in enumerate(self._guess_usage_steps(title, page_profile), 1):
-                self.add_paragraph(f"{j}. {step}")
-
-            self.add_title("适用场景", level=3)
-            self.add_paragraph(
-                self._sanitize_doc_text(
-                    page_profile.get(
-                        "business_value",
-                        f"{title}适用于当前业务主题下的信息录入、结果查询、状态跟踪、复核确认和材料整理等典型操作场景。",
-                    )
+            business_value = self._sanitize_doc_text(
+                page_profile.get(
+                    "business_value",
+                    f"{title}对应当前软件中的重点业务环节，用于衔接信息录入、结果查询、状态跟踪与处理反馈。",
                 )
             )
+            self.add_paragraph(business_value)
 
-            self.add_title("页面要点", level=3)
-            if page_profile.get("highlights"):
-                for highlight in page_profile["highlights"]:
+            highlights = [
+                self._sanitize_doc_text(str(item))
+                for item in (page_profile.get("highlights") or [])
+                if str(item).strip()
+            ]
+            if highlights:
+                self.add_title("页面重点", level=3)
+                for highlight in highlights[:5]:
                     self.add_paragraph(f"- {highlight}")
-            if elements:
-                self.add_paragraph(self._sanitize_doc_text("本功能主要包括：" + "、".join(elements[:12]) + "。"))
-            else:
-                self.add_paragraph("本页面应重点关注标题区、导航区、筛选区、数据展示区和操作反馈区。")
-            self.add_title("页面数据与技术说明", level=3)
-            self.add_paragraph(self._module_example_record(page_profile or {"title": title}))
-            for note in self._module_tech_notes(page_profile or {"title": title}):
-                self.add_paragraph(note)
-            self.add_title("页面研发补充说明", level=3)
-            for note in self._module_delivery_notes(page_profile or {"title": title}):
-                self.add_paragraph(note)
-            self.add_title("页面验收补充说明", level=3)
-            for note in self._module_acceptance_notes(page_profile or {"title": title}):
-                self.add_paragraph(note)
-            self.add_title("页面业务规则说明", level=3)
-            for note in self._page_business_rule_notes(title, page_profile or {"title": title}):
-                self.add_paragraph(note)
-            self.add_title("页面协同与交付说明", level=3)
-            for note in self._page_collaboration_and_output_notes(title, page_profile or {"title": title}):
-                self.add_paragraph(note)
-            self.add_title("页面异常与巡检提示", level=3)
-            for note in self._page_exception_notes(title, page_profile or {"title": title}):
-                self.add_paragraph(note)
+            elif elements:
+                self.add_title("页面重点", level=3)
+                self.add_paragraph(self._sanitize_doc_text("本页面重点包括：" + "、".join(elements[:12]) + "。"))
+
+            steps = [self._sanitize_doc_text(step) for step in self._guess_usage_steps(title, page_profile) if step]
+            if steps:
+                self.add_title("操作流程", level=3)
+                for j, step in enumerate(steps, 1):
+                    self.add_paragraph(f"{j}. {step}")
 
     def generate_tech_features(self) -> None:
         self.add_title("技术特点说明", level=1)

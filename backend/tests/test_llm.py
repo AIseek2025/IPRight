@@ -142,9 +142,9 @@ class TestLLMClient:
         asyncio.run(_run())
         assert captured["response_format"] == "json_object"
         assert captured["parse_json_response"] is False
-        assert captured["max_tokens_override"] == 12000
-        assert captured["temperature_override"] == 0.2
-        assert "不得挪用任何历史任务的行业素材" in captured["messages"][0]["content"]
+        assert captured["max_tokens_override"] == 16000
+        assert captured["temperature_override"] == 0.65
+        assert "不存在隐藏的固定 UI 模板" in captured["messages"][0]["content"]
         assert "raw_user_request" in captured["messages"][0]["content"]
 
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):

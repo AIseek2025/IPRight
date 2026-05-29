@@ -757,18 +757,21 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
     )
     project_profile = _load_manifest(ctx.task_id, "project_profile") or {}
     prd_summary = _load_prd_summary(ctx.task_id)
-    output_path, application_form_path, screenshot_count, manual_llm_used = await generate_manual_delivery(
-        task=task,
-        task_id=ctx.task_id,
-        build_id=ctx.build_id,
-        project_profile=project_profile,
-        prd_summary=prd_summary,
-        screenshots_meta=screenshots_meta,
-        exports_dir_fn=exports_dir,
-        create_artifact=_create_artifact,
-        merge_manual_llm_content=_merge_manual_llm_content,
-        db_factory=ctx.db_factory,
-    )
+    try:
+        output_path, application_form_path, screenshot_count, manual_llm_used = await generate_manual_delivery(
+            task=task,
+            task_id=ctx.task_id,
+            build_id=ctx.build_id,
+            project_profile=project_profile,
+            prd_summary=prd_summary,
+            screenshots_meta=screenshots_meta,
+            exports_dir_fn=exports_dir,
+            create_artifact=_create_artifact,
+            merge_manual_llm_content=_merge_manual_llm_content,
+            db_factory=ctx.db_factory,
+        )
+    except Exception as exc:
+        return StageResult(success=False, error=str(exc))
     await _log_task_progress(
         ctx,
         event_type="stage_progress",

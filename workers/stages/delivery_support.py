@@ -59,27 +59,28 @@ async def generate_manual_delivery(
     db_factory,
 ) -> tuple[str, str, int, str]:
     manual_llm_used = "qwen3.7-max"
-    try:
-        from app.services.llm import get_llm_client
+    from app.services.llm import get_llm_client
 
-        llm = get_llm_client()
-        manual_resp = await llm.generate_manual_content(
-            product_name=task.product_name,
-            version=task.version,
-            profile=project_profile,
-            prd_summary=prd_summary,
-            screenshots_meta=screenshots_meta,
-        )
-        if manual_resp.success and manual_resp.structured:
-            project_profile = merge_manual_llm_content(
-                project_profile,
-                manual_resp.structured,
-                screenshots_meta,
-            )
-        else:
-            manual_llm_used = "template_fallback"
-    except Exception:
-        manual_llm_used = "template_fallback"
+    llm = get_llm_client()
+    manual_resp = await llm.generate_manual_content(
+        product_name=task.product_name,
+        version=task.version,
+        profile=project_profile,
+        prd_summary=prd_summary,
+        screenshots_meta=screenshots_meta,
+    )
+    if not manual_resp.success or not manual_resp.structured:
+        raise RuntimeError(f"manual llm generation failed: {manual_resp.error or 'empty manual response'}")
+
+    page_overrides = manual_resp.structured.get("page_overrides") or []
+    if screenshots_meta and not page_overrides:
+        raise RuntimeError("manual llm generation failed: missing page_overrides for screenshots")
+
+    project_profile = merge_manual_llm_content(
+        project_profile,
+        manual_resp.structured,
+        screenshots_meta,
+    )
 
     generator = SoftwareManualGenerator(
         product_name=task.product_name,

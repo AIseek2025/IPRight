@@ -35,6 +35,7 @@ from workers.stages.build_support import (
 )
 from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
 from workers.stages.generated_frontend import _render_login_page
+from workers.stages.delivery_support import generate_manual_delivery
 from workers.stages.handlers import (
     _load_prd_summary,
     _merge_manual_llm_content,
@@ -267,6 +268,41 @@ class TestStageHandlers:
         assert len(screenshots) == 1
         assert screenshots[0]["page_title"] == "登录页"
         assert screenshots[0]["image_path"] == str(screenshots_root / "login-page.png")
+
+    def test_generate_manual_delivery_requires_llm_page_overrides(self, monkeypatch):
+        class _Task:
+            product_name = "测试平台"
+            version = "V1.0"
+
+        class _LLM:
+            async def generate_manual_content(self, **_kwargs):
+                return type(
+                    "_Resp",
+                    (),
+                    {"success": True, "structured": {"development_background": "背景"}, "error": None},
+                )()
+
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: _LLM())
+
+        async def _create_artifact(*_args, **_kwargs):
+            return None
+
+        async def _run():
+            with pytest.raises(RuntimeError, match="missing page_overrides"):
+                await generate_manual_delivery(
+                    task=_Task(),
+                    task_id=str(uuid.uuid4()),
+                    build_id=str(uuid.uuid4()),
+                    project_profile={"modules": []},
+                    prd_summary={},
+                    screenshots_meta=[{"page_title": "登录页", "route": "/login", "elements": ["登录"]}],
+                    exports_dir_fn=lambda *_args: str(PROJECT_ROOT / "tmp"),
+                    create_artifact=_create_artifact,
+                    merge_manual_llm_content=lambda profile, _content, _screenshots: profile,
+                    db_factory=lambda: None,
+                )
+
+        asyncio.run(_run())
 
     @pytest.mark.skip(reason="Requires full DB mock for artifact creation")
     def test_build_stage_returns_valid_result(self):
@@ -817,17 +853,13 @@ export default function WorkflowPage() {
         report, error = asyncio.run(_run())
         assert report is not None
         assert error is None
-        assert report["repaired_core_paths"] == [
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Dashboard.tsx",
-            "frontend/src/pages/Login.tsx",
-        ]
         assert report["repaired_support_paths"] == [
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
         assert report["template_ui_fallback_used"] is True
+        assert any("structural_fallback" in batch["batch"] for batch in report["batches"])
         assert (app_root / "frontend/src/App.tsx").exists()
         assert (app_root / "frontend/src/pages/Login.tsx").exists()
         assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
