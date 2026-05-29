@@ -3338,6 +3338,43 @@ export default function ReportsPage() {
 
         assert "frontend/src/pages/ReportsPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_visual_profile_alias_without_guard(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "suppliers",
+                    "title": "供应商管理",
+                    "route": "/suppliers",
+                    "table_headers": ["供应商编号", "供应商名称", "合作状态"],
+                    "rows": [["SUP-301", "北极冷链服务商", "合作中"]],
+                    "highlights": ["支持供应商协同跟进"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/SuppliersPage.tsx": """
+import type React from 'react';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function SuppliersPage() {
+  const visual_profile = APP_PROFILE.visual_profile;
+  const statisticStyle: React.CSSProperties = {
+    background: visual_profile.panel_background,
+    borderRadius: 8,
+  };
+  return (
+    <div style={{ padding: '24px', background: visual_profile.shell_background, minHeight: '100vh' }}>
+      <section style={statisticStyle}>供应商管理 供应商编号 SUP-301 北极冷链服务商</section>
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/SuppliersPage.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_rejects_editable_table_columns(self):
         profile = {
             "modules": [

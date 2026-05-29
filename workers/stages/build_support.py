@@ -852,7 +852,17 @@ def repair_invalid_module_pages(
             ]
         )
         uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
-        uses_visual_profile_alias_without_guard = "const visual = APP_PROFILE.visual_profile" in content
+        visual_profile_aliases = {
+            match.group("name")
+            for match in re.finditer(
+                r"\b(?:const|let|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=;]+)?=\s*APP_PROFILE\.visual_profile\s*;",
+                content,
+            )
+        }
+        uses_visual_profile_alias_without_guard = any(
+            re.search(rf"\b{re.escape(alias)}\.[A-Za-z_]", content)
+            for alias in visual_profile_aliases
+        )
         references_message_without_import = (
             "message." in content
             and "import { message" not in content
