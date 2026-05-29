@@ -1269,6 +1269,123 @@ export default function WorkflowPage() {
         assert "/credit-subjects" in app_text
         assert "CreditSubjectsPage" in app_text
 
+    def test_generate_task_app_code_falls_back_during_core_retry_parse_failure(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "冷链履约协同平台",
+            "scene": "围绕冷链履约监控和异常处置进行协同",
+            "industry_scope": "物流供应链",
+            "user_roles": ["调度主管", "库存专员"],
+            "modules": [
+                {
+                    "title": "履约分析与报表",
+                    "key": "statistics",
+                    "route": "/statistics",
+                    "primary_action": "导出统计报表",
+                    "filter_placeholder": "搜索履约单号 / 客户 / 节点",
+                    "table_headers": ["履约单号", "客户", "节点", "状态"],
+                    "rows": [
+                        ["FUL-001", "华东生鲜", "在途监控", "正常"],
+                    ],
+                    "highlights": ["展示冷链履约波动趋势", "支持异常节点复盘"],
+                    "description": "用于查看履约统计和异常分析。",
+                    "page_variant": "insight",
+                }
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files=None, *, success=True, structured=True, error=None):
+                self.success = success
+                self.structured = {"files": files or {}} if structured else None
+                self.error = error
+
+        class _LLM:
+            def __init__(self):
+                self.retry_calls = 0
+
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        self.retry_calls += 1
+                        return _Resp(
+                            success=False,
+                            structured=False,
+                            error="LLM JSON parse error (deepseek-v4-pro): Unterminated string",
+                        )
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": "export default function App(){ return <div>调度工作台</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} Statistic Card</section>; }",
+                        }
+                    )
+                if required == (
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                ):
+                    return _Resp(
+                        {
+                            "frontend/src/services/api.ts": "export async function request(){ return { success: true }; } export const api = { login: async () => ({ success: true }) };",
+                            "frontend/src/types/constants.ts": "export const APP_NAME = '冷链履约协同平台'; export const APP_VERSION = 'V1.0';",
+                            "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/StatisticsPage.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/StatisticsPage.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function StatisticsPage(){ return <section>履约分析与报表 履约单号 FUL-001 {APP_PROFILE.product_name}</section>; }",
+                        }
+                    )
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert llm.retry_calls == 1
+        retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry")
+        assert "LLM JSON parse error" in retry_batch["error"]
+        retry_fallback_batch = next(
+            batch for batch in report["batches"] if batch["batch"] == "core_retry_structural_fallback"
+        )
+        assert retry_fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
+        assert report["repaired_core_paths"] == []
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "APP_PROFILE" in app_text
+        assert "/statistics" in app_text
+        assert "StatisticsPage" in app_text
+
     def test_generate_task_app_code_retries_invalid_module_pages(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 

@@ -961,6 +961,23 @@ def _apply_retry_module_structural_fallback(
     return synthesized, repaired_paths, invalid_module_paths
 
 
+def _apply_retry_core_structural_fallback(
+    app_root: str,
+    generated_files: dict[str, str],
+    required_chunk: list[str],
+    profile: dict,
+) -> tuple[dict[str, str], list[str], list[str]]:
+    synthesized, repaired_paths = synthesize_recoverable_core_files(
+        generated_files,
+        required_chunk,
+        profile,
+    )
+    if not repaired_paths:
+        return generated_files, [], repair_invalid_core_files(app_root, generated_files, profile)[1]
+    synthesized, invalid_core_paths = repair_invalid_core_files(app_root, synthesized, profile)
+    return synthesized, repaired_paths, invalid_core_paths
+
+
 def _preview_generated_content(content: str, limit: int = 320) -> str:
     snippet = " ".join((content or "").split())
     if len(snippet) <= limit:
@@ -1344,6 +1361,34 @@ async def generate_task_app_code(
                                 "error": codegen_resp.error or "unknown error",
                             }
                         )
+                        (
+                            generated_files,
+                            repaired_retry_core_paths,
+                            invalid_core_paths,
+                        ) = _apply_retry_core_structural_fallback(
+                            app_root,
+                            generated_files,
+                            list(required_chunk),
+                            profile,
+                        )
+                        if repaired_retry_core_paths:
+                            batch_reports.append(
+                                {
+                                    "batch": "core_retry_structural_fallback",
+                                    "attempt": attempt_no,
+                                    "required_files": list(required_chunk),
+                                    "generated_paths": sorted(repaired_retry_core_paths),
+                                    "fallback_to_template": bool(invalid_core_paths),
+                                    "error": (
+                                        "still invalid after retry structural fallback: "
+                                        + ", ".join(invalid_core_paths)
+                                        if invalid_core_paths
+                                        else None
+                                    ),
+                                }
+                            )
+                            if not invalid_core_paths:
+                                break
                         continue
                     batch_files = codegen_resp.structured.get("files", {})
                     if not isinstance(batch_files, dict):
@@ -1369,6 +1414,34 @@ async def generate_task_app_code(
                                 "error": "files payload missing",
                             }
                         )
+                        (
+                            generated_files,
+                            repaired_retry_core_paths,
+                            invalid_core_paths,
+                        ) = _apply_retry_core_structural_fallback(
+                            app_root,
+                            generated_files,
+                            list(required_chunk),
+                            profile,
+                        )
+                        if repaired_retry_core_paths:
+                            batch_reports.append(
+                                {
+                                    "batch": "core_retry_structural_fallback",
+                                    "attempt": attempt_no,
+                                    "required_files": list(required_chunk),
+                                    "generated_paths": sorted(repaired_retry_core_paths),
+                                    "fallback_to_template": bool(invalid_core_paths),
+                                    "error": (
+                                        "still invalid after retry structural fallback: "
+                                        + ", ".join(invalid_core_paths)
+                                        if invalid_core_paths
+                                        else None
+                                    ),
+                                }
+                            )
+                            if not invalid_core_paths:
+                                break
                         continue
                     regenerated_paths: list[str] = []
                     for relative_path, content in batch_files.items():
