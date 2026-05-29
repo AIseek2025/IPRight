@@ -15,10 +15,10 @@ from app.services.llm import LLMClient, LLMConfig, LLMResponse, TEXT_MODEL, REAS
 class TestLLMConfig:
     def test_default_config(self):
         config = LLMConfig()
-        assert config.provider == "deepseek"
-        assert config.model == "deepseek-v4-pro"
-        assert config.fallback_model == "deepseek-v4-flash"
-        assert config.api_base == "https://api.deepseek.com"
+        assert config.provider == "dashscope"
+        assert config.model == "qwen3.7-max"
+        assert config.fallback_model == "qwen3.7-max"
+        assert config.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     def test_custom_config(self):
         config = LLMConfig(
@@ -47,6 +47,7 @@ class TestLLMResponse:
 
 class TestLLMClient:
     def test_no_api_key_returns_error(self):
+        os.environ.pop("DASHSCOPE_API_KEY", None)
         os.environ.pop("DEEPSEEK_API_KEY", None)
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("LLM_API_KEY", None)
@@ -62,6 +63,7 @@ class TestLLMClient:
         asyncio.run(_run())
 
     def test_get_client_returns_llm_client_even_when_no_key(self):
+        os.environ.pop("DASHSCOPE_API_KEY", None)
         os.environ.pop("DEEPSEEK_API_KEY", None)
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("LLM_API_KEY", None)
@@ -69,16 +71,24 @@ class TestLLMClient:
         assert isinstance(client, LLMClient)
 
     def test_text_and_reasoning_model_constants(self):
-        assert TEXT_MODEL == "deepseek-v4-flash"
-        assert REASONING_MODEL == "deepseek-v4-pro"
+        assert TEXT_MODEL == "qwen3.7-max"
+        assert REASONING_MODEL == "qwen3.7-max"
 
     def test_config_loads_from_env(self):
-        os.environ["DEEPSEEK_API_KEY"] = "sk-test-key"
+        os.environ["DASHSCOPE_API_KEY"] = "sk-test-key"
         try:
             config = LLMClient._load_config(LLMClient(LLMConfig(api_key="")))
             assert config.api_key == "sk-test-key"
         finally:
-            del os.environ["DEEPSEEK_API_KEY"]
+            del os.environ["DASHSCOPE_API_KEY"]
+
+    def test_config_prefers_dashscope_api_base_and_strips_wrapper_chars(self):
+        os.environ["DASHSCOPE_API_BASE"] = " `https://dashscope.aliyuncs.com/compatible-mode/v1` "
+        try:
+            config = LLMClient._load_config(LLMClient(LLMConfig(api_key="sk-test")))
+            assert config.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        finally:
+            del os.environ["DASHSCOPE_API_BASE"]
 
     def test_parse_json_object_content_accepts_fenced_json(self):
         parsed, error = LLMClient._parse_json_object_content("""```json

@@ -110,5 +110,7 @@ cp backend/.env.example backend/.env
 # 关键变量
 IPRIGHT_DATABASE_URL=postgresql+asyncpg://ipright:ipright@localhost:5432/ipright
 IPRIGHT_DB_TYPE=postgresql
-DEEPSEEK_API_KEY=sk-xxxxx  # 启用 DeepSeek LLM
+DASHSCOPE_API_KEY=sk-xxxxx
+DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=qwen3.7-max
 ```

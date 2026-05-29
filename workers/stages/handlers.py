@@ -306,7 +306,7 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     prd_dir = os.path.join(workspace_path(ctx.task_id), "prd")
     os.makedirs(prd_dir, exist_ok=True)
 
-    llm_used = "deepseek-v4-flash"
+    llm_used = "qwen3.7-max"
     prd_content = ""
     work_order_content = ""
     prd_summary = {}
@@ -633,7 +633,7 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     return StageResult(
         success=True,
         artifacts=[{"type": "manifests", "name": "all manifests"}],
-        metadata={"validation": {k: v.valid for k, v in validation.items()}, "codegen_model": "deepseek-v4-pro"},
+        metadata={"validation": {k: v.valid for k, v in validation.items()}, "codegen_model": "qwen3.7-max"},
     )
 
 

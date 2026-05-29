@@ -9,17 +9,18 @@ from typing import Any, Optional
 from app.services.document.manual import OPTIONAL_MANUAL_MODULES, REQUIRED_MANUAL_MODULES
 
 logger = logging.getLogger(__name__)
-TEXT_MODEL = "deepseek-v4-flash"
-REASONING_MODEL = "deepseek-v4-pro"
+TEXT_MODEL = "qwen3.7-max"
+REASONING_MODEL = "qwen3.7-max"
+DEFAULT_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 @dataclass
 class LLMConfig:
-    provider: str = "deepseek"
+    provider: str = "dashscope"
     api_key: str = ""
-    api_base: str = "https://api.deepseek.com"
-    model: str = "deepseek-v4-pro"
-    fallback_model: str = "deepseek-v4-flash"
+    api_base: str = DEFAULT_API_BASE
+    model: str = REASONING_MODEL
+    fallback_model: str = TEXT_MODEL
     temperature: float = 0.7
     max_tokens: int = 4096
 
@@ -40,16 +41,32 @@ class LLMClient:
         self._client = None
 
     def _load_config(self) -> LLMConfig:
-        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY", "")
-        api_base = os.environ.get("DEEPSEEK_API_BASE") or os.environ.get("OPENAI_API_BASE") or "https://api.deepseek.com"
-        model = os.environ.get("LLM_MODEL") or "deepseek-v4-pro"
-        fallback = os.environ.get("LLM_FALLBACK_MODEL") or "deepseek-v4-flash"
+        api_key = (
+            os.environ.get("DASHSCOPE_API_KEY")
+            or os.environ.get("DEEPSEEK_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("LLM_API_KEY", "")
+        )
+        api_base = (
+            os.environ.get("DASHSCOPE_API_BASE")
+            or os.environ.get("DEEPSEEK_API_BASE")
+            or os.environ.get("OPENAI_API_BASE")
+            or DEFAULT_API_BASE
+        )
+        model = os.environ.get("LLM_MODEL") or REASONING_MODEL
+        fallback = os.environ.get("LLM_FALLBACK_MODEL") or TEXT_MODEL
         return LLMConfig(
+            provider=os.environ.get("LLM_PROVIDER") or "dashscope",
             api_key=api_key,
-            api_base=api_base,
+            api_base=api_base.strip().strip("`").strip().strip('"').strip("'"),
             model=model,
             fallback_model=fallback,
         )
+
+    @staticmethod
+    def _should_enable_thinking(model: str) -> bool:
+        normalized = (model or "").strip().lower()
+        return normalized.startswith("qwen")
 
     @staticmethod
     def _coerce_message_text(content: Any) -> str:
@@ -194,7 +211,7 @@ class LLMClient:
                     "Authorization": f"Bearer {self.config.api_key}",
                     "Content-Type": "application/json",
                 }
-                api_base = self.config.api_base or "https://api.deepseek.com/v1"
+                api_base = (self.config.api_base or DEFAULT_API_BASE).rstrip("/")
 
                 body = {
                     "model": model,
@@ -205,6 +222,8 @@ class LLMClient:
 
                 if response_format == "json_object":
                     body["response_format"] = {"type": "json_object"}
+                if self._should_enable_thinking(model):
+                    body["enable_thinking"] = True
 
                 async with httpx.AsyncClient(timeout=120) as client:
                     resp = await client.post(
@@ -429,7 +448,7 @@ PRD 中的核心模块、业务对象、角色职责、页面路由、功能命�
         )
 
     async def review_manual_descriptions(self, descriptions_json: str) -> LLMResponse:
-        """Use deepseek-v4-pro to review all page descriptions for consistency and quality."""
+        """Use the configured LLM to review all page descriptions for consistency and quality."""
         system_prompt = """你是一位资深企业技术文档审核专家。当前文档将用于版权局软件著作权申请，请审核以下软件说明书的所有页面描述。
 检查:
 1. 各页面描述之间的术语一致性

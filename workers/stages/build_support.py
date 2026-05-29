@@ -1244,7 +1244,7 @@ async def generate_task_app_code(
 
     def _build_codegen_report(**extra: object) -> dict:
         report = {
-            "model_used": "deepseek-v4-pro" if batches else "template_only",
+            "model_used": "qwen3.7-max" if batches else "template_only",
             "required_files": codegen_requirements["required_files"],
             "generated_file_count": len(generated_files),
             "applied_required_file_count": len(codegen_requirements["required_files"]),

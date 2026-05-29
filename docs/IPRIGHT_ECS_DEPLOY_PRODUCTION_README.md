@@ -182,16 +182,16 @@ IPRIGHT_MINIO_SECRET_KEY=<minio_secret_key>
 IPRIGHT_MINIO_BUCKET=ipright
 IPRIGHT_MINIO_SECURE=false
 IPRIGHT_WORKSPACE_ROOT=/opt/ipright/shared/workspace
-DEEPSEEK_API_KEY=<deepseek_api_key>
-DEEPSEEK_API_BASE=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-v4-pro
-LLM_FALLBACK_MODEL=deepseek-v4-flash
+DASHSCOPE_API_KEY=<dashscope_api_key>
+DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=qwen3.7-max
+LLM_FALLBACK_MODEL=qwen3.7-max
 ```
 
 说明：
 
-- PRD、页面截图图注/页面说明、软件说明书正文统一固定走 `deepseek-v4-flash`
-- 编程/推理类链路固定走 `deepseek-v4-pro`
+- PRD、页面截图图注/页面说明、软件说明书正文统一固定走 `qwen3.7-max`
+- 编程/推理类链路固定走 `qwen3.7-max`
 - 文本内容链路不再回退到本地模板生成
 
 ---

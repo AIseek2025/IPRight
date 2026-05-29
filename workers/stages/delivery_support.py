@@ -58,7 +58,7 @@ async def generate_manual_delivery(
     merge_manual_llm_content: Callable[[dict, dict, list[dict]], dict],
     db_factory,
 ) -> tuple[str, str, int, str]:
-    manual_llm_used = "deepseek-v4-flash"
+    manual_llm_used = "qwen3.7-max"
     try:
         from app.services.llm import get_llm_client
 
