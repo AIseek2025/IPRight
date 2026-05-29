@@ -3408,6 +3408,43 @@ export default function ColdchainPage() {
 
         assert "frontend/src/pages/ColdchainPage.tsx" in invalid_paths
 
+    def test_repair_invalid_module_pages_rejects_app_profile_roles_access(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "incident/:id",
+                    "title": "协同处置工作台",
+                    "route": "/incident/:id",
+                    "table_headers": ["记录编号", "主题名称", "责任角色"],
+                    "rows": [["MOD0-001", "跨境冷链履约异常协同平台协同处置工作台", "管理员"]],
+                    "highlights": ["支持多角色协同处置"],
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/IncidentIdPage.tsx": """
+import { Select } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function IncidentIdPage() {
+  return (
+    <div>
+      协同处置工作台 记录编号 MOD0-001 跨境冷链履约异常协同平台协同处置工作台
+      <Select>
+        {APP_PROFILE.roles?.map((role: string) => (
+          <Select.Option key={role} value={role}>{role}</Select.Option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+""",
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert "frontend/src/pages/IncidentIdPage.tsx" in invalid_paths
+
     def test_repair_invalid_module_pages_rejects_visual_profile_alias_without_guard(self):
         profile = {
             "modules": [
