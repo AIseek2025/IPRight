@@ -23,9 +23,14 @@ class ApplicationFormGenerator(WordTemplateBase):
             return normalized
         chunks = [normalized] if normalized else []
         fillers = [filler] if isinstance(filler, str) else [item for item in filler if item]
+        filler_pool = [
+            item
+            for item in fillers
+            if item not in normalized
+        ] or fillers
         index = 0
         while len("".join(chunks)) < minimum:
-            chunks.append(fillers[index % len(fillers)])
+            chunks.append(filler_pool[index % len(filler_pool)])
             index += 1
         return "".join(chunks)
 

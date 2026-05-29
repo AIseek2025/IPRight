@@ -266,6 +266,24 @@ def test_application_form_main_functions_is_padded_to_minimum_length():
     assert "在交付层面，系统可输出说明书、申请表、源码文档和截图材料" in main_functions_text
 
 
+def test_application_form_padding_avoids_duplicate_existing_filler():
+    gen = ApplicationFormGenerator(product_name="测试平台", version="V1.0")
+    seed = "系统还支持统一登录、信息检索、状态跟踪、结果留痕、导出归档与权限控制等能力，用于保证业务过程连续、结果可追溯、交付材料可复核。"
+    gen.generate({
+        "product_name": "测试平台",
+        "version": "V1.0",
+        "main_functions": seed,
+    })
+    main_functions_text = next(
+        row.cells[1].text
+        for table in gen.doc.tables
+        for row in table.rows
+        if row.cells[0].text == "软件的主要功能"
+    )
+    assert len(main_functions_text) >= 500
+    assert main_functions_text.count(seed) == 1
+
+
 def test_manual_compacts_filtered_variant_pages():
     gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0")
     gen.generate_full(

@@ -176,6 +176,40 @@ class TestTaskBundleAPI:
             assert any(name.endswith("/artifacts/screenshots/home.png") for name in names)
             assert any(name.endswith("/builds/build_001/exports/software_manual.docx") for name in names)
 
+    async def test_task_bundle_skips_transient_large_directories(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(tmp_path))
+
+        resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle瘦身测试", "product_name": "bundle瘦身系统"})
+        assert resp.status_code == 201
+        task_id = resp.json()["data"]["task_id"]
+
+        task_root = tmp_path / "tasks" / task_id
+        (task_root / "workspace" / "app" / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "app" / "frontend" / "node_modules" / "pkg").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "app" / "frontend" / "dist").mkdir(parents=True, exist_ok=True)
+        (task_root / "workspace" / "artifacts" / "runtime_logs").mkdir(parents=True, exist_ok=True)
+        (task_root / "artifacts" / "screenshots").mkdir(parents=True, exist_ok=True)
+
+        (task_root / "workspace" / "app" / "frontend" / "src" / "main.tsx").write_text("console.log('ok')", encoding="utf-8")
+        (task_root / "workspace" / "app" / "frontend" / "node_modules" / "pkg" / "index.js").write_text("ignored", encoding="utf-8")
+        (task_root / "workspace" / "app" / "frontend" / "dist" / "bundle.js").write_text("ignored", encoding="utf-8")
+        (task_root / "workspace" / "artifacts" / "runtime_logs" / "frontend.log").write_text("ignored", encoding="utf-8")
+        (task_root / "artifacts" / "screenshots" / "home.png").write_bytes(b"png-data")
+
+        resp2 = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp2.status_code == 200
+
+        bundle_path = tmp_path / "trimmed_bundle.zip"
+        bundle_path.write_bytes(resp2.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert any(name.endswith("/workspace/app/frontend/src/main.tsx") for name in names)
+            assert not any("/node_modules/" in name for name in names)
+            assert not any("/dist/" in name for name in names)
+            assert not any("/runtime_logs/" in name for name in names)
+
     async def test_task_bundle_falls_back_to_artifact_local_paths(self, async_client, tmp_path, monkeypatch):
         from app.core.config import settings
 

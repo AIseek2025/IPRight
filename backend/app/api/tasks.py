@@ -40,6 +40,18 @@ from app.schemas.api import (
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
 logger = logging.getLogger(__name__)
 
+_BUNDLE_EXCLUDED_DIR_NAMES = {
+    "downloads",
+    "node_modules",
+    "dist",
+    ".vite",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "runtime_logs",
+}
+_BUNDLE_EXCLUDED_SUFFIXES = {".pyc"}
+
 
 def _task_root(task_id: uuid.UUID) -> Path:
     return Path(settings.WORKSPACE_ROOT) / "tasks" / str(task_id)
@@ -88,6 +100,16 @@ def _bundle_target(task: Task) -> tuple[Path, str, Path]:
     return bundle_path, bundle_name, root_prefix
 
 
+def _should_skip_bundle_path(task_root: Path, file_path: Path) -> bool:
+    try:
+        relative_parts = file_path.resolve().relative_to(task_root.resolve()).parts
+    except ValueError:
+        return True
+    if any(part in _BUNDLE_EXCLUDED_DIR_NAMES for part in relative_parts[:-1]):
+        return True
+    return file_path.suffix in _BUNDLE_EXCLUDED_SUFFIXES
+
+
 def _build_bundle(task: Task) -> tuple[Path, str]:
     task_root = _task_root(task.id)
     task_root_resolved = task_root.resolve()
@@ -100,6 +122,8 @@ def _build_bundle(task: Task) -> tuple[Path, str]:
         # users' data or sensitive host files.
         if file_path.is_symlink():
             logger.warning("Skipping symlink in bundle: %s", file_path)
+            return
+        if _should_skip_bundle_path(task_root, file_path):
             return
         try:
             relative = file_path.resolve().relative_to(task_root_resolved)
