@@ -913,18 +913,21 @@ export default function WorkflowPage() {
 
         report, error = asyncio.run(_run())
         assert report is not None
-        assert error is None
+        assert error is not None
+        assert error.startswith("App code generation failed: missing or invalid LLM-generated core frontend files:")
+        assert "frontend/src/App.tsx" in error
+        assert "frontend/src/pages/Login.tsx" in error
+        assert "frontend/src/pages/Dashboard.tsx" in error
         assert report["repaired_support_paths"] == [
             "frontend/src/services/api.ts",
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ]
-        assert report["template_ui_fallback_used"] is True
-        assert any("structural_fallback" in batch["batch"] for batch in report["batches"])
-        assert (app_root / "frontend/src/App.tsx").exists()
-        assert (app_root / "frontend/src/pages/Login.tsx").exists()
-        assert (app_root / "frontend/src/pages/Dashboard.tsx").exists()
-        assert (app_root / "frontend/src/services/api.ts").exists()
+        assert report["template_ui_fallback_used"] is False
+        assert not any(
+            batch["batch"] in {"core_structural_fallback", "module_structural_fallback", "core_retry_structural_fallback", "module_retry_structural_fallback"}
+            for batch in report["batches"]
+        )
 
     def test_generate_task_app_code_retries_missing_core_files(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -970,16 +973,22 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "export default function App(){ return <div>APP_PROFILE.product_name</div>; }",
+                            "frontend/src/App.tsx": "import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <div>{APP_PROFILE.product_name}<Login onLogin={() => undefined} /><Dashboard /></div>; }",
                         }
                     )
                 if required == ("frontend/src/pages/Login.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
                         }
                     )
                 if required == ("frontend/src/pages/Dashboard.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                            }
+                        )
                     return _Resp({})
                 if required == (
                     "frontend/src/services/api.ts",
@@ -993,23 +1002,27 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == ("frontend/src/pages/Login.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                        }
-                    )
-                if required == ("frontend/src/pages/Dashboard.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
-                        }
-                    )
                 return _Resp({})
 
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (
+                generated_files,
+                [
+                    path
+                    for path, token in (
+                        ("frontend/src/App.tsx", "APP_PROFILE"),
+                        ("frontend/src/pages/Login.tsx", "用户名 密码"),
+                        ("frontend/src/pages/Dashboard.tsx", "APP_PROFILE"),
+                    )
+                    if token not in generated_files.get(path, "")
+                ],
+            ),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
@@ -1026,7 +1039,6 @@ export default function WorkflowPage() {
             "frontend/src/types/constants.ts",
             "frontend/src/types/models.ts",
         ) in required_calls
-        assert required_calls.count(("frontend/src/pages/Login.tsx",)) >= 2
         assert required_calls.count(("frontend/src/pages/Dashboard.tsx",)) >= 2
         assert report["generated_file_count"] == 6
 
@@ -1072,6 +1084,12 @@ export default function WorkflowPage() {
                 )
                 required = tuple(requirements["required_files"])
                 if required == ("frontend/src/App.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/App.tsx": "import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <div>{APP_PROFILE.product_name}<Login onLogin={() => undefined} /><Dashboard /></div>; }",
+                            }
+                        )
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "export default function App(){ return <div>调度工作台</div>; }",
@@ -1080,10 +1098,16 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/Login.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
                         }
                     )
                 if required == ("frontend/src/pages/Dashboard.tsx",):
+                    if requirements.get("invalid_core_previews"):
+                        return _Resp(
+                            {
+                                "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
+                            }
+                        )
                     return _Resp(
                         {
                             "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页 调度工作台</div>; }",
@@ -1101,29 +1125,27 @@ export default function WorkflowPage() {
                             "frontend/src/types/models.ts": "export interface LoginResponse { success: boolean; token?: string; role?: string; }",
                         }
                     )
-                if required == ("frontend/src/App.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/dispatch' element={<div>{APP_PROFILE.product_name}</div>} /></Routes>; }",
-                        }
-                    )
-                if required == ("frontend/src/pages/Login.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                        }
-                    )
-                if required == ("frontend/src/pages/Dashboard.tsx",):
-                    return _Resp(
-                        {
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <section>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>; }",
-                        }
-                    )
                 return _Resp({})
 
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (
+                generated_files,
+                [
+                    path
+                    for path, token in (
+                        ("frontend/src/App.tsx", "APP_PROFILE"),
+                        ("frontend/src/pages/Login.tsx", "用户名 密码"),
+                        ("frontend/src/pages/Dashboard.tsx", "APP_PROFILE"),
+                    )
+                    if token not in generated_files.get(path, "")
+                ],
+            ),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
@@ -1240,6 +1262,14 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (
+                generated_files,
+                ["frontend/src/App.tsx"] if "APP_PROFILE" not in generated_files.get("frontend/src/App.tsx", "") else [],
+            ),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
@@ -1353,14 +1383,9 @@ export default function WorkflowPage() {
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error is None
-        assert report["repaired_core_paths"] == ["frontend/src/App.tsx"]
-        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_structural_fallback")
-        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
-        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
-        assert "APP_PROFILE" in app_text
-        assert "/credit-subjects" in app_text
-        assert "CreditSubjectsPage" in app_text
+        assert error == "App code generation failed: missing or invalid LLM-generated core frontend files: frontend/src/App.tsx"
+        assert report["repaired_core_paths"] == []
+        assert not any(batch["batch"] == "core_structural_fallback" for batch in report["batches"])
 
     def test_generate_task_app_code_falls_back_during_core_retry_parse_failure(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1465,19 +1490,12 @@ export default function WorkflowPage() {
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error is None
-        assert llm.retry_calls == 1
+        assert error == "App code generation failed: missing or invalid LLM-generated core frontend files: frontend/src/App.tsx"
+        assert llm.retry_calls == 2
         retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry")
         assert "LLM JSON parse error" in retry_batch["error"]
-        retry_fallback_batch = next(
-            batch for batch in report["batches"] if batch["batch"] == "core_retry_structural_fallback"
-        )
-        assert retry_fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
         assert report["repaired_core_paths"] == []
-        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
-        assert "APP_PROFILE" in app_text
-        assert "/statistics" in app_text
-        assert "StatisticsPage" in app_text
+        assert not any(batch["batch"] == "core_retry_structural_fallback" for batch in report["batches"])
 
     def test_generate_task_app_code_retries_invalid_module_pages(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1536,16 +1554,22 @@ export default function WorkflowPage() {
                     }
                 )
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import WorkflowPage from './pages/WorkflowPage'; import { APP_PROFILE } from './generated/appProfile'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/workflow' element={<WorkflowPage title={APP_PROFILE.product_name} />} /></Routes>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }",
+                            "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import WorkflowPage from './pages/WorkflowPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/workflow' element={<WorkflowPage />} /></Routes>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length} Card</div>; }",
                         }
                     )
                 if required == (
@@ -1577,6 +1601,11 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (generated_files, []),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
@@ -1641,16 +1670,22 @@ export default function WorkflowPage() {
         class _LLM:
             async def generate_app_code(self, _prd, _wo, requirements):
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import StatisticsPage from './pages/StatisticsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/statistics' element={<StatisticsPage />} /></Routes>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} 调度总览</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length} Card</div>; }",
                         }
                     )
                 if required == (
@@ -1676,20 +1711,19 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (generated_files, []),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error is None
-        assert report["repaired_module_paths"] == ["frontend/src/pages/StatisticsPage.tsx"]
-        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_structural_fallback")
-        assert fallback_batch["generated_paths"] == ["frontend/src/pages/StatisticsPage.tsx"]
-        page_text = (app_root / "frontend/src/pages/StatisticsPage.tsx").read_text(encoding="utf-8")
-        assert "APP_PROFILE" in page_text
-        assert "导出统计报表" in page_text
-        assert "FUL-001" in page_text
-        assert "mockData" not in page_text
+        assert error == "App code generation failed: missing or invalid LLM-generated module frontend files: frontend/src/pages/StatisticsPage.tsx"
+        assert report["repaired_module_paths"] == []
+        assert not any(batch["batch"] == "module_structural_fallback" for batch in report["batches"])
 
     def test_generate_task_app_code_falls_back_during_module_retry_parse_failure(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1741,16 +1775,22 @@ export default function WorkflowPage() {
 
             async def generate_app_code(self, _prd, _wo, requirements):
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import StatisticsPage from './pages/StatisticsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/statistics' element={<StatisticsPage />} /></Routes>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} 调度总览</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length} Card</div>; }",
                         }
                     )
                 if required == (
@@ -1783,24 +1823,22 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (generated_files, []),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error is None
-        assert llm.retry_calls == 1
+        assert error == "App code generation failed: missing or invalid LLM-generated module frontend files: frontend/src/pages/StatisticsPage.tsx"
+        assert llm.retry_calls == 2
         retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry")
         assert "LLM JSON parse error" in retry_batch["error"]
-        retry_fallback_batch = next(
-            batch for batch in report["batches"] if batch["batch"] == "module_retry_structural_fallback"
-        )
-        assert retry_fallback_batch["generated_paths"] == ["frontend/src/pages/StatisticsPage.tsx"]
         assert report["repaired_module_paths"] == []
-        page_text = (app_root / "frontend/src/pages/StatisticsPage.tsx").read_text(encoding="utf-8")
-        assert "APP_PROFILE" in page_text
-        assert "导出统计报表" in page_text
-        assert "mockData" not in page_text
+        assert not any(batch["batch"] == "module_retry_structural_fallback" for batch in report["batches"])
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1880,16 +1918,22 @@ export default function WorkflowPage() {
                         "invalid_module_previews": dict(requirements.get("invalid_module_previews", {})),
                     }
                 )
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
                             "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PurchasesPage from './pages/PurchasesPage'; import InventoryPage from './pages/InventoryPage'; import AlertsPage from './pages/AlertsPage'; export default function App(){ return <Routes><Route path='/login' element={<Login onLogin={() => undefined} />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/purchases' element={<PurchasesPage />} /><Route path='/inventory' element={<InventoryPage />} /><Route path='/alerts' element={<AlertsPage />} /></Routes>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                        }
+                    )
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length} Card</div>; }",
                         }
                     )
                 if required == (
@@ -1924,6 +1968,11 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "repair_invalid_core_files",
+            lambda _app_root, generated_files, _profile: (generated_files, []),
+        )
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
@@ -3960,16 +4009,22 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
     class _LLM:
         async def generate_app_code(self, _prd, _wo, requirements):
             required = tuple(requirements["required_files"])
-            if required == (
-                "frontend/src/App.tsx",
-                "frontend/src/pages/Login.tsx",
-                "frontend/src/pages/Dashboard.tsx",
-            ):
+            if required == ("frontend/src/App.tsx",):
                 return _Resp(
                     {
-                        "frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; export default function App(){ return <Routes><Route path='/' element={<div>盲盒平台</div>} /></Routes>; }",
-                        "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录</button>; }",
-                        "frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>系统首页</div>; }",
+                        "frontend/src/App.tsx": "import { APP_PROFILE } from './generated/appProfile'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <div>{APP_PROFILE.product_name}<Login onLogin={() => undefined} /><Dashboard /></div>; }",
+                    }
+                )
+            if required == ("frontend/src/pages/Login.tsx",):
+                return _Resp(
+                    {
+                        "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }: { onLogin: () => void }) { localStorage.setItem('ipright_demo_auth', 'true'); return <button onClick={onLogin}>登录 用户名 密码</button>; }",
+                    }
+                )
+            if required == ("frontend/src/pages/Dashboard.tsx",):
+                return _Resp(
+                    {
+                        "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length} Card</div>; }",
                     }
                 )
             if required == (
@@ -3989,6 +4044,11 @@ def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):
     llm = _LLM()
     monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
     monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+    monkeypatch.setattr(
+        build_support,
+        "repair_invalid_core_files",
+        lambda _app_root, generated_files, _profile: (generated_files, []),
+    )
 
     progress_events = []
 

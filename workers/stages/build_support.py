@@ -1262,7 +1262,6 @@ async def generate_task_app_code(
         }
         return _build_codegen_report(
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_support_paths),
             invalid_support_paths=invalid_support_paths,
             invalid_support_previews=invalid_support_previews,
         ), (
@@ -1315,38 +1314,10 @@ async def generate_task_app_code(
                                 "attempt": attempt_no,
                                 "required_files": list(required_chunk),
                                 "generated_paths": [],
-                                "fallback_to_template": True,
+                            "fallback_to_template": False,
                                 "error": codegen_resp.error or "unknown error",
                             }
                         )
-                        (
-                            generated_files,
-                            repaired_retry_core_paths,
-                            invalid_core_paths,
-                        ) = _apply_retry_core_structural_fallback(
-                            app_root,
-                            generated_files,
-                            list(required_chunk),
-                            profile,
-                        )
-                        if repaired_retry_core_paths:
-                            batch_reports.append(
-                                {
-                                    "batch": "core_retry_structural_fallback",
-                                    "attempt": attempt_no,
-                                    "required_files": list(required_chunk),
-                                    "generated_paths": sorted(repaired_retry_core_paths),
-                                    "fallback_to_template": bool(invalid_core_paths),
-                                    "error": (
-                                        "still invalid after retry structural fallback: "
-                                        + ", ".join(invalid_core_paths)
-                                        if invalid_core_paths
-                                        else None
-                                    ),
-                                }
-                            )
-                            if not invalid_core_paths:
-                                break
                         continue
                     batch_files = codegen_resp.structured.get("files", {})
                     if not isinstance(batch_files, dict):
@@ -1368,38 +1339,10 @@ async def generate_task_app_code(
                                 "attempt": attempt_no,
                                 "required_files": list(required_chunk),
                                 "generated_paths": [],
-                                "fallback_to_template": True,
+                            "fallback_to_template": False,
                                 "error": "files payload missing",
                             }
                         )
-                        (
-                            generated_files,
-                            repaired_retry_core_paths,
-                            invalid_core_paths,
-                        ) = _apply_retry_core_structural_fallback(
-                            app_root,
-                            generated_files,
-                            list(required_chunk),
-                            profile,
-                        )
-                        if repaired_retry_core_paths:
-                            batch_reports.append(
-                                {
-                                    "batch": "core_retry_structural_fallback",
-                                    "attempt": attempt_no,
-                                    "required_files": list(required_chunk),
-                                    "generated_paths": sorted(repaired_retry_core_paths),
-                                    "fallback_to_template": bool(invalid_core_paths),
-                                    "error": (
-                                        "still invalid after retry structural fallback: "
-                                        + ", ".join(invalid_core_paths)
-                                        if invalid_core_paths
-                                        else None
-                                    ),
-                                }
-                            )
-                            if not invalid_core_paths:
-                                break
                         continue
                     regenerated_paths: list[str] = []
                     for relative_path, content in batch_files.items():
@@ -1437,28 +1380,6 @@ async def generate_task_app_code(
                     break
     repaired_core_paths: list[str] = []
     if invalid_core_paths:
-        generated_files, repaired_core_paths = synthesize_recoverable_core_files(
-            generated_files,
-            invalid_core_paths,
-            profile,
-        )
-        if repaired_core_paths:
-            generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
-            batch_reports.append(
-                {
-                    "batch": "core_structural_fallback",
-                    "attempt": 1,
-                    "required_files": list(repaired_core_paths),
-                    "generated_paths": sorted(repaired_core_paths),
-                    "fallback_to_template": bool(invalid_core_paths),
-                    "error": (
-                        "still invalid after structural fallback: " + ", ".join(invalid_core_paths)
-                        if invalid_core_paths
-                        else None
-                    ),
-                }
-            )
-    if invalid_core_paths:
         invalid_core_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
             for relative_path in invalid_core_paths
@@ -1466,7 +1387,6 @@ async def generate_task_app_code(
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_support_paths),
             invalid_core_paths=invalid_core_paths,
             invalid_core_previews=invalid_core_previews,
         ), (
@@ -1524,37 +1444,10 @@ async def generate_task_app_code(
                             "attempt": attempt_no,
                             "required_files": list(required_chunk),
                             "generated_paths": [],
-                            "fallback_to_template": True,
+                            "fallback_to_template": False,
                             "error": codegen_resp.error or "unknown error",
                         }
                     )
-                    (
-                        generated_files,
-                        repaired_retry_module_paths,
-                        invalid_module_paths,
-                    ) = _apply_retry_module_structural_fallback(
-                        generated_files,
-                        list(required_chunk),
-                        profile,
-                    )
-                    if repaired_retry_module_paths:
-                        batch_reports.append(
-                            {
-                                "batch": "module_retry_structural_fallback",
-                                "attempt": attempt_no,
-                                "required_files": list(required_chunk),
-                                "generated_paths": sorted(repaired_retry_module_paths),
-                                "fallback_to_template": bool(invalid_module_paths),
-                                "error": (
-                                    "still invalid after retry structural fallback: "
-                                    + ", ".join(invalid_module_paths)
-                                    if invalid_module_paths
-                                    else None
-                                ),
-                            }
-                        )
-                        if not invalid_module_paths:
-                            break
                     continue
                 batch_files = codegen_resp.structured.get("files", {})
                 if not isinstance(batch_files, dict):
@@ -1576,37 +1469,10 @@ async def generate_task_app_code(
                             "attempt": attempt_no,
                             "required_files": list(required_chunk),
                             "generated_paths": [],
-                            "fallback_to_template": True,
+                            "fallback_to_template": False,
                             "error": "files payload missing",
                         }
                     )
-                    (
-                        generated_files,
-                        repaired_retry_module_paths,
-                        invalid_module_paths,
-                    ) = _apply_retry_module_structural_fallback(
-                        generated_files,
-                        list(required_chunk),
-                        profile,
-                    )
-                    if repaired_retry_module_paths:
-                        batch_reports.append(
-                            {
-                                "batch": "module_retry_structural_fallback",
-                                "attempt": attempt_no,
-                                "required_files": list(required_chunk),
-                                "generated_paths": sorted(repaired_retry_module_paths),
-                                "fallback_to_template": bool(invalid_module_paths),
-                                "error": (
-                                    "still invalid after retry structural fallback: "
-                                    + ", ".join(invalid_module_paths)
-                                    if invalid_module_paths
-                                    else None
-                                ),
-                            }
-                        )
-                        if not invalid_module_paths:
-                            break
                     continue
                 regenerated_paths: list[str] = []
                 for relative_path, content in batch_files.items():
@@ -1646,28 +1512,6 @@ async def generate_task_app_code(
                 break
     repaired_module_paths: list[str] = []
     if invalid_module_paths:
-        generated_files, repaired_module_paths = synthesize_recoverable_module_files(
-            generated_files,
-            invalid_module_paths,
-            profile,
-        )
-        if repaired_module_paths:
-            generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
-            batch_reports.append(
-                {
-                    "batch": "module_structural_fallback",
-                    "attempt": 1,
-                    "required_files": list(repaired_module_paths),
-                    "generated_paths": sorted(repaired_module_paths),
-                    "fallback_to_template": bool(invalid_module_paths),
-                    "error": (
-                        "still invalid after structural fallback: " + ", ".join(invalid_module_paths)
-                        if invalid_module_paths
-                        else None
-                    ),
-                }
-            )
-    if invalid_module_paths:
         invalid_module_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
             for relative_path in invalid_module_paths
@@ -1676,7 +1520,6 @@ async def generate_task_app_code(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_module_paths=sorted(repaired_module_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
             invalid_module_paths=invalid_module_paths,
             invalid_module_previews=invalid_module_previews,
         ), (
@@ -1690,7 +1533,6 @@ async def generate_task_app_code(
             repaired_core_paths=sorted(repaired_core_paths),
             repaired_module_paths=sorted(repaired_module_paths),
             repaired_support_paths=sorted(repaired_support_paths),
-            template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
             apply_error=apply_error,
         ), f"App code generation failed: {apply_error}"
 
@@ -1700,5 +1542,4 @@ async def generate_task_app_code(
         repaired_core_paths=sorted(repaired_core_paths),
         repaired_module_paths=sorted(repaired_module_paths),
         repaired_support_paths=sorted(repaired_support_paths),
-        template_ui_fallback_used=bool(repaired_core_paths or repaired_module_paths or repaired_support_paths),
     ), None
