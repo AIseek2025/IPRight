@@ -22,6 +22,7 @@ from workers.orchestrator.runner import (
 from workers.stages.build_support import (
     _ensure_backend_dependencies,
     _ensure_frontend_dependencies,
+    _extract_frontend_compile_error_paths,
     _synthesize_support_runtime_files,
     build_codegen_batches,
     build_codegen_requirements,
@@ -34,6 +35,7 @@ from workers.stages.build_support import (
     repair_invalid_support_files,
     repair_invalid_module_pages,
     sync_frontend_dependencies,
+    validate_generated_frontend_build,
 )
 from workers.stages.delivery_support import generate_manual_delivery
 from workers.stages.handlers import (
@@ -3261,6 +3263,128 @@ export const houseApi = {
         )
 
         assert "frontend/src/services/api.ts" in invalid_paths
+
+    def test_extract_frontend_compile_error_paths(self):
+        output = """
+src/pages/Dashboard.tsx(24,16): error TS7006: Parameter '_' implicitly has an 'any' type.
+src/pages/PigsTransferPage.tsx(4,20): error TS2307: Cannot find module 'moment' or its corresponding type declarations.
+src/services/api.ts(106,69): error TS2345: Argument of type 'PigQueryParams | undefined' is not assignable.
+"""
+
+        assert _extract_frontend_compile_error_paths(output) == [
+            "frontend/src/pages/Dashboard.tsx",
+            "frontend/src/pages/PigsTransferPage.tsx",
+            "frontend/src/services/api.ts",
+        ]
+
+    def test_validate_generated_frontend_build_reports_typescript_error_paths(self, tmp_path, monkeypatch):
+        frontend_root = tmp_path / "frontend"
+        frontend_root.mkdir(parents=True, exist_ok=True)
+        (frontend_root / "package.json").write_text('{"name":"demo","private":true}', encoding="utf-8")
+
+        class _Result:
+            def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        calls = []
+
+        def _fake_run(command, **kwargs):
+            calls.append(command)
+            if command[0] == "npm":
+                return _Result(0, stdout="installed")
+            return _Result(
+                1,
+                stderr="src/services/api.ts(106,69): error TS2345: bad types\nsrc/pages/PigsTransferPage.tsx(4,20): error TS2307: Cannot find module 'moment'\n",
+            )
+
+        monkeypatch.setattr("workers.stages.build_support.subprocess.run", _fake_run)
+
+        invalid_paths, compile_error = validate_generated_frontend_build(str(tmp_path))
+
+        assert calls[0] == ["npm", "install"]
+        assert invalid_paths == [
+            "frontend/src/services/api.ts",
+            "frontend/src/pages/PigsTransferPage.tsx",
+        ]
+        assert compile_error is not None
+
+    def test_generate_task_app_code_returns_compile_invalid_paths(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "生猪饲养管理系统",
+            "scene": "猪场管理",
+            "industry_scope": "畜牧",
+            "user_roles": ["场长"],
+            "modules": [
+                {"key": "pigs-transfer", "route": "/pigs/transfer", "title": "转群调拨", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": "export async function request(){ return {}; }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '生猪饲养管理系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/PigsTransferPage.tsx",):
+                    return _Resp({"frontend/src/pages/PigsTransferPage.tsx": "export default function PigsTransferPage(){ return <div>转群调拨</div>; }"})
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(
+            build_support,
+            "validate_generated_frontend_build",
+            lambda _app_root: (
+                ["frontend/src/services/api.ts", "frontend/src/pages/PigsTransferPage.tsx"],
+                "src/services/api.ts(1,1): error TS2345: bad types",
+            ),
+        )
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert report is not None
+        assert error == (
+            "App code generation failed: invalid frontend build artifacts: "
+            "frontend/src/services/api.ts, frontend/src/pages/PigsTransferPage.tsx"
+        )
+        assert report["invalid_compile_paths"] == [
+            "frontend/src/services/api.ts",
+            "frontend/src/pages/PigsTransferPage.tsx",
+        ]
 
     def test_synthesize_support_runtime_files_overwrites_invalid_existing_files(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}

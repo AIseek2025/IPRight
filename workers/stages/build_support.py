@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 from app.services.project_profile import build_frontend_profile_source
@@ -386,6 +387,53 @@ def normalize_prd_summary_with_plan_seed(prd_summary: dict, plan_seed: dict) -> 
 
 def normalize_generated_frontend_files(generated_files: dict[str, str]) -> dict[str, str]:
     return {relative_path: str(content) for relative_path, content in generated_files.items()}
+
+
+def _extract_frontend_compile_error_paths(log_output: str) -> list[str]:
+    paths: list[str] = []
+    for match in re.finditer(r"(?m)^src/([^\n:]+\.(?:ts|tsx|js|jsx))\(\d+,\d+\): error ", log_output):
+        relative_path = f"frontend/src/{match.group(1)}"
+        if relative_path not in paths:
+            paths.append(relative_path)
+    return paths
+
+
+def validate_generated_frontend_build(app_root: str) -> tuple[list[str], str | None]:
+    frontend_root = Path(app_root) / "frontend"
+    package_json = frontend_root / "package.json"
+    if not package_json.exists():
+        return [], None
+
+    package_lock = frontend_root / "package-lock.json"
+    if package_lock.exists():
+        package_lock.unlink()
+
+    commands = [
+        ["npm", "install"],
+        ["node", "node_modules/typescript/bin/tsc", "-b"],
+        ["node", "node_modules/vite/bin/vite.js", "build"],
+    ]
+    combined_logs: list[str] = []
+    for command in commands:
+        result = subprocess.run(
+            command,
+            cwd=str(frontend_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=600,
+            check=False,
+        )
+        output = "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+        if output:
+            combined_logs.append(output)
+        if result.returncode == 0:
+            continue
+        compile_log = "\n\n".join(combined_logs).strip()
+        return _extract_frontend_compile_error_paths(compile_log), (compile_log[-4000:] if compile_log else "frontend build failed")
+
+    return [], None
 
 
 def apply_generated_code_bundle(
@@ -1190,6 +1238,23 @@ async def generate_task_app_code(
         ), f"App code generation failed: {apply_error}"
 
     sync_frontend_dependencies(os.path.join(app_root, "frontend"))
+    invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+    if invalid_compile_paths:
+        compile_error_previews = {
+            relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
+            for relative_path in invalid_compile_paths
+        }
+        return _build_codegen_report(
+            repaired_core_paths=sorted(repaired_core_paths),
+            repaired_module_paths=sorted(repaired_module_paths),
+            repaired_support_paths=sorted(repaired_support_paths),
+            invalid_compile_paths=invalid_compile_paths,
+            invalid_compile_previews=compile_error_previews,
+            compile_error=compile_error,
+        ), (
+            "App code generation failed: invalid frontend build artifacts: "
+            + ", ".join(invalid_compile_paths)
+        )
 
     return _build_codegen_report(
         repaired_core_paths=sorted(repaired_core_paths),

@@ -345,7 +345,8 @@ class LLMClient:
 6. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
 7. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
 8. `frontend/src/main.tsx` 已预置并负责挂载路由容器；如果本次生成 `frontend/src/App.tsx`，不要再次渲染 `BrowserRouter`。
-9. 不要输出 Markdown 代码块，不要输出解释文字。
+9. 生成的前端代码必须能通过当前工程的 TypeScript 编译；不要引入基础环境未安装的新依赖，不要使用 `moment`，回调参数与辅助函数签名要避免触发 implicit any 或类型不兼容错误。
+10. 不要输出 Markdown 代码块，不要输出解释文字。
 
 输出 JSON 结构：
 {
