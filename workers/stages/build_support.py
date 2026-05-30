@@ -432,6 +432,68 @@ def hydrate_missing_files_from_template(
     return hydrated
 
 
+def _has_balanced_delimiters(content: str) -> bool:
+    stack: list[str] = []
+    pairs = {"}": "{", "]": "[", ")": "("}
+    opening = set(pairs.values())
+    closing = set(pairs.keys())
+    in_string: str | None = None
+    in_line_comment = False
+    in_block_comment = False
+    escaped = False
+
+    index = 0
+    while index < len(content):
+        char = content[index]
+        next_char = content[index + 1] if index + 1 < len(content) else ""
+
+        if in_line_comment:
+            if char == "\n":
+                in_line_comment = False
+            index += 1
+            continue
+
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                index += 2
+                continue
+            index += 1
+            continue
+
+        if in_string is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            in_line_comment = True
+            index += 2
+            continue
+        if char == "/" and next_char == "*":
+            in_block_comment = True
+            index += 2
+            continue
+        if char in {"'", '"', "`"}:
+            in_string = char
+            index += 1
+            continue
+        if char in opening:
+            stack.append(char)
+        elif char in closing:
+            if not stack or stack[-1] != pairs[char]:
+                return False
+            stack.pop()
+        index += 1
+
+    return not stack and in_string is None and not in_block_comment
+
+
 def _synthesize_support_runtime_files(
     generated_files: dict[str, str],
     profile: dict,
@@ -457,7 +519,8 @@ def repair_invalid_support_files(
     ):
         if relative_path not in required_files:
             continue
-        if str(repaired.get(relative_path, "") or "").strip():
+        content = str(repaired.get(relative_path, "") or "")
+        if content.strip() and _has_balanced_delimiters(content):
             continue
         invalid_paths.append(relative_path)
 
@@ -529,6 +592,8 @@ def repair_invalid_core_files(
         "frontend/src/App.tsx": lambda content: (
             bool(content.strip())
             and "模块开发中" not in content
+            and "BrowserRouter" not in content
+            and _has_balanced_delimiters(content)
             and not _references_unknown_page_import(content)
             and not _has_duplicate_page_imports_or_routes(content)
             and _has_component_export(content, "App")
@@ -536,11 +601,13 @@ def repair_invalid_core_files(
         "frontend/src/pages/Dashboard.tsx": lambda content: (
             bool(content.strip())
             and "模块开发中" not in content
+            and _has_balanced_delimiters(content)
             and _has_component_export(content, "Dashboard")
         ),
         "frontend/src/pages/Login.tsx": lambda content: (
             bool(content.strip())
             and "模块开发中" not in content
+            and _has_balanced_delimiters(content)
             and _has_component_export(content, "Login")
         ),
     }
@@ -592,6 +659,7 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
     if "frontend/src/App.tsx" in invalid_paths:
         hints.append("App.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
         hints.append("App.tsx 只能引用当前批次真实存在的页面组件，避免导入不存在页面或重复声明同一路由。")
+        hints.append("`frontend/src/main.tsx` 已负责挂载路由容器，`App.tsx` 不要再次渲染 `BrowserRouter`。")
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
         hints.append("Dashboard.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
     if "frontend/src/pages/Login.tsx" in invalid_paths:

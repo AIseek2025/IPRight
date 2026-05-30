@@ -795,6 +795,43 @@ export default function Login() {
 
         assert "frontend/src/App.tsx" in invalid_paths
 
+    def test_repair_invalid_core_files_rejects_browser_router_wrapper(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+export default function Dashboard() {
+  return <section>猪场看板</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  return <button>登录</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
     def test_repair_invalid_core_files_accepts_dashboard_with_real_widgets_without_fixed_title(self, tmp_path):
         app_root = tmp_path / "app"
         repaired, invalid_paths = repair_invalid_core_files(
@@ -3201,6 +3238,29 @@ export const api = { login: async () => ({ token: 'x' }) };
         )
 
         assert invalid_paths == []
+
+    def test_repair_invalid_support_files_rejects_unbalanced_typescript(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+export const houseApi = {
+  getPens(houseId: string) {
+    return request(`/houses/${houseId}/pens`);
+  },
+};
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface DemoUser { name: string; role: string; }",
+        }
+
+        _, invalid_paths = repair_invalid_support_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+        )
+
+        assert "frontend/src/services/api.ts" in invalid_paths
 
     def test_synthesize_support_runtime_files_overwrites_invalid_existing_files(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
