@@ -62,8 +62,7 @@
   - 扩展了行业预设、业务实体、模块集合、角色分工、体验蓝图与产品差异化提示。
 - `workers/stages/build_support.py`
   - 将代码生成要求拆分为“核心页批次 + 模块页批次”，降低统一模板吞噬差异化的概率。
-- `workers/stages/generated_frontend.py`
-  - 收紧本地模板边界，仅保留运行基础设施、必要外壳与字体规范，不再用模板回填业务核心页。
+  - 现在同时承接前端依赖同步、字体资源准备与种子工程初始化；旧的 `generated_frontend.py` 页面模板链路已删除。
 - `backend/app/services/llm/__init__.py`
   - 强化提示词约束，要求根据当前 `scene`、`industry_scope`、`core_entities`、`module_pages`、`experience_blueprint` 生成专属页面。
 
@@ -195,7 +194,6 @@
 - `backend/app/services/project_profile.py`
 - `backend/app/services/llm/__init__.py`
 - `workers/stages/build_support.py`
-- `workers/stages/generated_frontend.py`
 
 ### 6.2 运行与截图
 

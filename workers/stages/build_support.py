@@ -6,38 +6,155 @@ import re
 import shutil
 from pathlib import Path
 
-from workers.stages.generated_backend import GENERATED_BACKEND_APP_FILES
-from workers.stages.generated_frontend import (
-    _camel_name,
-    _render_dashboard_page,
-    _render_frontend_app,
-    _render_login_page,
-    _render_module_page,
-    _write_task_specific_app,
-    sync_frontend_dependencies,
-)
-
-FRONTEND_UI_FONT_STACK = "'IPRight CJK', 'Noto Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif"
-FRONTEND_UI_FONT_STACK_CSS = '"IPRight CJK", "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif'
-_FRONTEND_FONT_MATCH_TOKENS = (
-    "IPRight CJK",
-    "Noto Sans SC",
-    "Noto Sans CJK SC",
-    "PingFang SC",
-    "Microsoft YaHei",
-    "Helvetica Neue",
-    "Arial",
-)
-_FONT_FAMILY_PROP_RE = re.compile(r"fontFamily\s*:\s*(?P<value>`[^`]*`|'[^'\n]*'|\"[^\"\n]*\")")
-_FONT_FAMILY_CSS_RE = re.compile(r"(font-family\s*:\s*)(?P<value>[^;]+)(;)", re.IGNORECASE)
+from app.services.project_profile import build_frontend_profile_source
+from workers.stages.generated_backend import GENERATED_BACKEND_APP_FILES, write_generated_backend_files
 _CORE_INVALID_RETRY_BATCH_SIZE = 1
 _MODULE_INVALID_RETRY_BATCH_SIZE = 1
+_CORE_FRONTEND_DEPENDENCIES = {
+    "@ant-design/icons": "^5.3.0",
+    "antd": "^5.15.0",
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.0",
+}
+_OPTIONAL_FRONTEND_DEPENDENCIES = {
+    "@ant-design/pro-components": "^2.8.6",
+    "echarts": "^5.5.0",
+    "echarts-for-react": "^3.0.2",
+}
 
 
 def _write_text(path: str, content: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def _write_json(path: str, data: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _iter_frontend_source_imports(frontend_root: str) -> set[str]:
+    src_root = Path(frontend_root) / "src"
+    if not src_root.exists():
+        return set()
+
+    imports: set[str] = set()
+    import_re = re.compile(r"""(?:from|import)\s+['"](?P<module>[^'"]+)['"]""")
+    for source_path in src_root.rglob("*"):
+        if source_path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+            continue
+        content = source_path.read_text(encoding="utf-8")
+        for match in import_re.finditer(content):
+            imports.add(match.group("module"))
+    return imports
+
+
+def sync_frontend_dependencies(frontend_root: str) -> None:
+    package_json_path = Path(frontend_root) / "package.json"
+    if not package_json_path.exists():
+        return
+
+    package_json = json.loads(package_json_path.read_text(encoding="utf-8"))
+    dependencies = package_json.setdefault("dependencies", {})
+    for name, version in _CORE_FRONTEND_DEPENDENCIES.items():
+        dependencies.setdefault(name, version)
+
+    imported_modules = _iter_frontend_source_imports(frontend_root)
+    needs_pro_components = "@ant-design/pro-components" in imported_modules
+    needs_echarts_for_react = "echarts-for-react" in imported_modules
+    needs_echarts = needs_echarts_for_react or "echarts" in imported_modules
+
+    if needs_pro_components:
+        dependencies.setdefault(
+            "@ant-design/pro-components",
+            _OPTIONAL_FRONTEND_DEPENDENCIES["@ant-design/pro-components"],
+        )
+    else:
+        dependencies.pop("@ant-design/pro-components", None)
+
+    if needs_echarts:
+        dependencies.setdefault("echarts", _OPTIONAL_FRONTEND_DEPENDENCIES["echarts"])
+    else:
+        dependencies.pop("echarts", None)
+
+    if needs_echarts_for_react:
+        dependencies.setdefault(
+            "echarts-for-react",
+            _OPTIONAL_FRONTEND_DEPENDENCIES["echarts-for-react"],
+        )
+    else:
+        dependencies.pop("echarts-for-react", None)
+
+    _write_json(str(package_json_path), package_json)
+
+
+def _ensure_frontend_dependencies(frontend_root: str) -> None:
+    package_json_path = os.path.join(frontend_root, "package.json")
+    if not os.path.exists(package_json_path):
+        return
+    with open(package_json_path, "r", encoding="utf-8") as f:
+        package_json = json.load(f)
+    dependencies = package_json.setdefault("dependencies", {})
+    for name, version in _CORE_FRONTEND_DEPENDENCIES.items():
+        dependencies.setdefault(name, version)
+    _write_json(package_json_path, package_json)
+
+
+def _ensure_backend_dependencies(backend_root: str) -> None:
+    requirements_path = os.path.join(backend_root, "requirements.txt")
+    if not os.path.exists(requirements_path):
+        return
+
+    with open(requirements_path, "r", encoding="utf-8") as f:
+        lines = [line.rstrip("\n") for line in f]
+
+    normalized = [line.strip().lower() for line in lines if line.strip()]
+    if not any(line.startswith("pyjwt") for line in normalized):
+        lines.append("PyJWT>=2.8")
+
+    with open(requirements_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
+
+
+def _camel_name(value: str) -> str:
+    parts = re.split(r"[^0-9A-Za-z\u4e00-\u9fff]+", value)
+    cleaned = "".join(part[:1].upper() + part[1:] for part in parts if part)
+    if not cleaned:
+        return "ModulePage"
+    if cleaned[0].isdigit():
+        return f"Module{cleaned}"
+    return cleaned
+
+
+def _write_task_specific_app(frontend_root: str, backend_root: str, profile: dict) -> None:
+    _ensure_frontend_dependencies(frontend_root)
+    _ensure_backend_dependencies(backend_root)
+    package_lock_path = Path(frontend_root) / "package-lock.json"
+    if package_lock_path.exists():
+        package_lock_path.unlink()
+    _write_text(
+        os.path.join(frontend_root, "src", "generated", "appProfile.ts"),
+        build_frontend_profile_source(profile),
+    )
+
+    app_entry = Path(frontend_root) / "src" / "App.tsx"
+    pages_dir = Path(frontend_root) / "src" / "pages"
+    seed_support_files = [
+        Path(frontend_root) / "src" / "services" / "api.ts",
+        Path(frontend_root) / "src" / "types" / "constants.ts",
+        Path(frontend_root) / "src" / "types" / "models.ts",
+    ]
+    if app_entry.exists():
+        app_entry.unlink()
+    if pages_dir.exists():
+        shutil.rmtree(pages_dir)
+    for seed_path in seed_support_files:
+        if seed_path.exists():
+            seed_path.unlink()
+
+    write_generated_backend_files(backend_root, profile, _write_text)
 
 
 def _requires_llm_frontend_generation(relative_path: str) -> bool:
@@ -267,39 +384,8 @@ def normalize_prd_summary_with_plan_seed(prd_summary: dict, plan_seed: dict) -> 
     return normalized
 
 
-def _should_normalize_font_value(value: str) -> bool:
-    lower_value = value.lower()
-    if "monospace" in lower_value:
-        return False
-    return any(token in value for token in _FRONTEND_FONT_MATCH_TOKENS)
-
-
 def normalize_generated_frontend_files(generated_files: dict[str, str]) -> dict[str, str]:
-    normalized: dict[str, str] = {}
-    for relative_path, content in generated_files.items():
-        text = str(content)
-        if not relative_path.startswith("frontend/") or not relative_path.endswith((".ts", ".tsx", ".js", ".jsx", ".css")):
-            normalized[relative_path] = text
-            continue
-
-        text = _FONT_FAMILY_PROP_RE.sub(
-            lambda match: (
-                f"fontFamily: `{FRONTEND_UI_FONT_STACK}`"
-                if _should_normalize_font_value(match.group("value"))
-                else match.group(0)
-            ),
-            text,
-        )
-        text = _FONT_FAMILY_CSS_RE.sub(
-            lambda match: (
-                f"{match.group(1)}{FRONTEND_UI_FONT_STACK_CSS}{match.group(3)}"
-                if _should_normalize_font_value(match.group("value"))
-                else match.group(0)
-            ),
-            text,
-        )
-        normalized[relative_path] = text
-    return normalized
+    return {relative_path: str(content) for relative_path, content in generated_files.items()}
 
 
 def apply_generated_code_bundle(
@@ -471,63 +557,6 @@ def repair_invalid_support_files(
         invalid_paths.append(relative_path)
 
     return repaired, invalid_paths
-
-
-def _build_module_route_specs(profile: dict, generated_files: dict[str, str]) -> list[dict[str, str | bool]]:
-    route_specs: list[dict[str, str | bool]] = []
-    seen_routes: set[str] = set()
-    for index, module in enumerate(profile.get("modules", []), start=1):
-        raw_route = str(module.get("route") or "").strip()
-        route = raw_route or f"/module-{index}"
-        if route in seen_routes:
-            continue
-        seen_routes.add(route)
-        source = module.get("route") or module.get("key") or module.get("title") or route
-        component_name = f"{_camel_name(str(source))}Page"
-        file_path = f"frontend/src/pages/{component_name}.tsx"
-        route_specs.append(
-            {
-                "route": route,
-                "title": str(module.get("title") or f"业务模块{index}").strip() or f"业务模块{index}",
-                "description": str(module.get("description") or "").strip(),
-                "component_name": component_name,
-                "has_component": bool(str(generated_files.get(file_path, "")).strip()),
-            }
-        )
-    return route_specs
-
-
-def _synthesize_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
-    return _render_frontend_app(profile)
-
-
-def _synthesize_dashboard_tsx(profile: dict) -> str:
-    return _render_dashboard_page(profile)
-
-
-def _synthesize_login_tsx(profile: dict) -> str:
-    return _render_login_page(profile)
-
-
-def synthesize_recoverable_core_files(
-    generated_files: dict[str, str],
-    invalid_core_paths: list[str],
-    profile: dict,
-) -> tuple[dict[str, str], list[str]]:
-    synthesized = dict(generated_files)
-    repaired_paths: list[str] = []
-    builders = {
-        "frontend/src/App.tsx": lambda: _synthesize_app_tsx(profile, synthesized),
-        "frontend/src/pages/Dashboard.tsx": lambda: _synthesize_dashboard_tsx(profile),
-        "frontend/src/pages/Login.tsx": lambda: _synthesize_login_tsx(profile),
-    }
-    for relative_path in invalid_core_paths:
-        builder = builders.get(relative_path)
-        if not builder:
-            continue
-        synthesized[relative_path] = builder()
-        repaired_paths.append(relative_path)
-    return synthesized, repaired_paths
 
 
 def repair_invalid_core_files(
@@ -878,62 +907,6 @@ def repair_invalid_module_pages(
         invalid_paths.append(relative_path)
 
     return repaired, invalid_paths
-
-
-def synthesize_recoverable_module_files(
-    generated_files: dict[str, str],
-    invalid_module_paths: list[str],
-    profile: dict,
-) -> tuple[dict[str, str], list[str]]:
-    synthesized = dict(generated_files)
-    repaired_paths: list[str] = []
-    modules_by_path: dict[str, dict] = {}
-    for module in profile.get("modules", []):
-        component_name = f"{_camel_name(module.get('route', module['key']))}Page"
-        relative_path = f"frontend/src/pages/{component_name}.tsx"
-        modules_by_path[relative_path] = module
-
-    for relative_path in invalid_module_paths:
-        module = modules_by_path.get(relative_path)
-        if not module:
-            continue
-        synthesized[relative_path] = _render_module_page(module)
-        repaired_paths.append(relative_path)
-
-    return synthesized, repaired_paths
-
-
-def _apply_retry_module_structural_fallback(
-    generated_files: dict[str, str],
-    required_chunk: list[str],
-    profile: dict,
-) -> tuple[dict[str, str], list[str], list[str]]:
-    synthesized, repaired_paths = synthesize_recoverable_module_files(
-        generated_files,
-        required_chunk,
-        profile,
-    )
-    if not repaired_paths:
-        return generated_files, [], repair_invalid_module_pages(generated_files, profile)[1]
-    synthesized, invalid_module_paths = repair_invalid_module_pages(synthesized, profile)
-    return synthesized, repaired_paths, invalid_module_paths
-
-
-def _apply_retry_core_structural_fallback(
-    app_root: str,
-    generated_files: dict[str, str],
-    required_chunk: list[str],
-    profile: dict,
-) -> tuple[dict[str, str], list[str], list[str]]:
-    synthesized, repaired_paths = synthesize_recoverable_core_files(
-        generated_files,
-        required_chunk,
-        profile,
-    )
-    if not repaired_paths:
-        return generated_files, [], repair_invalid_core_files(app_root, generated_files, profile)[1]
-    synthesized, invalid_core_paths = repair_invalid_core_files(app_root, synthesized, profile)
-    return synthesized, repaired_paths, invalid_core_paths
 
 
 def _preview_generated_content(content: str, limit: int = 320) -> str:

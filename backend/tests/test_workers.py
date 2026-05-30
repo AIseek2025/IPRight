@@ -20,7 +20,8 @@ from workers.orchestrator.runner import (
     STAGE_HANDLERS,
 )
 from workers.stages.build_support import (
-    _synthesize_app_tsx,
+    _ensure_backend_dependencies,
+    _ensure_frontend_dependencies,
     _synthesize_support_runtime_files,
     build_codegen_batches,
     build_codegen_requirements,
@@ -32,9 +33,8 @@ from workers.stages.build_support import (
     repair_invalid_core_files,
     repair_invalid_support_files,
     repair_invalid_module_pages,
+    sync_frontend_dependencies,
 )
-from workers.stages.generated_frontend import _ensure_frontend_dependencies, sync_frontend_dependencies
-from workers.stages.generated_frontend import _render_login_page
 from workers.stages.delivery_support import generate_manual_delivery
 from workers.stages.handlers import (
     _load_prd_summary,
@@ -48,14 +48,6 @@ from workers.stages.handlers import (
 )
 from workers.stages.delivery_support import load_screenshots_meta
 from workers.stages.generated_backend import write_generated_backend_files
-from workers.stages.generated_frontend import (
-    _ensure_backend_dependencies,
-    _ensure_frontend_dependencies,
-    _render_font_css,
-    _render_frontend_app,
-    _render_login_page,
-    _render_module_page,
-)
 from workers.stages.runtime_support import (
     _collect_missing_essential_titles,
     _prepare_runtime_manifest,
@@ -858,10 +850,10 @@ export default function WorkflowPage() {
         assert not (app_root / "frontend/src/types/constants.ts").exists()
         assert not (app_root / "frontend/src/types/models.ts").exists()
         assert (app_root / "frontend/src/generated/appProfile.ts").exists()
-        assert (app_root / "frontend/src/font.css").exists()
-        assert (app_root / "frontend/src/App.css").exists()
-        assert "import './font.css';" in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
-        assert (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
+        assert not (app_root / "frontend/src/font.css").exists()
+        assert not (app_root / "frontend/src/App.css").exists()
+        assert "import './font.css';" not in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
+        assert not (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
 
     def test_demo_seed_frontend_sources_do_not_use_python_docstrings(self):
         seed_files = [
@@ -2030,7 +2022,6 @@ export default function WorkflowPage() {
 
         updated = package_json.read_text(encoding="utf-8")
         assert '"axios": "^1.6.0"' in updated
-        assert '"@fontsource/noto-sans-sc": "latest"' in updated
         assert '"antd": "^5.15.0"' in updated
         assert '"@ant-design/icons": "^5.3.0"' in updated
         assert '"dayjs": "^1.11.0"' in updated
@@ -2076,7 +2067,7 @@ export default function WorkflowPage() {
         updated = requirements.read_text(encoding="utf-8")
         assert "PyJWT>=2.8" in updated
 
-    def test_normalize_generated_frontend_files_rewrites_llm_font_stacks(self):
+    def test_normalize_generated_frontend_files_preserves_original_content(self):
         generated = {
             "frontend/src/pages/PurchasesPage.tsx": """
 const styles = {
@@ -2099,8 +2090,8 @@ const css = `
         normalized = normalize_generated_frontend_files(generated)
 
         page_code = normalized["frontend/src/pages/PurchasesPage.tsx"]
-        assert "'IPRight CJK'" in page_code
-        assert '"IPRight CJK"' in page_code
+        assert "Microsoft YaHei" in page_code
+        assert "PingFang SC" in page_code
         assert "font-family: monospace;" in page_code
         assert normalized["backend/app/main.py"] == "print('ok')\n"
 
@@ -2723,128 +2714,6 @@ const css = `
 
         assert "Unable to locate input field for target: 搜索" not in caplog.text
 
-    def test_render_font_css_prefers_horizontal_cjk_layout(self):
-        css = _render_font_css()
-        assert "@fontsource/noto-sans-sc/chinese-simplified.css" in css
-        assert "min-width: 1360px" in css
-        assert "writing-mode: horizontal-tb" in css
-        assert "'Noto Sans SC'" in css
-        assert "input, button, textarea, select" in css
-
-    def test_render_frontend_app_defaults_to_top_tabs_shell(self):
-        profile = {
-            "product_name": "AI股票量化投资平台",
-            "version": "V1.0",
-            "short_name": "量化平台",
-            "scene": "量化策略研究与交易管理",
-            "nav_items": [
-                {"path": "/dashboard", "label": "首页", "icon": "📊"},
-                {"path": "/users", "label": "用户管理", "icon": "👥"},
-            ],
-            "modules": [
-                {
-                    "key": "users",
-                    "title": "用户管理",
-                    "route": "/users",
-                    "description": "维护用户账号",
-                    "primary_action": "新增角色账号",
-                }
-            ],
-        }
-        app_code = _render_frontend_app(profile)
-        assert "chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'))" in app_code
-        assert "顶部导航工作台" in app_code
-        assert "当前视图" in app_code
-        assert "focusTerms" in app_code
-
-    def test_render_login_page_has_nonempty_right_panel(self):
-        page_code = _render_login_page()
-        assert "平台入口概览" in page_code
-        assert "previewModules" in page_code
-        assert "loginVariant === 'workspace' ? '1.12fr 380px' : '420px 1fr'" in page_code
-        assert "fontFamily: uiFont" in page_code
-
-    def test_render_frontend_app_always_shows_login_when_not_authenticated(self):
-        profile = {
-            "product_name": "供应链管理软件",
-            "version": "V1.0",
-            "short_name": "供应链",
-            "scene": "供应链协同管理",
-            "nav_items": [{"path": "/dashboard", "label": "首页", "icon": "📊"}],
-            "modules": [],
-        }
-        app_code = _render_frontend_app(profile)
-        assert "if (!loggedIn) {" in app_code
-        assert "location.pathname !== '/login'" not in app_code
-
-    def test_render_frontend_app_adds_desktop_workbench_shell_for_client_products(self):
-        profile = {
-            "product_name": "园区设备巡检客户端",
-            "version": "V1.0",
-            "short_name": "巡检终端",
-            "app_type": "desktop_client",
-            "scene": "设备巡检与工作站协同",
-            "visual_profile": {"nav_background": "#111827", "nav_text": "#fff", "shell_background": "#eef2f7"},
-            "nav_items": [{"path": "/dashboard", "label": "首页", "icon": "📊"}],
-            "modules": [],
-        }
-        app_code = _render_frontend_app(profile)
-        assert "桌面客户端工作台" in app_code
-        assert "当前模块" in app_code
-        assert "刷新视图" in app_code
-        assert "打开工作区" in app_code
-
-    def test_render_module_page_uses_module_specific_copy_and_removes_tips(self):
-        module = {
-            "key": "users",
-            "title": "用户管理",
-            "route": "/users",
-            "description": "用于维护账号、角色与授权范围。",
-            "primary_action": "新增角色账号",
-            "filter_placeholder": "搜索用户名 / 角色 / 状态",
-            "table_headers": ["账号编号", "姓名", "角色", "负责范围", "状态", "最近更新"],
-            "rows": [
-                ["USR-101", "陈思远", "管理员", "用户管理", "启用", "2026-05-02"],
-                ["USR-102", "周可欣", "审核员", "策略管理", "处理中", "2026-05-01"],
-            ],
-            "highlights": ["支持统一建档", "支持角色过滤", "支持授权留痕"],
-        }
-        page_code = _render_module_page(module)
-        assert "用户管理" in page_code
-        assert "用于维护账号、角色与授权范围。" in page_code
-        assert "新增角色账号" in page_code
-        assert "支持统一建档" in page_code
-        assert "使用提示" not in page_code
-        assert "页面摘要" not in page_code
-        assert "业务处理说明" in page_code
-        assert "moduleRowsSafe" in page_code
-        assert "主数据范围" in page_code
-        assert "数据样例" in page_code
-        assert "routeBadge" in page_code
-        assert "borderTop" not in page_code
-        assert "fontFamily: uiFont" in page_code
-        assert 'name="搜索"' in page_code
-        assert "aria-label={modulePlaceholder}" in page_code
-        assert 'type="search"' in page_code
-
-    def test_render_module_page_is_typescript_safe(self):
-        module = {
-            "key": "alerts",
-            "title": "预警中心",
-            "route": "/alerts",
-            "description": "用于汇总风险告警、处置状态与最新留痕。",
-            "primary_action": "新增预警规则",
-            "filter_placeholder": "搜索告警编号 / 责任人 / 状态",
-            "table_headers": ["告警编号", "主题", "责任人", "状态"],
-            "rows": [["ALT-101", "库存预警", "周可欣", "处理中"]],
-            "highlights": ["支持状态追踪"],
-            "page_variant": "workspace",
-        }
-        page_code = _render_module_page(module)
-        assert "const pageVariant: string" in page_code
-        assert "style={panelStyle}" in page_code
-        assert "style={{panelStyle}}" not in page_code
-
     def test_repair_invalid_core_files_rejects_unsupported_profile_fields(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -3326,11 +3195,6 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
-    def test_render_login_page_types_login_variant_as_string(self):
-        page = _render_login_page({"experience_blueprint": {"login_variant": "workspace"}})
-
-        assert "const loginVariant: string =" in page
-
     def test_repair_invalid_support_files_falls_back_from_import_meta_env(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
         generated_files = {
@@ -3491,7 +3355,21 @@ export default function SalesPage() {
             ]
         }
         generated_files = {
-            "frontend/src/pages/StatisticsPage.tsx": _render_module_page(profile["modules"][0]),
+            "frontend/src/pages/StatisticsPage.tsx": """
+import { Card, Table } from 'antd';
+import { APP_PROFILE } from '../generated/appProfile';
+
+export default function StatisticsPage() {
+  return (
+    <Card title="统计分析">
+      <div>{APP_PROFILE.product_name}</div>
+      <div>指标 数值 趋势</div>
+      <div>转化率 18% 上升</div>
+      <Table pagination={false} dataSource={[]} columns={[]} />
+    </Card>
+  );
+}
+""",
         }
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
@@ -4261,30 +4139,3 @@ def test_collect_missing_essential_titles_marks_failed_or_missing_core_pages():
     missing = _collect_missing_essential_titles(capture_manifest, results)
 
     assert missing == ["系统首页", "授信主体管理"]
-
-
-def test_synthesize_app_tsx_keeps_valid_jsx_style_object_syntax():
-    profile = {
-        "product_name": "投资风险评估预警平台",
-        "scene": "面向投资风险监控与预警处置的业务平台",
-        "app_type": "admin_web",
-        "modules": [
-            {
-                "key": "records",
-                "route": "/records",
-                "title": "多源数据接入与治理",
-                "description": "用于承接多源数据治理与查询。",
-            }
-        ],
-    }
-    generated_files = {
-        "frontend/src/pages/RecordsPage.tsx": "export default function RecordsPage(){ return <div>ok</div>; }"
-    }
-
-    content = _synthesize_app_tsx(profile, generated_files)
-
-    assert "style={{ minHeight: '100vh'" in content
-    assert "style={ minHeight: '100vh'" not in content
-    assert "chromeTreatment = String((visualProfile.chrome_treatment as string) || (isDesktopClient ? 'desktop_workbench' : 'top_tabs'))" in content
-    assert "if (!loggedIn) {" in content
-    assert "<Login onLogin={handleLogin} />" in content
