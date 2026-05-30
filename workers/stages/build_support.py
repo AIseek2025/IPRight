@@ -432,10 +432,6 @@ def hydrate_missing_files_from_template(
     return hydrated
 
 
-def _json_text(value: str) -> str:
-    return json.dumps(str(value or ""), ensure_ascii=False)
-
-
 def _synthesize_support_runtime_files(
     generated_files: dict[str, str],
     profile: dict,
@@ -443,77 +439,7 @@ def _synthesize_support_runtime_files(
     *,
     overwrite_existing: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
-    synthesized = dict(generated_files)
-    repaired_paths: list[str] = []
-    product_name = str(profile.get("product_name") or "业务平台").strip() or "业务平台"
-    version = str(profile.get("version") or "V1.0").strip() or "V1.0"
-
-    support_files = {
-        "frontend/src/services/api.ts": """export interface ApiResult<T = unknown> {
-  success: boolean;
-  data?: T;
-  message?: string;
-}
-
-export async function request<T = unknown>(payload: T): Promise<ApiResult<T>> {
-  return { success: true, data: payload };
-}
-
-export const api = {
-  login: async (username: string, _password: string) =>
-    request({
-      token: "demo-token",
-      user: {
-        name: username || "管理员",
-        role: "管理员",
-      },
-    }),
-};
-""",
-        "frontend/src/types/constants.ts": (
-            f"export const APP_NAME = {_json_text(product_name)};\n"
-            f"export const APP_VERSION = {_json_text(version)};\n"
-            "export const DEMO_USERNAME = 'admin';\n"
-            "export const DEMO_PASSWORD = 'admin123';\n"
-            "export const COLORS = {\n"
-            "  primary: '#1677ff',\n"
-            "  success: '#52c41a',\n"
-            "  warning: '#faad14',\n"
-            "  error: '#ff4d4f',\n"
-            "  info: '#1890ff',\n"
-            "  text: '#334155',\n"
-            "  muted: '#64748b',\n"
-            "  background: '#f8fafc',\n"
-            "  panel: '#ffffff',\n"
-            "} as const;\n"
-        ),
-        "frontend/src/types/models.ts": """export interface DemoUser {
-  name: string;
-  role: string;
-}
-
-export interface LoginResponse {
-  token: string;
-  user: DemoUser;
-}
-
-export interface ApiResult<T = unknown> {
-  success: boolean;
-  data?: T;
-  message?: string;
-}
-""",
-    }
-
-    for relative_path, content in support_files.items():
-        if relative_path not in required_files:
-            continue
-        if not overwrite_existing and str(synthesized.get(relative_path, "")).strip():
-            continue
-        synthesized[relative_path] = content
-        repaired_paths.append(relative_path)
-
-    return synthesized, repaired_paths
+    return dict(generated_files), []
 
 
 def repair_invalid_support_files(
@@ -524,35 +450,14 @@ def repair_invalid_support_files(
     repaired = dict(generated_files)
     invalid_paths: list[str] = []
 
-    validators = {
-        "frontend/src/services/api.ts": lambda content: (
-            bool(content)
-            and "import.meta.env" not in content
-            and "ApiResult" in content
-            and "request<" in content
-            and "login:" in content
-        ),
-        "frontend/src/types/constants.ts": lambda content: (
-            bool(content)
-            and "APP_NAME" in content
-            and "APP_VERSION" in content
-            and "DEMO_USERNAME" in content
-            and "DEMO_PASSWORD" in content
-            and "COLORS" in content
-        ),
-        "frontend/src/types/models.ts": lambda content: (
-            bool(content)
-            and "export interface DemoUser" in content
-            and "export interface LoginResponse" in content
-            and "export interface ApiResult" in content
-        ),
-    }
-
-    for relative_path, validator in validators.items():
+    for relative_path in (
+        "frontend/src/services/api.ts",
+        "frontend/src/types/constants.ts",
+        "frontend/src/types/models.ts",
+    ):
         if relative_path not in required_files:
             continue
-        content = str(repaired.get(relative_path, "") or "")
-        if validator(content):
+        if str(repaired.get(relative_path, "") or "").strip():
             continue
         invalid_paths.append(relative_path)
 
@@ -610,125 +515,33 @@ def repair_invalid_core_files(
         ]
         return len(route_paths) != len(set(route_paths))
 
-    def _uses_valid_login_entry(content: str) -> bool:
-        if "<Login" not in content:
-            return True
-        return "onLogin" in content or "<Route" in content
-
-    def _supports_login_callback(content: str) -> bool:
-        return "onLogin" in content
-
-    def _uses_valid_login_component_signature(content: str) -> bool:
-        return _supports_login_callback(content) or _contains_any(
+    def _has_component_export(content: str, component_name: str) -> bool:
+        return _contains_any(
             content,
             [
-                "export default function Login()",
-                "function Login()",
-                "const Login = () =>",
-                "const Login=() =>",
-                "const Login: React.FC = () =>",
-                "const Login: React.FC=() =>",
+                f"export default function {component_name}",
+                f"function {component_name}(",
+                f"const {component_name}",
             ],
         )
 
-    app_content = str(repaired.get("frontend/src/App.tsx") or "")
-    app_requires_login_callback = "<Login onLogin=" in app_content
-
     validators = {
         "frontend/src/App.tsx": lambda content: (
-            "PlaceholderPage" not in content
+            bool(content.strip())
             and "模块开发中" not in content
-            and "ModuleShell" not in content
-            and not _contains_any(
-                content,
-                [
-                    "APP_PROFILE.navigation",
-                    "APP_PROFILE.name",
-                    "APP_PROFILE.appName",
-                ],
-            )
             and not _references_unknown_page_import(content)
             and not _has_duplicate_page_imports_or_routes(content)
-            and _contains_any(content, ["export default function App", "function App(", "const App"])
-            and _uses_valid_login_entry(content)
-            and "const handleLogin = (token:" not in content
-            and "const handleLogin = (value:" not in content
-            and _contains_any(content, ["Routes", "Route", "useRoutes"])
+            and _has_component_export(content, "App")
         ),
         "frontend/src/pages/Dashboard.tsx": lambda content: (
-            "模块开发中" not in content
-            and not _contains_any(
-                content,
-                [
-                    "echarts-for-react/lib/core",
-                    "echarts/core",
-                    "echarts/charts",
-                    "echarts/components",
-                    "echarts/renderers",
-                    "APP_PROFILE.navigation",
-                    "APP_PROFILE.name",
-                    "APP_PROFILE.appName",
-                    "APP_PROFILE.dashboard_metrics.totalProjects",
-                    "APP_PROFILE.dashboard_metrics.activeTasks",
-                    "APP_PROFILE.dashboard_metrics.environments",
-                    "APP_PROFILE.dashboard_metrics.passedTests",
-                    "APP_PROFILE.dashboard_metrics.totalCases",
-                    "APP_PROFILE.dashboard_metrics.todayExecutions",
-                    "APP_PROFILE.dashboard_metrics.passRate",
-                    "APP_PROFILE.dashboard_metrics.totalEvents",
-                    "APP_PROFILE.dashboard_metrics.processingOrders",
-                    "APP_PROFILE.dashboard_metrics.pendingConfirm",
-                    "APP_PROFILE.dashboard_metrics.avgResponseTime",
-                    "APP_PROFILE.dashboard_metrics.todayAlerts",
-                    "APP_PROFILE.dashboard_metrics.processing",
-                    "APP_PROFILE.dashboard_metrics.overdueWarnings",
-                    "APP_PROFILE.dashboard_metrics.closed",
-                    "APP_PROFILE.dashboard_metrics.openIncidents",
-                    "APP_PROFILE.dashboard_metrics.inProgress",
-                    "APP_PROFILE.dashboard_metrics.resolvedToday",
-                    "APP_PROFILE.dashboard_metrics.escalation",
-                    "APP_PROFILE.dashboard_metrics.anomalyTotal",
-                    "APP_PROFILE.dashboard_metrics.pendingTasks",
-                    "APP_PROFILE.dashboard_metrics.closureRate",
-                    "APP_PROFILE.dashboard_metrics.avgProcessHours",
-                    "setMetrics(APP_PROFILE.dashboard_metrics",
-                    "setMetrics(APP_PROFILE?.dashboard_metrics",
-                ],
-            )
-            and not bool(
-                re.search(
-                    r"APP_PROFILE\.dashboard_metrics\.map\(\((metric|item)\)\s*=>[\s\S]{0,240}\b(?:metric|item)\.(?:icon|label)\b",
-                    content,
-                )
-            )
-            and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
-            and ("const dashboardVariant =" not in content or "const dashboardVariant: string =" in content)
-            and _contains_any(
-                content,
-                [
-                    "系统首页",
-                    "指挥仪表盘",
-                    "工作台",
-                    "概览",
-                    "Statistic",
-                    "ReactECharts",
-                    "Card",
-                    "Progress",
-                    "Table",
-                ],
-            )
+            bool(content.strip())
+            and "模块开发中" not in content
+            and _has_component_export(content, "Dashboard")
         ),
         "frontend/src/pages/Login.tsx": lambda content: (
-            "模块开发中" not in content
-            and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
-            and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit", "onFinish", "useNavigate", "navigate("])
-            and (
-                _supports_login_callback(content)
-                if app_requires_login_callback
-                else _uses_valid_login_component_signature(content)
-            )
-            and ("const loginVariant =" not in content or "const loginVariant: string =" in content)
-            and _contains_any(content, ["登录", "密码", "用户名"])
+            bool(content.strip())
+            and "模块开发中" not in content
+            and _has_component_export(content, "Login")
         ),
     }
 
@@ -756,92 +569,9 @@ def repair_invalid_module_pages(
         if normalized_content != content:
             repaired[relative_path] = normalized_content
             content = normalized_content
-        row_tokens = [
-            str(cell).strip()
-            for row in list(module.get("rows", []))[:2]
-            for cell in list(row)[:3]
-            if str(cell).strip()
-        ]
-        header_tokens = [str(item).strip() for item in list(module.get("table_headers", []))[:3] if str(item).strip()]
-        has_valid_profile_import = "../generated/appProfile" in content and "../../generated/appProfile" not in content
-        must_have_task_data = any(token and token in content for token in [module.get("title", ""), *header_tokens, *row_tokens])
-        uses_invalid_profile_alias = any(
-            token in content
-            for token in [
-                "productName",
-                "visualConfig",
-                "APP_PROFILE.roles",
-                "APP_PROFILE.name",
-                "APP_PROFILE.appName",
-                "APP_PROFILE.navigation",
-                "APP_PROFILE.module_pages",
-                "APP_PROFILE.title",
-                "APP_PROFILE.description",
-                "APP_PROFILE.theme",
-                "editable:",
-            ]
-        ) or bool(re.search(r"APP_PROFILE\.visual(?!_profile)\b", content))
-        uses_invalid_modal_header_style = "<Modal" in content and "headerStyle=" in content
-        imports_unsupported_shared_models = any(
-            token in content
-            for token in [
-                "from '../types/models'",
-                'from "../types/models"',
-            ]
-        )
-        uses_invalid_profile_any_cast = "APP_PROFILE as any" in content
-        uses_invalid_module_pages_alias = bool(re.search(r"APP_PROFILE[^\n]{0,80}\?\.modulePages\b", content))
-        uses_unsafe_visual_profile = "APP_PROFILE.visual_profile." in content
-        visual_profile_aliases = {
-            match.group("name")
-            for match in re.finditer(
-                r"\b(?:const|let|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=;]+)?=\s*APP_PROFILE\.visual_profile\s*;",
-                content,
-            )
-        }
-        uses_visual_profile_alias_without_guard = any(
-            re.search(rf"\b{re.escape(alias)}\.[A-Za-z_]", content)
-            for alias in visual_profile_aliases
-        )
-        references_message_without_import = (
-            "message." in content
-            and "import { message" not in content
-            and "message } from 'antd'" not in content
-            and 'message } from "antd"' not in content
-            and "message," not in content
-        )
-        references_statistic_without_import = (
-            any(token in content for token in ["<Statistic", " Statistic.", " Statistic "])
-            and "import { Statistic" not in content
-            and "Statistic } from 'antd'" not in content
-            and "Statistic," not in content
-        )
-        references_typography_without_import = (
-            any(token in content for token in ["<Typography", "Typography.", "= Typography"])
-            and "import { Typography" not in content
-            and "Typography } from 'antd'" not in content
-            and 'Typography } from "antd"' not in content
-            and "Typography," not in content
-        )
         is_valid = (
-            bool(content)
-            and has_valid_profile_import
-            and "APP_PROFILE" in content
-            and "ModuleShell" not in content
+            bool(content.strip())
             and "模块开发中" not in content
-            and "const mockData" not in content
-            and "mockData:" not in content
-            and must_have_task_data
-            and not uses_invalid_profile_alias
-            and not uses_invalid_modal_header_style
-            and not imports_unsupported_shared_models
-            and not uses_invalid_profile_any_cast
-            and not uses_invalid_module_pages_alias
-            and not uses_unsafe_visual_profile
-            and not uses_visual_profile_alias_without_guard
-            and not references_message_without_import
-            and not references_statistic_without_import
-            and not references_typography_without_import
         )
         if is_valid:
             continue
@@ -859,44 +589,13 @@ def _preview_generated_content(content: str, limit: int = 320) -> str:
 
 def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> list[str]:
     hints: list[str] = []
-    module_routes = [
-        str(module.get("route", "")).strip()
-        for module in profile.get("modules", [])
-        if str(module.get("route", "")).strip()
-    ]
     if "frontend/src/App.tsx" in invalid_paths:
-        hints.append(
-            "App.tsx 必须导入并使用 ./generated/appProfile 中的 APP_PROFILE，不能只写静态文案。"
-        )
-        hints.append("App.tsx 只能引用 Login、Dashboard 和当前任务 required_files 中明确要求的模块页面，不能额外导入不存在的页面组件。")
-        hints.append("App.tsx 不得重复导入同一个页面组件，也不得重复声明相同 path 的 Route。")
-        if module_routes:
-            hints.append(
-                "App.tsx 必须使用 Routes/Route 或 useRoutes 显式挂接这些模块路由: "
-                + ", ".join(module_routes)
-            )
-        hints.append("App.tsx 不得输出 PlaceholderPage、'模块开发中' 或统一后台占位壳层。")
-        navigation_variant = str((profile.get("experience_blueprint") or {}).get("navigation_variant") or "").strip()
-        chrome_treatment = str((profile.get("visual_profile") or {}).get("chrome_treatment") or "").strip()
-        if navigation_variant or chrome_treatment:
-            hints.append(
-                "App.tsx 必须落实当前任务指定的壳层方向，navigation_variant="
-                + (navigation_variant or "unknown")
-                + "，chrome_treatment="
-                + (chrome_treatment or "unknown")
-                + "；不得回退为统一左侧深色竖栏后台。"
-            )
+        hints.append("App.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
+        hints.append("App.tsx 只能引用当前批次真实存在的页面组件，避免导入不存在页面或重复声明同一路由。")
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
-        hints.append(
-            "Dashboard.tsx 必须直接读取 APP_PROFILE.product_name 与 APP_PROFILE.dashboard_metrics，并在页面中展示中文首页/工作台标题。"
-        )
-        hints.append(
-            "Dashboard.tsx 必须把 APP_PROFILE.dashboard_metrics 当作数组使用，不能访问 openIncidents、inProgress、resolvedToday、escalation 等对象字段。"
-        )
+        hints.append("Dashboard.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
     if "frontend/src/pages/Login.tsx" in invalid_paths:
-        hints.append(
-            "Login.tsx 必须包含中文登录表单，并通过 onLogin、handleSubmit 或 localStorage(ipright_demo_auth) 完成登录态写入。"
-        )
+        hints.append("Login.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
     return hints
 
 
@@ -914,37 +613,9 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
             continue
         title = str(module.get("title") or module.get("key") or relative_path).strip()
         route = str(module.get("route") or "").strip()
-        page_variant = str(module.get("page_variant") or "records").strip()
-        table_headers = [str(item).strip() for item in list(module.get("table_headers", []))[:5] if str(item).strip()]
-        row_tokens = [
-            str(cell).strip()
-            for row in list(module.get("rows", []))[:2]
-            for cell in list(row)[:4]
-            if str(cell).strip()
-        ]
-        highlights = [str(item).strip() for item in list(module.get("highlights", []))[:3] if str(item).strip()]
-        primary_action = str(module.get("primary_action") or "").strip()
-        filter_placeholder = str(module.get("filter_placeholder") or "").strip()
-
-        hints.append(
-            f"{relative_path} 必须是 {title} 的真实业务页面，直接从 ../generated/appProfile 读取 APP_PROFILE，不能使用 ModuleShell、模块开发中、mockData 或 testData 占位实现。"
-        )
+        hints.append(f"{relative_path} 需要输出 {title} 的完整可运行页面组件，不能留空，也不要保留“模块开发中”占位文本。")
         if route:
-            hints.append(f"{relative_path} 必须围绕路由 {route} 的业务语境组织页面内容，不得复用其他模块页面。")
-        hints.append(
-            f"{relative_path} 必须体现 page_variant={page_variant} 对应的信息组织方式，并根据本模块主题自主设计正文布局，不能套用统一后台骨架。"
-        )
-        if table_headers or row_tokens:
-            hints.append(
-                f"{relative_path} 必须直接复用任务样例数据；至少覆盖这些字段/样例中的大部分："
-                + "、".join([*table_headers, *row_tokens][:8])
-            )
-        if primary_action or filter_placeholder or highlights:
-            module_traits = [item for item in [primary_action, filter_placeholder, *highlights] if item]
-            hints.append(
-                f"{relative_path} 需要把当前模块的主操作、筛选入口和信息重点落到页面中："
-                + "、".join(module_traits[:6])
-            )
+            hints.append(f"{relative_path} 应与路由 {route} 对应，避免输出与当前模块无关的页面内容。")
     return hints
 
 

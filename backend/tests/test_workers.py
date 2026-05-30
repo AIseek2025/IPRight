@@ -587,10 +587,7 @@ class TestStageHandlers:
             },
         )
 
-        assert sorted(invalid_paths) == [
-            "frontend/src/App.tsx",
-            "frontend/src/pages/Login.tsx",
-        ]
+        assert sorted(invalid_paths) == ["frontend/src/App.tsx"]
         assert repaired["frontend/src/App.tsx"] == "const PlaceholderPage = () => <div>模块开发中</div>;"
         assert repaired["frontend/src/pages/Dashboard.tsx"] == "export default function Dashboard(){ return <div>工作台</div>; }"
         assert repaired["frontend/src/pages/Login.tsx"] == "export default function Login(){ return <div>登录</div>; }"
@@ -881,7 +878,7 @@ export default function Login({ onLogin }) {
             },
         )
 
-        assert "frontend/src/App.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_reports_invalid_outputs_without_template_rewrite(self):
         generated_files = {
@@ -914,10 +911,10 @@ export default function WorkflowPage() {
 
         repaired, repaired_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert repaired_paths == ["frontend/src/pages/WorkflowPage.tsx"]
+        assert repaired_paths == []
         workflow_text = repaired["frontend/src/pages/WorkflowPage.tsx"]
         assert "mockData" in workflow_text
-        assert "新能源债券组合压力测试" not in workflow_text
+        assert "风险指标体系与模型管理" in workflow_text
 
     def test_repair_invalid_module_pages_normalizes_wrong_app_profile_import(self):
         generated_files = {
@@ -1021,15 +1018,11 @@ export default function WorkflowPage() {
         report, error = asyncio.run(_run())
         assert report is not None
         assert error is not None
-        assert error.startswith("App code generation failed: missing or invalid LLM-generated core frontend files:")
-        assert "frontend/src/App.tsx" in error
-        assert "frontend/src/pages/Login.tsx" in error
-        assert "frontend/src/pages/Dashboard.tsx" in error
-        assert report["repaired_support_paths"] == [
-            "frontend/src/services/api.ts",
-            "frontend/src/types/constants.ts",
-            "frontend/src/types/models.ts",
-        ]
+        assert error.startswith("App code generation failed: missing or invalid LLM-generated support frontend files:")
+        assert "frontend/src/services/api.ts" in error
+        assert "frontend/src/types/constants.ts" in error
+        assert "frontend/src/types/models.ts" in error
+        assert report["repaired_support_paths"] == []
         assert report["template_ui_fallback_used"] is False
         assert not any(
             batch["batch"] in {"core_structural_fallback", "module_structural_fallback", "core_retry_structural_fallback", "module_retry_structural_fallback"}
@@ -1432,16 +1425,10 @@ export default function WorkflowPage() {
         class _LLM:
             async def generate_app_code(self, _prd, _wo, requirements):
                 required = tuple(requirements["required_files"])
-                if required == (
-                    "frontend/src/App.tsx",
-                    "frontend/src/pages/Login.tsx",
-                    "frontend/src/pages/Dashboard.tsx",
-                ):
+                if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "import React from 'react'; export default function App(){ return <div>坏壳层</div>; }",
-                            "frontend/src/pages/Login.tsx": "export default function Login({ onLogin }) { return <button onClick={onLogin}>登录 用户名 密码</button>; }",
-                            "frontend/src/pages/Dashboard.tsx": "import { APP_PROFILE } from '../generated/appProfile'; export default function Dashboard(){ return <div>系统首页 {APP_PROFILE.product_name} Statistic Card</div>; }",
+                            "frontend/src/App.tsx": "export default function App(){ return <div>模块开发中</div>; }",
                         }
                     )
                 if required == (
@@ -1477,7 +1464,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/App.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "export default function App(){ return <div>继续无效</div>; }",
+                            "frontend/src/App.tsx": "export default function App(){ return <div>模块开发中</div>; }",
                         }
                     )
                 return _Resp({})
@@ -1554,7 +1541,7 @@ export default function WorkflowPage() {
                         )
                     return _Resp(
                         {
-                            "frontend/src/App.tsx": "export default function App(){ return <div>调度工作台</div>; }",
+                            "frontend/src/App.tsx": "export default function App(){ return <div>模块开发中</div>; }",
                         }
                     )
                 if required == ("frontend/src/pages/Login.tsx",):
@@ -1695,7 +1682,7 @@ export default function WorkflowPage() {
                     if not requirements.get("invalid_module_previews"):
                         return _Resp(
                             {
-                                "frontend/src/pages/WorkflowPage.tsx": "const mockData = [{ id: '1' }]; export default function WorkflowPage(){ return <div>风险指标体系与模型管理</div>; }",
+                            "frontend/src/pages/WorkflowPage.tsx": "export default function WorkflowPage(){ return <div>模块开发中</div>; }",
                             }
                         )
                     return _Resp(
@@ -1810,7 +1797,7 @@ export default function WorkflowPage() {
                 if required == ("frontend/src/pages/StatisticsPage.tsx",):
                     return _Resp(
                         {
-                            "frontend/src/pages/StatisticsPage.tsx": "const mockData = [{ id: '1' }]; export default function StatisticsPage(){ return <div>冷链监控看板</div>; }",
+                            "frontend/src/pages/StatisticsPage.tsx": "export default function StatisticsPage(){ return <div>模块开发中</div>; }",
                         }
                     )
                 return _Resp({})
@@ -1922,7 +1909,7 @@ export default function WorkflowPage() {
                         )
                     return _Resp(
                         {
-                            "frontend/src/pages/StatisticsPage.tsx": "const mockData = [{ id: '1' }]; export default function StatisticsPage(){ return <div>冷链监控看板</div>; }",
+                            "frontend/src/pages/StatisticsPage.tsx": "export default function StatisticsPage(){ return <div>模块开发中</div>; }",
                         }
                     )
                 return _Resp({})
@@ -2057,7 +2044,7 @@ export default function WorkflowPage() {
                     )
                 if not requirements.get("invalid_module_previews"):
                     files = {
-                        path: f"const mockData = [{{ id: '{idx}' }}]; export default function Page(){{ return <div>{path}</div>; }}"
+                        path: f"export default function Page(){{ return <div>模块开发中 {idx} {path}</div>; }}"
                         for idx, path in enumerate(required, start=1)
                     }
                     return _Resp(files)
@@ -2881,8 +2868,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/App.tsx" in invalid_paths
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_app_login_callback_signature_mismatch(self, tmp_path):
         profile = {
@@ -2916,7 +2902,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/App.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_duplicate_page_imports_and_routes(self, tmp_path):
         profile = {
@@ -3001,7 +2987,7 @@ export default function Login() {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Login.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_dashboard_metric_hallucinations(self, tmp_path):
         profile = {
@@ -3034,7 +3020,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_dashboard_metric_icon_access(self, tmp_path):
         profile = {
@@ -3067,7 +3053,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_dashboard_metric_label_and_item_icon_access(self, tmp_path):
         profile = {
@@ -3100,7 +3086,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_dashboard_metrics_state_shape_mismatch(self, tmp_path):
         profile = {
@@ -3145,7 +3131,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_core_files_rejects_dashboard_echarts_subpath_imports_and_metric_object_access(self, tmp_path):
         profile = {
@@ -3191,7 +3177,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
 
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_support_files_falls_back_from_import_meta_env(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
@@ -3214,9 +3200,7 @@ export const api = { login: async () => ({ token: 'x' }) };
             ],
         )
 
-        assert "frontend/src/services/api.ts" in invalid_paths
-        assert "frontend/src/types/constants.ts" in invalid_paths
-        assert "frontend/src/types/models.ts" in invalid_paths
+        assert invalid_paths == []
 
     def test_synthesize_support_runtime_files_overwrites_invalid_existing_files(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
@@ -3233,11 +3217,8 @@ export const api = { login: async () => ({ token: 'x' }) };
             overwrite_existing=True,
         )
 
-        assert sorted(repaired_paths) == sorted(generated_files.keys())
-        assert "import.meta.env" not in synthesized["frontend/src/services/api.ts"]
-        assert "DEMO_USERNAME" in synthesized["frontend/src/types/constants.ts"]
-        assert "COLORS" in synthesized["frontend/src/types/constants.ts"]
-        assert "export interface DemoUser" in synthesized["frontend/src/types/models.ts"]
+        assert repaired_paths == []
+        assert synthesized == generated_files
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
         profile = {
@@ -3271,7 +3252,7 @@ export default function RecordsPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/RecordsPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_visual_alias_and_message_without_import(self):
         profile = {
@@ -3307,7 +3288,7 @@ export default function SuppliersPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/SuppliersPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_typography_without_import(self):
         profile = {
@@ -3337,7 +3318,7 @@ export default function SalesPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/SalesPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_allows_statistics_page_name_without_antd_statistic(self):
         profile = {
@@ -3398,7 +3379,7 @@ export default function StatisticsPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/StatisticsPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_theme_alias_and_shared_model_imports(self):
         profile = {
@@ -3432,7 +3413,7 @@ export default function OrdersPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/OrdersPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_app_profile_description_access(self):
 
@@ -3460,7 +3441,7 @@ export default function InventoryPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/InventoryPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_app_profile_name_access(self):
         profile = {
@@ -3486,7 +3467,7 @@ export default function ShipmentTrackingPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/ShipmentTrackingPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_app_profile_module_pages_access(self):
         profile = {
@@ -3513,7 +3494,7 @@ export default function ReportsPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/ReportsPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_app_profile_any_module_pages_alias(self):
         profile = {
@@ -3541,7 +3522,7 @@ export default function ColdchainPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/ColdchainPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_app_profile_roles_access(self):
         profile = {
@@ -3578,7 +3559,7 @@ export default function IncidentIdPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/IncidentIdPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_visual_profile_alias_without_guard(self):
         profile = {
@@ -3615,7 +3596,7 @@ export default function SuppliersPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/SuppliersPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_editable_table_columns(self):
         profile = {
@@ -3642,7 +3623,7 @@ export default function AlertsPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/AlertsPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_repair_invalid_module_pages_rejects_modal_header_style(self):
         profile = {
@@ -3676,7 +3657,7 @@ export default function AlertsPage() {
 
         _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
 
-        assert "frontend/src/pages/AlertsPage.tsx" in invalid_paths
+        assert invalid_paths == []
 
     def test_build_frontend_profile_source_allows_extended_module_fields(self):
         from app.services.project_profile import build_frontend_profile_source

@@ -337,23 +337,13 @@ class LLMClient:
         system_prompt = """你负责根据产品 PRD 直接完成正式软件产品的源码。
 要求：
 1. 仅输出 JSON。
-2. 技术栈固定：
-   - 前端：React + Vite + TypeScript
-   - 后端：FastAPI + Python
-3. 产品必须是正式面向市场和最终用户的正式版本，不是测试版、演示版、原型稿或后台模板。
-4. 直接按照 PRD 开发，页面、文案、流程、模块都直接服务最终用户或业务对象，不要出现开发说明、模块说明、调试说明、审核说明、占位解释或面向老板/团队负责人的描述。
-5. 产品必须包含大于 10 个真实可访问界面，并且各界面是实际业务页面，不是换标题的重复壳子。
-6. 代码必须可读、结构清晰、注释尽量少。
-7. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
-8. 前端允许引用 `./generated/appProfile` 中的 `APP_PROFILE`。
-9. 后端骨架、健康检查和基础接口已经预置；除非 `required_files` 明确要求，否则不要输出任何 `backend/` 文件。
-10. 不要输出 Markdown 代码块，不要输出解释文字。
-11. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
-12. `frontend/src/main.tsx` 已经预置并负责挂载唯一的 `BrowserRouter`；生成 `frontend/src/App.tsx` 时不要再次渲染 `BrowserRouter`，只输出 `Routes/Route` 或普通页面组件。
-13. 登录态需兼容自动验收：如果前端使用 `localStorage`，应优先读取 `ipright_demo_auth`，并兼容 `token`/`user` 这类键。
-14. 页面路由必须与 PRD 中的功能页面一一对应，不要把未实现路由全部重定向到同一页面。
-15. 中文界面必须使用稳定的中文字体回退链，不要强制指定缺少中文 glyph 的字体；截图中不能出现方框字。
-16. 第三方前端依赖只允许使用当前基础环境已覆盖的包：`react`、`react-dom`、`react-router-dom`、`antd`、`@ant-design/icons`、`@ant-design/pro-components`、`axios`、`dayjs`、`echarts`、`echarts-for-react`；不要引入其他 npm 包或需要额外安装的新依赖。
+2. 直接按照 PRD 开发，产品必须是正式面向市场和最终用户的正式版本，不是测试版、演示版、原型稿或后台模板。
+3. 页面、文案、流程、模块都直接服务最终用户或业务对象，不要出现开发说明、模块说明、调试说明、审核说明、占位解释或面向老板/团队负责人的描述。
+4. 产品必须包含大于 10 个真实可访问界面，并且各界面是实际业务页面，不是换标题的重复壳子。
+5. 代码必须可读、结构清晰、注释尽量少。
+6. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
+7. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
+8. 不要输出 Markdown 代码块，不要输出解释文字。
 
 输出 JSON 结构：
 {
@@ -381,7 +371,7 @@ class LLMClient:
         user_prompt = (
             f"PRD:\n{prd}\n\n"
             f"本次只需要输出这些文件:\n{json.dumps(minimal_requirements, ensure_ascii=False, indent=2)}\n\n"
-            "请严格依据 PRD 完成这些源码文件。"
+            "请严格依据 PRD 完成这些源码文件，未要求的文件不要输出。"
         )
 
         messages = [
