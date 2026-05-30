@@ -645,6 +645,63 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         assert "指挥仪表盘" in repaired["frontend/src/pages/Dashboard.tsx"]
         assert "ipright_demo_auth" in repaired["frontend/src/pages/Login.tsx"]
 
+    def test_repair_invalid_core_files_accepts_app_with_partial_generated_module_routes(self, tmp_path):
+        app_root = tmp_path / "app"
+        repaired, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { Route, Routes, Navigate } from 'react-router-dom';
+import { APP_PROFILE } from './generated/appProfile';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import FeedingPlanPage from './pages/FeedingPlanPage';
+import FeedingRecordPage from './pages/FeedingRecordPage';
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login onLogin={() => undefined} />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/feeding/plan" element={<FeedingPlanPage title={APP_PROFILE.product_name} />} />
+      <Route path="/feeding/record" element={<FeedingRecordPage title={APP_PROFILE.product_name} />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section>工作台 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  const handleSubmit = () => {
+    localStorage.setItem('ipright_demo_auth', '1');
+    onLogin();
+  };
+  return <button onClick={handleSubmit}>登录并输入用户名密码</button>;
+}
+""",
+            },
+            profile={
+                "modules": [
+                    {"route": "/feeding/plan", "key": "feeding_plan"},
+                    {"route": "/feeding/record", "key": "feeding_record"},
+                    {"route": "/health/vaccine", "key": "health_vaccine"},
+                    {"route": "/health/treatment", "key": "health_treatment"},
+                    {"route": "/pigs/transfer", "key": "pigs_transfer"},
+                    {"route": "/pigs/outbound", "key": "pigs_outbound"},
+                ]
+            },
+        )
+
+        assert invalid_paths == []
+        assert "/feeding/plan" in repaired["frontend/src/App.tsx"]
+        assert "/feeding/record" in repaired["frontend/src/App.tsx"]
+
     def test_repair_invalid_core_files_rejects_unknown_page_imports(self, tmp_path):
         app_root = tmp_path / "app"
         _, invalid_paths = repair_invalid_core_files(
@@ -695,9 +752,16 @@ export default function Login() {
             str(app_root),
             generated_files={
                 "frontend/src/App.tsx": """
-import { APP_PROFILE } from './generated/appProfile';
+import { Routes, Route } from 'react-router-dom';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
 export default function App() {
-  return <div>{APP_PROFILE.product_name}</div>;
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+    </Routes>
+  );
 }
 """,
                 "frontend/src/pages/Dashboard.tsx": """

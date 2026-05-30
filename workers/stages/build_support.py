@@ -567,26 +567,19 @@ def repair_invalid_core_files(
     repaired = dict(generated_files)
     invalid_paths: list[str] = []
 
-    expected_module_imports = [
-        f"{_camel_name(module.get('route', module['key']))}Page"
-        for module in profile.get("modules", [])
-    ]
-    expected_module_routes = [
-        str(module.get("route", "")).strip()
-        for module in profile.get("modules", [])
-        if str(module.get("route", "")).strip()
-    ]
     app_type = str(profile.get("app_type") or "admin_web")
     blueprint = profile.get("experience_blueprint") or {}
     visual_profile = profile.get("visual_profile") or {}
     navigation_variant = str(blueprint.get("navigation_variant") or "").strip()
     chrome_treatment = str(visual_profile.get("chrome_treatment") or "").strip()
-    requires_route_shell = bool(expected_module_imports or expected_module_routes)
-    allowed_page_imports = {"Login", "Dashboard", *expected_module_imports}
-    required_page_import_lines = [
-        f"import {component_name} from './pages/{component_name}';"
-        for component_name in expected_module_imports
-    ]
+    allowed_page_imports = {
+        "Login",
+        "Dashboard",
+        *[
+            f"{_camel_name(module.get('route', module['key']))}Page"
+            for module in profile.get("modules", [])
+        ],
+    }
 
     def _contains_any(content: str, tokens: list[str]) -> bool:
         return any(token in content for token in tokens if token)
@@ -684,14 +677,7 @@ def repair_invalid_core_files(
             and _uses_valid_login_entry(content)
             and "const handleLogin = (token:" not in content
             and "const handleLogin = (value:" not in content
-            and (
-                not requires_route_shell
-                or (
-                    _contains_any(content, ["Routes", "Route", "useRoutes"])
-                    and all(import_line in content for import_line in required_page_import_lines)
-                    and _contains_any(content, expected_module_routes)
-                )
-            )
+            and _contains_any(content, ["Routes", "Route", "useRoutes"])
         ),
         "frontend/src/pages/Dashboard.tsx": lambda content: (
             "模块开发中" not in content
