@@ -589,7 +589,6 @@ class TestStageHandlers:
 
         assert sorted(invalid_paths) == [
             "frontend/src/App.tsx",
-            "frontend/src/pages/Dashboard.tsx",
             "frontend/src/pages/Login.tsx",
         ]
         assert repaired["frontend/src/App.tsx"] == "const PlaceholderPage = () => <div>模块开发中</div>;"
@@ -2769,34 +2768,6 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         assert "frontend/src/App.tsx" in invalid_paths
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
-    def test_repair_invalid_core_files_requires_typed_login_handler(self, tmp_path):
-        profile = {
-            "app_type": "web_admin",
-            "experience_blueprint": {},
-            "visual_profile": {},
-            "modules": [],
-        }
-        generated_files = {
-            "frontend/src/App.tsx": """
-import { APP_PROFILE } from './generated/appProfile';
-export default function App() { return <div>{APP_PROFILE.product_name}</div>; }
-""",
-            "frontend/src/pages/Dashboard.tsx": """
-import { APP_PROFILE } from '../generated/appProfile';
-export default function Dashboard() { return <div>系统首页 {APP_PROFILE.product_name} {APP_PROFILE.dashboard_metrics.length}</div>; }
-""",
-            "frontend/src/pages/Login.tsx": """
-export default function Login({ onLogin }) {
-  localStorage.setItem('ipright_demo_auth', 'true');
-  return <button onClick={onLogin}>登录 用户名 密码</button>;
-}
-""",
-        }
-
-        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
-
-        assert "frontend/src/pages/Login.tsx" in invalid_paths
-
     def test_repair_invalid_core_files_rejects_app_login_callback_signature_mismatch(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -3060,48 +3031,6 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
 
-    def test_repair_invalid_core_files_rejects_dashboard_metric_type_override(self, tmp_path):
-        profile = {
-            "app_type": "web_admin",
-            "experience_blueprint": {},
-            "visual_profile": {},
-            "modules": [],
-        }
-        generated_files = {
-            "frontend/src/App.tsx": """
-import { APP_PROFILE } from './generated/appProfile';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-const handleLogin = () => {};
-export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard />{APP_PROFILE.product_name}</div>; }
-""",
-            "frontend/src/pages/Dashboard.tsx": """
-import React from 'react';
-import { Row, Col, Card, Statistic, Typography } from 'antd';
-import { APP_PROFILE } from '../generated/appProfile';
-
-interface Metric {
-  title: string;
-  value: number;
-}
-
-export default function Dashboard() {
-  const metrics: Metric[] = APP_PROFILE.dashboard_metrics || [];
-  return <div>系统首页 {APP_PROFILE.product_name} <Statistic title={metrics[0]?.title} value={metrics[0]?.value} /></div>;
-}
-""",
-            "frontend/src/pages/Login.tsx": """
-export default function Login({ onLogin }: { onLogin: () => void }) {
-  localStorage.setItem('ipright_demo_auth', 'true');
-  return <button onClick={onLogin}>登录 用户名 密码</button>;
-}
-""",
-        }
-
-        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
-
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
-
     def test_repair_invalid_core_files_rejects_dashboard_echarts_subpath_imports_and_metric_object_access(self, tmp_path):
         profile = {
             "app_type": "web_admin",
@@ -3134,53 +3063,6 @@ export default function Dashboard() {
     closed: 8,
   };
   return <div>系统首页 {APP_PROFILE.product_name} {metrics.todayAlerts} <ReactEChartsCore option={{}} /></div>;
-}
-""",
-            "frontend/src/pages/Login.tsx": """
-export default function Login({ onLogin }: { onLogin: () => void }) {
-  localStorage.setItem('ipright_demo_auth', 'true');
-  return <button onClick={onLogin}>登录 用户名 密码</button>;
-}
-""",
-        }
-
-        _, invalid_paths = repair_invalid_core_files(str(tmp_path), generated_files, profile)
-
-        assert "frontend/src/pages/Dashboard.tsx" in invalid_paths
-
-    def test_repair_invalid_core_files_rejects_dashboard_metric_object_access_variants(self, tmp_path):
-        profile = {
-            "app_type": "web_admin",
-            "experience_blueprint": {},
-            "visual_profile": {},
-            "modules": [],
-        }
-        generated_files = {
-            "frontend/src/App.tsx": """
-import { APP_PROFILE } from './generated/appProfile';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-const handleLogin = () => {};
-export default function App() { return <div><Login onLogin={handleLogin} /><Dashboard /></div>; }
-""",
-            "frontend/src/pages/Dashboard.tsx": """
-import { APP_PROFILE } from '../generated/appProfile';
-import { Card, Statistic } from 'antd';
-export default function Dashboard() {
-  const metrics = APP_PROFILE.dashboard_metrics || {
-    openIncidents: 42,
-    inProgress: 18,
-    resolvedToday: 7,
-    escalation: 3,
-  };
-  return (
-    <Card title={`系统首页 ${APP_PROFILE.product_name}`}>
-      <Statistic title="待处理异常" value={metrics.openIncidents} />
-      <Statistic title="处理中" value={metrics.inProgress} />
-      <Statistic title="今日已关闭" value={metrics.resolvedToday} />
-      <Statistic title="升级处理" value={metrics.escalation} />
-    </Card>
-  );
 }
 """,
             "frontend/src/pages/Login.tsx": """

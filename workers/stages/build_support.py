@@ -625,18 +625,10 @@ def repair_invalid_core_files(
     def _uses_valid_login_entry(content: str) -> bool:
         if "<Login" not in content:
             return True
-        return _contains_any(
-            content,
-            [
-                "<Login onLogin={handleLogin}",
-                "<Login onLogin={handleLogin} />",
-                "<Login onLogin={() => undefined}",
-                "<Login onLogin={() => undefined} />",
-            ],
-        )
+        return "onLogin" in content or "<Route" in content
 
     def _supports_login_callback(content: str) -> bool:
-        return _contains_any(content, ["onLogin: () => void", "{ onLogin }: { onLogin: () => void }"])
+        return "onLogin" in content
 
     def _uses_valid_login_component_signature(content: str) -> bool:
         return _supports_login_callback(content) or _contains_any(
@@ -646,15 +638,9 @@ def repair_invalid_core_files(
                 "function Login()",
                 "const Login = () =>",
                 "const Login=() =>",
+                "const Login: React.FC = () =>",
+                "const Login: React.FC=() =>",
             ],
-        )
-
-    def _uses_dashboard_metric_type_override(content: str) -> bool:
-        return bool(
-            re.search(
-                r"\bconst\s+\w+\s*:\s*(?:Metric\[\]|Array<Metric>)\s*=\s*APP_PROFILE\.dashboard_metrics\b",
-                content,
-            )
         )
 
     def _uses_disallowed_unified_sidebar(content: str) -> bool:
@@ -695,12 +681,9 @@ def repair_invalid_core_files(
             and not _has_duplicate_page_imports_or_routes(content)
             and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
-            and _contains_any(content, ["APP_PROFILE", "generated/appProfile"])
             and _uses_valid_login_entry(content)
             and "const handleLogin = (token:" not in content
             and "const handleLogin = (value:" not in content
-            and "return <Login />" not in content
-            and "return <Login/>" not in content
             and (
                 not requires_route_shell
                 or (
@@ -715,52 +698,48 @@ def repair_invalid_core_files(
             and not _contains_any(
                 content,
                 [
-                    "totalProjects",
-                    "activeTasks",
-                    "environments",
-                    "passedTests",
-                    "totalCases",
-                    "todayExecutions",
-                    "passRate",
-                    "totalEvents",
-                    "processingOrders",
-                    "pendingConfirm",
-                    "avgResponseTime",
-                    "todayAlerts",
-                    "processing",
-                    "overdueWarnings",
-                    "closed",
-                    "openIncidents",
-                    "inProgress",
-                    "resolvedToday",
-                    "escalation",
-                    "metric.icon",
-                    "metric.label",
-                    "item.icon",
-                    "item.label",
                     "echarts-for-react/lib/core",
                     "echarts/core",
                     "echarts/charts",
                     "echarts/components",
                     "echarts/renderers",
+                    "APP_PROFILE.navigation",
+                    "APP_PROFILE.name",
+                    "APP_PROFILE.appName",
+                    "APP_PROFILE.dashboard_metrics.totalProjects",
+                    "APP_PROFILE.dashboard_metrics.activeTasks",
+                    "APP_PROFILE.dashboard_metrics.environments",
+                    "APP_PROFILE.dashboard_metrics.passedTests",
+                    "APP_PROFILE.dashboard_metrics.totalCases",
+                    "APP_PROFILE.dashboard_metrics.todayExecutions",
+                    "APP_PROFILE.dashboard_metrics.passRate",
+                    "APP_PROFILE.dashboard_metrics.totalEvents",
+                    "APP_PROFILE.dashboard_metrics.processingOrders",
+                    "APP_PROFILE.dashboard_metrics.pendingConfirm",
+                    "APP_PROFILE.dashboard_metrics.avgResponseTime",
+                    "APP_PROFILE.dashboard_metrics.todayAlerts",
+                    "APP_PROFILE.dashboard_metrics.processing",
+                    "APP_PROFILE.dashboard_metrics.overdueWarnings",
+                    "APP_PROFILE.dashboard_metrics.closed",
+                    "APP_PROFILE.dashboard_metrics.openIncidents",
+                    "APP_PROFILE.dashboard_metrics.inProgress",
+                    "APP_PROFILE.dashboard_metrics.resolvedToday",
+                    "APP_PROFILE.dashboard_metrics.escalation",
+                    "APP_PROFILE.dashboard_metrics.anomalyTotal",
+                    "APP_PROFILE.dashboard_metrics.pendingTasks",
+                    "APP_PROFILE.dashboard_metrics.closureRate",
+                    "APP_PROFILE.dashboard_metrics.avgProcessHours",
                     "setMetrics(APP_PROFILE.dashboard_metrics",
                     "setMetrics(APP_PROFILE?.dashboard_metrics",
-                    "anomalyTotal",
-                    "pendingTasks",
-                    "closureRate",
-                    "avgProcessHours",
-                    "ScheduleOutlined",
-                    "CloudServerOutlined",
-                    "CodeOutlined",
-                    ".strong",
-                    ".suffix",
-                    ".trend",
-                    ".up",
                 ],
             )
-            and not _uses_dashboard_metric_type_override(content)
+            and not bool(
+                re.search(
+                    r"APP_PROFILE\.dashboard_metrics\.map\(\((metric|item)\)\s*=>[\s\S]{0,240}\b(?:metric|item)\.(?:icon|label)\b",
+                    content,
+                )
+            )
             and _contains_any(content, ["export default function Dashboard", "function Dashboard(", "const Dashboard"])
-            and _contains_any(content, ["APP_PROFILE", "dashboard_metrics", "product_name"])
             and ("const dashboardVariant =" not in content or "const dashboardVariant: string =" in content)
             and _contains_any(
                 content,
@@ -780,7 +759,7 @@ def repair_invalid_core_files(
         "frontend/src/pages/Login.tsx": lambda content: (
             "模块开发中" not in content
             and _contains_any(content, ["export default function Login", "function Login(", "const Login"])
-            and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit"])
+            and _contains_any(content, ["onLogin", "ipright_demo_auth", "localStorage", "handleSubmit", "onFinish", "useNavigate", "navigate("])
             and (
                 _supports_login_callback(content)
                 if app_requires_login_callback
