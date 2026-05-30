@@ -279,12 +279,9 @@ class LLMClient:
         plan_seed: dict | None = None,
     ) -> LLMResponse:
         """Generate a product PRD using LLM."""
-        system_prompt = """你是一个资深产品负责人。请直接根据当前任务的原始需求，独立完成一个软件产品的 PRD 和开发任务书。
-原始用户输入是唯一主题源。平台提供的规划种子、视觉画像、运行约束和差异化提示只用于补充信息，不能主导产品定位、模块命名、页面结构或业务主线。
-你必须把当前任务当成一个全新产品来理解和规划，自主完成模块拆分、角色设计、页面路由和业务流程，不得复用既有项目的行业套话、模块命名或后台模板思路。
-产品形态只能在 `admin_web` 与 `desktop_client` 中二选一，必须根据当前产品标题、关键词和产品类型判断，不得默认所有任务都是后台管理型 Web 应用。
-无论选择哪种形态，都必须体现当前行业对象、角色分工、业务流程和页面信息架构的专属特征。
-输出必须是 JSON 格式，包含:
+        system_prompt = """你负责根据用户原始输入直接生成一个正式软件产品的 PRD 和开发任务书。
+只依据用户原始输入理解产品，不要引入平台模板、行业套话、通用后台骨架或额外假设。
+输出必须是 JSON，包含:
 {
   "prd_markdown": "完整的PRD Markdown内容",
   "prd_summary": {
@@ -299,8 +296,6 @@ class LLMClient:
   "work_order_markdown": "开发任务书Markdown内容"
 }
 """
-
-        plan_seed_text = json.dumps(plan_seed or {}, ensure_ascii=False, indent=2)
         raw_user_request = json.dumps(
             {
                 "keyword": keyword,
@@ -312,23 +307,17 @@ class LLMClient:
             ensure_ascii=False,
             indent=2,
         )
-        user_prompt = f"""请为以下产品生成 PRD 和开发任务书：
-- 原始用户输入（唯一主题源）:
+        user_prompt = f"""请直接根据以下原始输入生成 PRD 和开发任务书：
+
+原始输入:
 {raw_user_request}
 
-- 平台辅助约束（仅用于补充结构、运行与交付要求；若与原始用户输入冲突，必须以原始用户输入为准）:
-{plan_seed_text}
-
 要求:
-1. 必须先判断当前产品应做成 `admin_web` 还是 `desktop_client`，并写入 `prd_summary.app_type`
-2. 提供至少 4 个核心功能模块，但模块数量、命名方式和边界划分必须服务于当前产品，不得机械套用固定模块池
-3. 提供至少 3 个页面路由，且页面路由、信息架构和功能分层必须贴合当前产品主题，不得大量复用 `/data-list`、`/workflow` 一类通用路径
-4. 提供 demo 账号 (admin/admin123)
-5. 所有输出必须是中文
-6. 如果标题或关键词显式包含“客户端、桌面端、工作站、终端”等形态词，应优先考虑 `desktop_client`
-7. 必须显式吸收 `raw_user_request`、`project_dna`、`differentiation_hint` 中的任务线索，但不得把平台建议直接照搬为模块标题或正文段落
-8. `prd_summary.scene`、`prd_summary.industry_scope`、`prd_summary.core_entities` 必须来自你对原始用户输入的理解，不能由平台预设直接替代
-9. 不得沿用历史任务中的行业材料、模块命名、业务文案、说明书句式或固定后台壳层思路
+1. 所有输出必须是中文
+2. 产品必须是正式面向市场和最终用户的正式版本，不是测试版、演示版或后台管理套板
+3. `prd_summary.required_pages` 必须至少包含 11 个真实用户界面路由
+4. `prd_summary.core_modules` 必须足以支撑这些真实界面，不得用空泛模块名凑数
+5. 页面、模块、角色、业务流程都必须直接服务最终用户或业务对象，不要出现开发说明、模块说明、审核说明或面向老板/团队负责人的解释性表述
 """
 
         messages = [
@@ -341,35 +330,33 @@ class LLMClient:
             response_format="json_object",
             primary_model=REASONING_MODEL,
             max_tokens_override=9000,
-            temperature_override=0.6,
+            temperature_override=0.7,
         )
 
     async def generate_app_code(
         self, prd: str, work_order: str, app_requirements: dict
     ) -> LLMResponse:
         """Generate application code using LLM."""
-        system_prompt = """你是当前任务唯一的前端主创工程师，负责从零完成本次软件产品的前端页面源码。
+        system_prompt = """你负责根据产品 PRD 直接完成正式软件产品的源码。
 要求：
 1. 仅输出 JSON。
 2. 技术栈固定：
    - 前端：React + Vite + TypeScript
    - 后端：FastAPI + Python
-3. 代码必须可读、结构清晰、注释尽量少。
-4. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
-5. 前端允许引用 `./generated/appProfile` 中的 `APP_PROFILE`。
-6. 后端骨架、健康检查和基础接口已经预置；除非 `required_files` 明确要求，否则不要输出任何 `backend/` 文件。
-7. 不要输出 Markdown 代码块，不要输出解释文字。
-8. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
-9. `frontend/src/main.tsx` 已经预置并负责挂载唯一的 `BrowserRouter`；生成 `frontend/src/App.tsx` 时不要再次渲染 `BrowserRouter`，只输出 `Routes/Route` 或普通页面组件。
-10. 登录态需兼容自动验收：如果前端使用 `localStorage`，应优先读取 `ipright_demo_auth`，并兼容 `token`/`user` 这类键。
-11. 页面路由必须与功能页面一一对应，不要把未实现路由全部重定向到同一页面。
-12. 中文界面必须使用稳定的中文字体回退链，不要强制指定缺少中文 glyph 的字体；截图中不能出现方框字。
-13. 第三方前端依赖只允许使用当前基础环境已覆盖的包：`react`、`react-dom`、`react-router-dom`、`antd`、`@ant-design/icons`、`@ant-design/pro-components`、`axios`、`dayjs`、`echarts`、`echarts-for-react`；不要引入其他 npm 包或需要额外安装的新依赖。
-14. 当前输入中的 `raw_user_request` 是唯一主题源，其他画像字段只用于补充结构约束；必须围绕当前任务重新设计整体壳层、页面节奏、信息分区、字段语义和业务叙事。
-15. 除运行兼容性约束外，不存在隐藏的固定 UI 模板、固定页面骨架或历史项目可复用壳层；你需要把这次任务当成一次全新产品设计与实现。
-16. 如果 `module_pages` 中提供了 `rows`、`table_headers`、`filter_placeholder` 等任务样例数据，模块页必须直接复用这些真实业务样例组织表格、卡片和筛选区，不能另造 `mockData`、`testData`、“张三/李四/王五”一类明显假数据。
-17. 如果 `validation_hints`、`invalid_core_previews` 或 `invalid_module_previews` 出现在输入约束中，说明上一版页面未通过校验；这次必须逐条修正这些问题，并优先重写 `required_files` 中列出的对应页面，不得沿用旧骨架。
-18. 请主动拉开登录页、首页、模块页之间的视觉与信息结构差异，让它们共同服务当前任务，而不是复用统一后台套板。
+3. 最终产品必须是正式面向市场和最终用户的正式版本，不是测试版、演示版、原型稿或后台模板。
+4. 所有模块名、按钮文案、页面标题、表格字段、功能表达都必须直接给最终用户或业务对象使用，不要出现开发说明、模块说明、调试说明、审核说明、占位解释或面向老板/团队负责人的描述。
+5. 最终产品必须包含大于 10 个真实可访问界面，并且各界面是实际业务页面，不是换标题的重复壳子。
+6. 代码必须可读、结构清晰、注释尽量少。
+7. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
+8. 前端允许引用 `./generated/appProfile` 中的 `APP_PROFILE`。
+9. 后端骨架、健康检查和基础接口已经预置；除非 `required_files` 明确要求，否则不要输出任何 `backend/` 文件。
+10. 不要输出 Markdown 代码块，不要输出解释文字。
+11. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
+12. `frontend/src/main.tsx` 已经预置并负责挂载唯一的 `BrowserRouter`；生成 `frontend/src/App.tsx` 时不要再次渲染 `BrowserRouter`，只输出 `Routes/Route` 或普通页面组件。
+13. 登录态需兼容自动验收：如果前端使用 `localStorage`，应优先读取 `ipright_demo_auth`，并兼容 `token`/`user` 这类键。
+14. 页面路由必须与功能页面一一对应，不要把未实现路由全部重定向到同一页面。
+15. 中文界面必须使用稳定的中文字体回退链，不要强制指定缺少中文 glyph 的字体；截图中不能出现方框字。
+16. 第三方前端依赖只允许使用当前基础环境已覆盖的包：`react`、`react-dom`、`react-router-dom`、`antd`、`@ant-design/icons`、`@ant-design/pro-components`、`axios`、`dayjs`、`echarts`、`echarts-for-react`；不要引入其他 npm 包或需要额外安装的新依赖。
 
 输出 JSON 结构：
 {
@@ -382,11 +369,26 @@ class LLMClient:
 }
 """
 
+        minimal_requirements = {
+            "product_name": app_requirements.get("product_name"),
+            "app_type": app_requirements.get("app_type", "admin_web"),
+            "required_files": list(app_requirements.get("required_files", [])),
+            "module_pages": [
+                {
+                    "title": page.get("title"),
+                    "route": page.get("route"),
+                    "file_path": page.get("file_path"),
+                    "component_name": page.get("component_name"),
+                }
+                for page in app_requirements.get("module_pages", [])
+            ],
+            "raw_user_request": app_requirements.get("raw_user_request", {}),
+            "target_interface_count": int(app_requirements.get("target_interface_count", 11)),
+        }
         user_prompt = (
             f"PRD:\n{prd}\n\n"
-            f"开发任务书:\n{work_order}\n\n"
-            f"应用约束:\n{json.dumps(app_requirements, ensure_ascii=False, indent=2)}\n\n"
-            "请基于这些信息生成完整源码文件。"
+            f"生成要求:\n{json.dumps(minimal_requirements, ensure_ascii=False, indent=2)}\n\n"
+            "请基于 PRD 直接生成完整源码文件。"
         )
 
         messages = [
@@ -399,7 +401,7 @@ class LLMClient:
             response_format="json_object",
             primary_model=REASONING_MODEL,
             max_tokens_override=16000,
-            temperature_override=0.65,
+            temperature_override=0.75,
         )
 
     async def generate_page_description(self, page_title: str, route: str, elements: list[str], model: str = "") -> LLMResponse:
@@ -468,26 +470,15 @@ class LLMClient:
         version: str,
         profile: dict,
         prd_summary: dict,
-        module_profiles: list[dict],
         screenshot_briefs: list[dict],
     ) -> LLMResponse:
-        system_prompt = """你是一位中文软件说明书撰写专家。当前说明书将由企业提交给版权局，用于申请软件著作权。请基于给定产品信息，输出软件说明书正文所需 JSON。
+        system_prompt = """你负责根据产品 PRD 和产品截图信息，直接生成正式软件说明书/申请表所需正文 JSON。
 要求：
-1. 全部使用中文撰写，技术名保留英文原名，如 FastAPI、React、TypeScript、PostgreSQL。
-2. 不得出现任何模型、供应商或大模型产品名称。
-3. 文风自然、专业，避免标题与关键词机械重复。
-4. 不要在多个模块里重复使用同一句骨架；每个模块都要写出自己的业务对象、处理动作和输出结果。
-5. 优先复用输入中的 module_profiles、screenshots、user_roles 信息，写出与当前产品强绑定的正文。
-6. 仅输出 JSON，不要输出 Markdown。
-7. 必须吸收 `project_dna` 中的模块签名、业务主线和架构风格，不得把不同项目的说明书写成同一套模板章节句式。
-8. `required_manual_modules` 是系统固定必选章节，你无需改动；你需要从 `optional_manual_modules` 备选池中挑选 4 到 7 个最适合当前产品的模块 key，填入 `selected_optional_modules`，让不同产品的说明书扩展章节明显分化。
-9. `selected_optional_modules` 中的 key 必须来自 `optional_manual_modules`，且优先覆盖产品、数据、研发、实施、测试、运维等不同维度，避免每次都选择同一组模块。
-10. 必须以企业身份撰写，用于正式陈述软件产品设计、功能结构、页面用途、业务流程和技术实现事实，不得写成面向终端用户的营销文案、培训话术或聊天式说明。
-11. 页面标题与图片已在文档结构中给出，正文和页面说明里不要再使用“该截图展示了”“截图中重点可见”“下图所示”“从截图可以看出”等围绕截图本身的提示语，应直接进入功能陈述。
-12. 应优先使用“本软件提供……”“系统实现了……”“该功能用于……”“该页面支持……”等企业陈述式表达，避免“你可以”“用户只需”“建议先点击”“通过截图可见”等指导式或观察式措辞。
-13. 该文档属于企业提交给版权局了解项目真实开发情况的软件产品说明书/操作手册，不是模型给团队出的研发建议书、测试建议书、部署建议书、优化迭代建议书或验收建议书。
-14. 不得出现“建议在研发阶段……”“验收时应重点核对……”“建议围绕……开展培训”“后续迭代建议”“功能测试建议”“研发测试与验收建议”这类面向团队的建议式标题或正文；相关内容如确需体现，必须改写为当前软件已经采用的设计、已有的功能机制、既定的检查项、既有的角色分工或正式交付内容。
-15. 必须始终以当前产品自身为叙述主体，围绕本产品当前页面、模块、字段、角色、流程、截图、导出物和技术实现做事实性描述，不得把模型自己写成评审者、顾问、实施教练或测试负责人。
+1. 全部使用中文撰写，技术名保留英文原名。
+2. 仅依据给定 PRD 和截图信息理解产品，不要引入平台模板、行业套话或额外假设。
+3. 必须以正式软件产品的口吻陈述功能、页面、流程和技术实现，不要写测试说明、研发建议、验收建议、部署建议、模块说明或面向老板/团队负责人的解释。
+4. 页面说明必须直接围绕页面功能本身展开，不要写“该截图展示了”“从截图可以看出”等围绕截图本身的套话。
+5. 仅输出 JSON，不要输出 Markdown。
 
 输出 JSON 结构：
 {
@@ -524,24 +515,18 @@ class LLMClient:
   "usage_flow_summary": "",
   "module_overrides": [
     {"title": "", "description": "", "highlights": ["", ""], "primary_action": "", "business_value": ""}
+  ],
+  "page_overrides": [
+    {"page_title": "", "route": "", "caption": "", "description": "", "highlights": ["", ""], "steps": ["", ""]}
   ]
 }
 """
         user_payload = {
             "product_name": product_name,
             "version": version,
-            "keyword": profile.get("keyword", product_name),
-            "topic_label": profile.get("topic_label", product_name),
-            "scene": profile.get("scene", ""),
-            "industry_scope": profile.get("industry_scope", ""),
-            "software_category": profile.get("software_category", ""),
-            "project_dna": profile.get("project_dna", {}),
-            "user_roles": profile.get("user_roles", []),
-            "core_modules": [module.get("title", "") for module in profile.get("modules", []) if module.get("title")],
-            "module_profiles": module_profiles,
-            "required_pages": prd_summary.get("required_pages", []),
-            "screenshots": screenshot_briefs,
             "raw_user_request": profile.get("raw_user_request", {}),
+            "prd_markdown": prd_summary.get("prd_markdown", ""),
+            "screenshots": screenshot_briefs,
             "required_manual_modules": REQUIRED_MANUAL_MODULES,
             "optional_manual_modules": OPTIONAL_MANUAL_MODULES,
         }
@@ -553,8 +538,8 @@ class LLMClient:
             messages,
             response_format="json_object",
             primary_model=TEXT_MODEL,
-            max_tokens_override=5200,
-            temperature_override=0.6,
+            max_tokens_override=7600,
+            temperature_override=0.7,
         )
 
     async def generate_manual_content(
@@ -567,18 +552,6 @@ class LLMClient:
         screenshots_meta: list[dict],
     ) -> LLMResponse:
         """Generate manual body content using the text model."""
-        module_titles = [module.get("title", "") for module in profile.get("modules", []) if module.get("title")]
-        module_profiles = [
-            {
-                "title": module.get("title", ""),
-                "route": module.get("route", ""),
-                "primary_action": module.get("primary_action", ""),
-                "description": module.get("description", ""),
-                "highlights": list(module.get("highlights", [])[:3]),
-                "table_headers": list(module.get("table_headers", [])[:6]),
-            }
-            for module in profile.get("modules", [])[:8]
-        ]
         screenshot_briefs = [
             {
                 "page_title": item.get("page_title", ""),
@@ -592,49 +565,8 @@ class LLMClient:
             version=version,
             profile=profile,
             prd_summary=prd_summary,
-            module_profiles=module_profiles,
             screenshot_briefs=screenshot_briefs[:6],
         )
-
-        combined: dict[str, Any] = {}
-        if overview_resp.success and overview_resp.structured:
-            combined.update(overview_resp.structured)
-
-        page_overrides: list[dict[str, Any]] = []
-        for item in screenshot_briefs:
-            page_title = str(item.get("page_title", "")).strip()
-            route = str(item.get("route", "")).strip()
-            elements = item.get("elements", [])
-            if not page_title:
-                continue
-            page_resp = await self.generate_page_description(page_title, route, elements, model=TEXT_MODEL)
-            if not page_resp.success or not page_resp.structured:
-                continue
-            page_overrides.append(
-                {
-                    "page_title": page_title,
-                    "route": route,
-                    "caption": str(page_resp.structured.get("caption", "")).strip(),
-                    "description": str(page_resp.structured.get("description", "")).strip(),
-                    "highlights": [
-                        str(item).strip()
-                        for item in (page_resp.structured.get("highlights") or [])
-                        if str(item).strip()
-                    ],
-                    "steps": [
-                        str(step).strip()
-                        for step in (page_resp.structured.get("steps") or [])
-                        if str(step).strip()
-                    ],
-                }
-            )
-
-        if page_overrides:
-            combined["page_overrides"] = page_overrides
-
-        if combined:
-            return LLMResponse(success=True, structured=combined, text=json.dumps(combined, ensure_ascii=False))
-
         return overview_resp
 
 

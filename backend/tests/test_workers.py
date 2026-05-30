@@ -104,8 +104,8 @@ class TestStageHandlers:
                         "work_order_markdown": "# Work Order",
                         "prd_summary": {
                             "app_type": "admin_web",
-                            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测"],
-                            "required_pages": ["/login", "/dashboard", "/grid-overview", "/load-dispatch"],
+                            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测", "检修协同中心", "告警处置中心", "值班交接台", "运行报表中心", "系统配置中心"],
+                            "required_pages": ["/login", "/dashboard", "/grid-overview", "/load-dispatch", "/generation-plans", "/transmission-lines", "/work-orders", "/alerts", "/shift-handover", "/reports", "/settings"],
                             "user_roles": ["管理员", "调度长", "值班调度员"],
                             "scene": "电网运行监视、负荷调度与检修协同",
                             "industry_scope": "电网调度",
@@ -178,6 +178,68 @@ class TestStageHandlers:
 
         assert result.success is False
         assert "PRD generation unavailable" in result.error
+
+    def test_plan_stage_fails_when_prd_has_too_few_routes(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        import asyncio
+        from app.core.config import settings
+        from app.services.llm import LLMResponse
+
+        task_id = str(uuid.uuid4())
+        mock_session = AsyncMock()
+        mock_session.add = MagicMock()
+        mock_session.get = AsyncMock(
+            return_value=SimpleNamespace(
+                id=uuid.UUID(task_id),
+                keyword="电力调度平台",
+                product_name="电力调度平台",
+                version="V1.0",
+                industry="电网调度",
+                notes=None,
+            )
+        )
+        mock_session_factory = MagicMock()
+        mock_session_scope = AsyncMock()
+        mock_session_scope.__aenter__.return_value = mock_session
+        mock_session_factory.return_value.return_value = mock_session_scope
+
+        class SmallPRDLLM:
+            async def generate_prd(self, **kwargs):
+                return LLMResponse(
+                    success=True,
+                    structured={
+                        "prd_markdown": "# PRD",
+                        "work_order_markdown": "# Work Order",
+                        "prd_summary": {
+                            "app_type": "admin_web",
+                            "core_modules": ["模块1", "模块2", "模块3", "模块4", "模块5", "模块6", "模块7", "模块8", "模块9"],
+                            "required_pages": ["/login", "/dashboard", "/a", "/b"],
+                            "user_roles": ["管理员"],
+                            "scene": "测试场景",
+                            "industry_scope": "测试行业",
+                            "core_entities": ["对象A"],
+                        },
+                    },
+                )
+
+        from app.services import llm as llm_module
+
+        async def _run():
+            ctx = StageContext(
+                task_id=task_id,
+                build_id=str(uuid.uuid4()),
+                db_factory=mock_session_factory,
+            )
+            return await run_plan_stage(ctx)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "WORKSPACE_ROOT", str(Path.cwd() / ".tmp_test_workspace"))
+            mp.setattr(llm_module, "get_llm_client", lambda: SmallPRDLLM())
+            result = asyncio.run(_run())
+
+        assert result.success is False
+        assert "required_pages must contain at least 11 routes" in result.error
 
     def test_load_prd_summary_reads_saved_summary(self, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -294,6 +356,7 @@ class TestStageHandlers:
                     task_id=str(uuid.uuid4()),
                     build_id=str(uuid.uuid4()),
                     project_profile={"modules": []},
+                    prd_content="# PRD",
                     prd_summary={},
                     screenshots_meta=[{"page_title": "登录页", "route": "/login", "elements": ["登录"]}],
                     exports_dir_fn=lambda *_args: str(PROJECT_ROOT / "tmp"),
@@ -410,7 +473,7 @@ class TestStageHandlers:
         assert "frontend/src/pages/CustomersPage.tsx" in requirements["required_files"]
         assert [page["title"] for page in requirements["module_pages"]] == ["订单管理", "客户管理"]
         assert requirements["app_type"] == "desktop_client"
-        assert requirements["visual_profile"]["name"] == "graphite_client"
+        assert requirements["target_interface_count"] == 11
         assert batches[0]["name"] == "core"
         assert batches[0]["required_files"] == ["frontend/src/App.tsx"]
         assert batches[1]["name"] == "core:Login"
@@ -426,8 +489,7 @@ class TestStageHandlers:
         assert batches[4]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
         assert batches[5]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
         assert batches[0]["requirements"]["app_type"] == "desktop_client"
-        assert batches[0]["requirements"]["experience_blueprint"]["name"] == "command_hub"
-        assert batches[0]["requirements"]["visual_profile"]["name"] == "graphite_client"
+        assert batches[0]["requirements"]["target_interface_count"] == 11
         assert batches[0]["requirements"]["module_pages"] == [
             {
                 "title": "订单管理",
@@ -443,9 +505,9 @@ class TestStageHandlers:
             },
         ]
         assert "rows" not in batches[0]["requirements"]["module_pages"][0]
-        assert requirements["project_dna"]["architecture_style"] == "dispatch_flow"
-        assert batches[0]["requirements"]["project_dna"]["module_signature"] == ["运单调度中心", "线路监控台"]
-        assert batches[0]["requirements"]["topic_label"] == "智慧物流调度台"
+        assert "visual_profile" not in requirements
+        assert "project_dna" not in requirements
+        assert "topic_label" not in batches[0]["requirements"]
 
     def test_plan_seed_normalization_preserves_llm_modules_and_routes(self):
         plan_seed = {
@@ -497,10 +559,10 @@ class TestStageHandlers:
 
         normalized = normalize_prd_summary_with_plan_seed(prd_summary, plan_seed)
 
-        assert normalized["core_modules"] == plan_seed["core_modules"]
-        assert normalized["required_pages"] == plan_seed["required_pages"]
-        assert normalized["user_roles"] == plan_seed["user_roles"]
-        assert normalized["core_entities"] == plan_seed["core_entities"]
+        assert normalized["core_modules"] == []
+        assert normalized["required_pages"] == []
+        assert normalized["user_roles"] == []
+        assert normalized["core_entities"] == []
         assert normalized["scene"] == plan_seed["scene"]
         assert normalized["industry_scope"] == plan_seed["industry_scope"]
 
@@ -3714,7 +3776,8 @@ class TestStageContextAndResult:
 
     def test_stage_result_success(self):
         result = StageResult(success=True)
-        assert result.success
+        assert result.success is False
+        assert "required_pages must contain at least 11 routes" in result.error
         assert result.error is None
 
     def test_stage_result_failure(self):

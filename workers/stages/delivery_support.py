@@ -51,6 +51,7 @@ async def generate_manual_delivery(
     task_id: str,
     build_id: str,
     project_profile: dict,
+    prd_content: str,
     prd_summary: dict,
     screenshots_meta: list[dict],
     exports_dir_fn: Callable[[str, str], str],
@@ -66,7 +67,7 @@ async def generate_manual_delivery(
         product_name=task.product_name,
         version=task.version,
         profile=project_profile,
-        prd_summary=prd_summary,
+        prd_summary={**prd_summary, "prd_markdown": prd_content},
         screenshots_meta=screenshots_meta,
     )
     if not manual_resp.success or not manual_resp.structured:

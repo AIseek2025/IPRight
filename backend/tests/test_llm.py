@@ -143,9 +143,9 @@ class TestLLMClient:
         assert captured["response_format"] == "json_object"
         assert captured["parse_json_response"] is False
         assert captured["max_tokens_override"] == 16000
-        assert captured["temperature_override"] == 0.65
-        assert "不存在隐藏的固定 UI 模板" in captured["messages"][0]["content"]
-        assert "raw_user_request" in captured["messages"][0]["content"]
+        assert captured["temperature_override"] == 0.75
+        assert "正式面向市场和最终用户的正式版本" in captured["messages"][0]["content"]
+        assert "target_interface_count" in captured["messages"][1]["content"]
 
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
         captured = {}
@@ -186,11 +186,12 @@ class TestLLMClient:
 
         asyncio.run(_run())
         assert captured["response_format"] == "json_object"
-        assert "原始用户输入（唯一主题源）" in captured["messages"][1]["content"]
+        assert "原始输入:" in captured["messages"][1]["content"]
         assert "重点关注调度令" in captured["messages"][1]["content"]
-        assert "platform" not in captured["messages"][1]["content"].lower()
+        assert "required_pages" in captured["messages"][1]["content"]
+        assert "plan_seed" not in captured["messages"][1]["content"].lower()
 
-    def test_generate_manual_content_splits_overview_and_page_overrides(self, monkeypatch):
+    def test_generate_manual_content_uses_single_prd_and_screenshots_prompt(self, monkeypatch):
         calls = []
 
         async def fake_chat_with_models(
@@ -211,15 +212,6 @@ class TestLLMClient:
                     "max_tokens_override": max_tokens_override,
                 }
             )
-            if "页面名称:" in messages[1]["content"]:
-                return LLMResponse(
-                    success=True,
-                    structured={
-                        "caption": "图: 电网运行总览",
-                        "description": "用于查看主网运行状态与关键指标。",
-                        "steps": ["输入筛选条件", "查看运行结果"],
-                    },
-                )
             return LLMResponse(
                 success=True,
                 structured={
@@ -227,6 +219,16 @@ class TestLLMClient:
                     "development_purpose": "目的",
                     "module_overrides": [{"title": "电网运行总览", "description": "模块描述"}],
                     "role_permissions": {"管理员": "查看全部"},
+                    "page_overrides": [
+                        {
+                            "page_title": "电网运行总览",
+                            "route": "/grid",
+                            "caption": "图: 电网运行总览",
+                            "description": "用于查看主网运行状态与关键指标。",
+                            "steps": ["输入筛选条件", "查看运行结果"],
+                            "highlights": ["运行状态", "关键指标"],
+                        }
+                    ],
                 },
             )
 
@@ -258,13 +260,13 @@ class TestLLMClient:
 
         asyncio.run(_run())
         assert calls[0]["response_format"] == "json_object"
-        assert calls[0]["max_tokens_override"] == 5200
+        assert calls[0]["max_tokens_override"] == 7600
         assert '"screenshots"' in calls[0]["user"]
-        assert "page_overrides" not in calls[0]["system"]
-        assert any("页面名称:" in call["user"] for call in calls[1:])
-        assert "提交给版权局" in calls[0]["system"]
-        assert "以企业身份撰写" in calls[0]["system"]
-        assert "该截图展示了" in calls[0]["system"]
+        assert '"prd_markdown"' in calls[0]["user"]
+        assert "page_overrides" in calls[0]["system"]
+        assert len(calls) == 1
+        assert "根据产品 PRD 和产品截图信息" in calls[0]["system"]
+        assert "不要引入平台模板" in calls[0]["system"]
 
     def test_generate_page_description_uses_copyright_enterprise_tone(self, monkeypatch):
         captured = {}

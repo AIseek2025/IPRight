@@ -161,21 +161,9 @@ def build_codegen_requirements(profile: dict) -> dict:
         "required_files": required_files,
         "raw_user_request": profile.get("raw_user_request", {}),
         "app_type": profile.get("app_type", "admin_web"),
-        "preset_key": profile.get("preset_key", ""),
         "module_pages": module_pages,
         "product_name": profile.get("product_name"),
-        "short_name": profile.get("short_name"),
-        "topic_label": profile.get("topic_label"),
-        "scene": profile.get("scene"),
-        "industry_scope": profile.get("industry_scope"),
-        "software_category": profile.get("software_category"),
-        "user_roles": profile.get("user_roles", []),
-        "focus_terms": profile.get("focus_terms", []),
-        "core_entities": profile.get("core_entities", []),
-        "experience_blueprint": profile.get("experience_blueprint", {}),
-        "visual_profile": profile.get("visual_profile", {}),
-        "project_dna": profile.get("project_dna", {}),
-        "differentiation_hint": profile.get("differentiation_hint", ""),
+        "target_interface_count": max(11, len(module_pages) + 2),
     }
 
 
@@ -193,20 +181,8 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
     common_requirements = {
         "raw_user_request": codegen_requirements.get("raw_user_request", {}),
         "app_type": codegen_requirements.get("app_type", "admin_web"),
-        "preset_key": codegen_requirements.get("preset_key", ""),
         "product_name": codegen_requirements.get("product_name"),
-        "short_name": codegen_requirements.get("short_name"),
-        "topic_label": codegen_requirements.get("topic_label"),
-        "scene": codegen_requirements.get("scene"),
-        "industry_scope": codegen_requirements.get("industry_scope"),
-        "software_category": codegen_requirements.get("software_category"),
-        "user_roles": codegen_requirements.get("user_roles", []),
-        "focus_terms": codegen_requirements.get("focus_terms", []),
-        "core_entities": codegen_requirements.get("core_entities", []),
-        "experience_blueprint": codegen_requirements.get("experience_blueprint", {}),
-        "visual_profile": codegen_requirements.get("visual_profile", {}),
-        "project_dna": codegen_requirements.get("project_dna", {}),
-        "differentiation_hint": codegen_requirements.get("differentiation_hint", ""),
+        "target_interface_count": codegen_requirements.get("target_interface_count", 11),
     }
     batches = []
     route_shell_module_pages = _build_route_shell_module_pages(list(codegen_requirements.get("module_pages", [])))
@@ -288,15 +264,6 @@ def normalize_prd_summary_with_plan_seed(prd_summary: dict, plan_seed: dict) -> 
     current_routes = _dedupe_str_list(list(normalized.get("required_pages") or []))
     current_roles = _dedupe_str_list(list(normalized.get("user_roles") or []))
     current_entities = _dedupe_str_list(list(normalized.get("core_entities") or []))
-
-    if not current_modules:
-        current_modules = list(plan_seed.get("core_modules") or [])
-    if not current_routes:
-        current_routes = list(plan_seed.get("required_pages") or [])
-    if not current_roles:
-        current_roles = list(plan_seed.get("user_roles") or [])
-    if not current_entities:
-        current_entities = list(plan_seed.get("core_entities") or [])
 
     normalized["core_modules"] = current_modules
     normalized["required_pages"] = current_routes

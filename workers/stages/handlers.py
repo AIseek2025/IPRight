@@ -162,6 +162,14 @@ def _load_prd_summary(task_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _load_prd_markdown(task_id: str) -> str:
+    prd_path = os.path.join(workspace_path(task_id), "prd", "product_prd.md")
+    if not os.path.exists(prd_path):
+        return ""
+    with open(prd_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def _merge_manual_llm_content(project_profile: dict, llm_content: dict, screenshots_meta: list[dict]) -> dict:
     merged = copy.deepcopy(project_profile or {})
     if not isinstance(llm_content, dict):
@@ -329,6 +337,10 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
             prd_content = resp.structured.get("prd_markdown", "")
             work_order_content = resp.structured.get("work_order_markdown", "")
             prd_summary = normalize_prd_summary_with_plan_seed(resp.structured.get("prd_summary", {}), plan_seed)
+            if len(list(prd_summary.get("required_pages") or [])) < 11:
+                return StageResult(success=False, error="PRD generation unavailable: required_pages must contain at least 11 routes")
+            if len(list(prd_summary.get("core_modules") or [])) < 9:
+                return StageResult(success=False, error="PRD generation unavailable: core_modules must contain at least 9 modules")
             logger.info(f"[plan] LLM PRD generated successfully ({len(prd_content)} chars)")
             await _log_task_progress(
                 ctx,
@@ -756,6 +768,7 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
         lambda manifest_name: _load_manifest(ctx.task_id, manifest_name),
     )
     project_profile = _load_manifest(ctx.task_id, "project_profile") or {}
+    prd_content = _load_prd_markdown(ctx.task_id)
     prd_summary = _load_prd_summary(ctx.task_id)
     try:
         output_path, application_form_path, screenshot_count, manual_llm_used = await generate_manual_delivery(
@@ -763,6 +776,7 @@ async def run_compose_manual_stage(ctx: StageContext) -> StageResult:
             task_id=ctx.task_id,
             build_id=ctx.build_id,
             project_profile=project_profile,
+            prd_content=prd_content,
             prd_summary=prd_summary,
             screenshots_meta=screenshots_meta,
             exports_dir_fn=exports_dir,
