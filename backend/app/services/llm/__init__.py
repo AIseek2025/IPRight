@@ -225,7 +225,8 @@ class LLMClient:
                 if self._should_enable_thinking(model):
                     body["enable_thinking"] = True
 
-                async with httpx.AsyncClient(timeout=120) as client:
+                # App / page generation can legitimately exceed two minutes on Qwen.
+                async with httpx.AsyncClient(timeout=300) as client:
                     resp = await client.post(
                         f"{api_base}/chat/completions",
                         headers=headers,
