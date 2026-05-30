@@ -3386,12 +3386,16 @@ src/services/api.ts(106,69): error TS2345: Argument of type 'PigQueryParams | un
             "frontend/src/pages/PigsTransferPage.tsx",
         ]
 
-    def test_synthesize_support_runtime_files_overwrites_invalid_existing_files(self):
+    def test_synthesize_support_runtime_files_normalizes_api_query_helper_signature(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
         generated_files = {
-            "frontend/src/services/api.ts": "const baseUrl = import.meta.env.VITE_API_URL;",
-            "frontend/src/types/constants.ts": "export const APP_NAME = '坏文件';",
-            "frontend/src/types/models.ts": "export interface UserData { id: number; }",
+            "frontend/src/services/api.ts": """
+function buildQuery(params: PageParams & Record<string, unknown>) {
+  return params.page;
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface PageParams { page: number; pageSize: number; }",
         }
 
         synthesized, repaired_paths = _synthesize_support_runtime_files(
@@ -3401,8 +3405,84 @@ src/services/api.ts(106,69): error TS2345: Argument of type 'PigQueryParams | un
             overwrite_existing=True,
         )
 
-        assert repaired_paths == []
-        assert synthesized == generated_files
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        assert "PageParams | Record<string, unknown>" in synthesized["frontend/src/services/api.ts"]
+
+    def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "生猪饲养管理系统",
+            "scene": "猪场管理",
+            "industry_scope": "畜牧",
+            "user_roles": ["场长"],
+            "modules": [
+                {"key": "pigs-transfer", "route": "/pigs/transfer", "title": "转群调拨", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import PigsTransferPage from './pages/PigsTransferPage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/pigs/transfer' element={<PigsTransferPage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": """
+export interface PageParams { page: number; pageSize: number; }
+function buildQuery(params: PageParams & Record<string, unknown>) {
+  return String(params.page);
+}
+export default { buildQuery };
+""",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '生猪饲养管理系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/PigsTransferPage.tsx",):
+                    return _Resp({"frontend/src/pages/PigsTransferPage.tsx": "export default function PigsTransferPage(){ return <div>转群调拨</div>; }"})
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            api_text = (Path(current_app_root) / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+            if "PageParams & Record<string, unknown>" in api_text:
+                return ["frontend/src/services/api.ts"], "src/services/api.ts(2,1): error TS2345: bad types"
+            return [], None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
+        assert any(batch["batch"] == "support_compile_fallback" for batch in report["batches"])
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
         profile = {

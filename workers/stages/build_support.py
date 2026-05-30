@@ -549,7 +549,26 @@ def _synthesize_support_runtime_files(
     *,
     overwrite_existing: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
-    return dict(generated_files), []
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+
+    for relative_path in required_files:
+        content = str(synthesized.get(relative_path, "") or "")
+        if relative_path != "frontend/src/services/api.ts" or not content.strip():
+            continue
+
+        normalized = content.replace(
+            "PageParams & Record<string, unknown>",
+            "PageParams | Record<string, unknown>",
+        ).replace(
+            "Record<string, unknown> & PageParams",
+            "PageParams | Record<string, unknown>",
+        )
+        if normalized != content:
+            synthesized[relative_path] = normalized
+            repaired_paths.append(relative_path)
+
+    return synthesized, repaired_paths
 
 
 def repair_invalid_support_files(
@@ -1239,6 +1258,52 @@ async def generate_task_app_code(
 
     sync_frontend_dependencies(os.path.join(app_root, "frontend"))
     invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+    compile_invalid_support_paths = [
+        path
+        for path in invalid_compile_paths
+        if path in {
+            "frontend/src/services/api.ts",
+            "frontend/src/types/constants.ts",
+            "frontend/src/types/models.ts",
+        }
+    ]
+    if invalid_compile_paths and len(compile_invalid_support_paths) == len(invalid_compile_paths):
+        generated_files, repaired_compile_support_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            compile_invalid_support_paths,
+            overwrite_existing=True,
+        )
+        if repaired_compile_support_paths:
+            repaired_support_paths = sorted(set([*repaired_support_paths, *repaired_compile_support_paths]))
+            applied, apply_error = apply_generated_code_bundle(
+                app_root,
+                generated_files,
+                codegen_requirements["required_files"],
+            )
+            if not applied:
+                return _build_codegen_report(
+                    repaired_core_paths=sorted(repaired_core_paths),
+                    repaired_module_paths=sorted(repaired_module_paths),
+                    repaired_support_paths=sorted(repaired_support_paths),
+                    apply_error=apply_error,
+                ), f"App code generation failed: {apply_error}"
+            sync_frontend_dependencies(os.path.join(app_root, "frontend"))
+            invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+            batch_reports.append(
+                {
+                    "batch": "support_compile_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_compile_support_paths),
+                    "generated_paths": sorted(repaired_compile_support_paths),
+                    "fallback_to_template": bool(invalid_compile_paths),
+                    "error": (
+                        "still invalid after compile fallback: " + ", ".join(invalid_compile_paths)
+                        if invalid_compile_paths
+                        else None
+                    ),
+                }
+            )
     if invalid_compile_paths:
         compile_error_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
