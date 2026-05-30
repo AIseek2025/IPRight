@@ -567,11 +567,6 @@ def repair_invalid_core_files(
     repaired = dict(generated_files)
     invalid_paths: list[str] = []
 
-    app_type = str(profile.get("app_type") or "admin_web")
-    blueprint = profile.get("experience_blueprint") or {}
-    visual_profile = profile.get("visual_profile") or {}
-    navigation_variant = str(blueprint.get("navigation_variant") or "").strip()
-    chrome_treatment = str(visual_profile.get("chrome_treatment") or "").strip()
     allowed_page_imports = {
         "Login",
         "Dashboard",
@@ -636,24 +631,6 @@ def repair_invalid_core_files(
             ],
         )
 
-    def _uses_disallowed_unified_sidebar(content: str) -> bool:
-        if app_type == "desktop_client":
-            return False
-        if navigation_variant not in {"top_tabs", "indexed", "sectioned"} and chrome_treatment not in {
-            "top_tabs",
-            "indexed_topbar",
-            "sectioned_header",
-        }:
-            return False
-        sidebar_tokens = [
-            "Sider",
-            "theme=\"dark\"",
-            "mode=\"inline\"",
-            "左侧深色竖向导航",
-            "左侧导航",
-        ]
-        return _contains_any(content, sidebar_tokens)
-
     app_content = str(repaired.get("frontend/src/App.tsx") or "")
     app_requires_login_callback = "<Login onLogin=" in app_content
 
@@ -672,7 +649,6 @@ def repair_invalid_core_files(
             )
             and not _references_unknown_page_import(content)
             and not _has_duplicate_page_imports_or_routes(content)
-            and not _uses_disallowed_unified_sidebar(content)
             and _contains_any(content, ["export default function App", "function App(", "const App"])
             and _uses_valid_login_entry(content)
             and "const handleLogin = (token:" not in content

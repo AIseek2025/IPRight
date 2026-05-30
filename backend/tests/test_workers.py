@@ -702,6 +702,58 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         assert "/feeding/plan" in repaired["frontend/src/App.tsx"]
         assert "/feeding/record" in repaired["frontend/src/App.tsx"]
 
+    def test_repair_invalid_core_files_accepts_sidebar_layout_for_sectioned_profile(self, tmp_path):
+        app_root = tmp_path / "app"
+        repaired, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { Layout, Menu } from 'antd';
+import { Routes, Route } from 'react-router-dom';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+
+const { Sider, Content } = Layout;
+
+export default function App() {
+  return (
+    <Layout>
+      <Sider theme="dark">
+        <Menu mode="inline" items={[]} />
+      </Sider>
+      <Content>
+        <Routes>
+          <Route path="/login" element={<Login onLogin={() => undefined} />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+        </Routes>
+      </Content>
+    </Layout>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+import { APP_PROFILE } from '../generated/appProfile';
+export default function Dashboard() {
+  return <section>工作台 {APP_PROFILE.product_name}</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  return <button onClick={onLogin}>登录</button>;
+}
+""",
+            },
+            profile={
+                "app_type": "admin_web",
+                "experience_blueprint": {"navigation_variant": "sectioned"},
+                "visual_profile": {"chrome_treatment": "sectioned_header"},
+                "modules": [],
+            },
+        )
+
+        assert invalid_paths == []
+        assert "Sider" in repaired["frontend/src/App.tsx"]
+
     def test_repair_invalid_core_files_rejects_unknown_page_imports(self, tmp_path):
         app_root = tmp_path / "app"
         _, invalid_paths = repair_invalid_core_files(
