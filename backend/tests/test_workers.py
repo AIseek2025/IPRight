@@ -472,8 +472,6 @@ class TestStageHandlers:
         assert "frontend/src/pages/OrdersPage.tsx" in requirements["required_files"]
         assert "frontend/src/pages/CustomersPage.tsx" in requirements["required_files"]
         assert [page["title"] for page in requirements["module_pages"]] == ["订单管理", "客户管理"]
-        assert requirements["app_type"] == "desktop_client"
-        assert requirements["target_interface_count"] == 11
         assert batches[0]["name"] == "core"
         assert batches[0]["required_files"] == ["frontend/src/App.tsx"]
         assert batches[1]["name"] == "core:Login"
@@ -488,8 +486,6 @@ class TestStageHandlers:
         ]
         assert batches[4]["required_files"] == ["frontend/src/pages/OrdersPage.tsx"]
         assert batches[5]["required_files"] == ["frontend/src/pages/CustomersPage.tsx"]
-        assert batches[0]["requirements"]["app_type"] == "desktop_client"
-        assert batches[0]["requirements"]["target_interface_count"] == 11
         assert batches[0]["requirements"]["module_pages"] == [
             {
                 "title": "订单管理",
@@ -507,6 +503,9 @@ class TestStageHandlers:
         assert "rows" not in batches[0]["requirements"]["module_pages"][0]
         assert "visual_profile" not in requirements
         assert "project_dna" not in requirements
+        assert "app_type" not in requirements
+        assert "target_interface_count" not in requirements
+        assert "raw_user_request" not in requirements
         assert "topic_label" not in batches[0]["requirements"]
 
     def test_plan_seed_normalization_preserves_llm_modules_and_routes(self):
@@ -3776,8 +3775,7 @@ class TestStageContextAndResult:
 
     def test_stage_result_success(self):
         result = StageResult(success=True)
-        assert result.success is False
-        assert "required_pages must contain at least 11 routes" in result.error
+        assert result.success is True
         assert result.error is None
 
     def test_stage_result_failure(self):

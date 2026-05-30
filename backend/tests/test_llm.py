@@ -144,8 +144,10 @@ class TestLLMClient:
         assert captured["parse_json_response"] is False
         assert captured["max_tokens_override"] == 16000
         assert captured["temperature_override"] == 0.75
-        assert "正式面向市场和最终用户的正式版本" in captured["messages"][0]["content"]
-        assert "target_interface_count" in captured["messages"][1]["content"]
+        assert "直接按照 PRD 开发" in captured["messages"][0]["content"]
+        assert "required_files" in captured["messages"][1]["content"]
+        assert "target_interface_count" not in captured["messages"][1]["content"]
+        assert "raw_user_request" not in captured["messages"][1]["content"]
 
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
         captured = {}
@@ -188,7 +190,7 @@ class TestLLMClient:
         assert captured["response_format"] == "json_object"
         assert "原始输入:" in captured["messages"][1]["content"]
         assert "重点关注调度令" in captured["messages"][1]["content"]
-        assert "required_pages" in captured["messages"][1]["content"]
+        assert "required_pages" in captured["messages"][0]["content"]
         assert "plan_seed" not in captured["messages"][1]["content"].lower()
 
     def test_generate_manual_content_uses_single_prd_and_screenshots_prompt(self, monkeypatch):

@@ -159,11 +159,7 @@ def build_codegen_requirements(profile: dict) -> dict:
     return {
         "core_required_files": core_required_files,
         "required_files": required_files,
-        "raw_user_request": profile.get("raw_user_request", {}),
-        "app_type": profile.get("app_type", "admin_web"),
         "module_pages": module_pages,
-        "product_name": profile.get("product_name"),
-        "target_interface_count": max(11, len(module_pages) + 2),
     }
 
 
@@ -178,12 +174,7 @@ def build_codegen_batches(codegen_requirements: dict) -> list[dict]:
     ]
     primary_core_files = [path for path in route_shell_files if path in core_required_files]
     support_core_files = [path for path in core_required_files if path not in primary_core_files]
-    common_requirements = {
-        "raw_user_request": codegen_requirements.get("raw_user_request", {}),
-        "app_type": codegen_requirements.get("app_type", "admin_web"),
-        "product_name": codegen_requirements.get("product_name"),
-        "target_interface_count": codegen_requirements.get("target_interface_count", 11),
-    }
+    common_requirements: dict[str, object] = {}
     batches = []
     route_shell_module_pages = _build_route_shell_module_pages(list(codegen_requirements.get("module_pages", [])))
     for index, relative_path in enumerate(primary_core_files):
