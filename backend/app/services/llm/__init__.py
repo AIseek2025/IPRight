@@ -379,12 +379,14 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+        required_files = list(app_requirements.get("required_files", []))
+        max_tokens_override = 24000 if required_files == ["frontend/src/App.tsx"] else 16000
 
         return await self.chat_with_models(
             messages,
             response_format="json_object",
             primary_model=REASONING_MODEL,
-            max_tokens_override=16000,
+            max_tokens_override=max_tokens_override,
             temperature_override=0.75,
         )
 
