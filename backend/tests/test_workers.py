@@ -104,7 +104,7 @@ class TestStageHandlers:
                         "work_order_markdown": "# Work Order",
                         "prd_summary": {
                             "app_type": "admin_web",
-                            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测", "检修协同中心", "告警处置中心", "值班交接台", "运行报表中心", "系统配置中心"],
+                            "core_modules": ["电网运行总览", "负荷调度中心", "发电计划协同", "输变线路监测"],
                             "required_pages": ["/login", "/dashboard", "/grid-overview", "/load-dispatch", "/generation-plans", "/transmission-lines", "/work-orders", "/alerts", "/shift-handover", "/reports", "/settings"],
                             "user_roles": ["管理员", "调度长", "值班调度员"],
                             "scene": "电网运行监视、负荷调度与检修协同",

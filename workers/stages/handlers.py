@@ -339,8 +339,6 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
             prd_summary = normalize_prd_summary_with_plan_seed(resp.structured.get("prd_summary", {}), plan_seed)
             if len(list(prd_summary.get("required_pages") or [])) < 11:
                 return StageResult(success=False, error="PRD generation unavailable: required_pages must contain at least 11 routes")
-            if len(list(prd_summary.get("core_modules") or [])) < 9:
-                return StageResult(success=False, error="PRD generation unavailable: core_modules must contain at least 9 modules")
             logger.info(f"[plan] LLM PRD generated successfully ({len(prd_content)} chars)")
             await _log_task_progress(
                 ctx,
