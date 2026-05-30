@@ -3974,6 +3974,120 @@ def test_stage_started_event_is_committed_before_stage_handler_runs():
     assert any(any(event[0] == "stage_started" for event in batch) for batch in commit_log)
 
 
+def test_async_run_pipeline_resumes_from_build_current_stage():
+    from app.models.db import Build, Task
+    from app.services import TaskService
+    from workers.orchestrator import runner as runner_module
+
+    task_id = uuid.uuid4()
+    build_id = uuid.uuid4()
+    task = Task(
+        id=task_id,
+        keyword="生猪饲养管理系统",
+        product_name="生猪饲养管理系统",
+        version="V1.0",
+        status=TopLevelStatus.QUEUED.value,
+        current_stage=TopLevelStatus.QUEUED.value,
+        active_build_id=build_id,
+    )
+    build = Build(
+        id=build_id,
+        task_id=task_id,
+        build_no=2,
+        status=StageStatus.QUEUED.value,
+        trigger_type="retry",
+        current_stage=StageName.BUILD.value,
+    )
+
+    original_create_stage_run = TaskService.create_stage_run
+    original_mark_build_running = TaskService.mark_build_running
+    original_log_event = TaskService.log_event
+    original_complete_stage_run = TaskService.complete_stage_run
+    original_mark_build_completed = TaskService.mark_build_completed
+    original_mark_completed = TaskService.mark_completed
+    called_stage_names: list[str] = []
+
+    class FakeSession:
+        async def get(self, model, pk):
+            if model is Task and pk == task_id:
+                return task
+            if model is Build and pk == build_id:
+                return build
+            return None
+
+        async def refresh(self, _obj):
+            return None
+
+        async def commit(self):
+            return None
+
+        async def flush(self):
+            return None
+
+        def add(self, _obj):
+            return None
+
+    fake_session = FakeSession()
+
+    class FakeFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return fake_session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_create_stage_run(self, build_obj, stage_name):
+        called_stage_names.append(stage_name)
+        return type("SR", (), {"attempt_no": 1, "status": StageStatus.RUNNING.value, "stage_name": stage_name})()
+
+    async def fake_mark_build_running(self, build_obj, stage_name):
+        build_obj.status = StageStatus.RUNNING.value
+        build_obj.current_stage = stage_name
+
+    async def fake_log_event(self, **_kwargs):
+        return None
+
+    async def fake_complete_stage_run(self, _sr):
+        return None
+
+    async def fake_mark_build_completed(self, build_obj):
+        build_obj.status = TopLevelStatus.COMPLETED.value
+        build_obj.current_stage = TopLevelStatus.COMPLETED.value
+
+    async def fake_mark_completed(self, task_obj):
+        task_obj.status = TopLevelStatus.COMPLETED.value
+        task_obj.current_stage = TopLevelStatus.COMPLETED.value
+
+    async def fake_build_stage(_ctx):
+        return StageResult(success=True, metadata={})
+
+    previous_build_handler = runner_module.STAGE_HANDLERS[StageName.BUILD]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_module, "get_session_factory", lambda: FakeFactory())
+        mp.setattr(TaskService, "create_stage_run", fake_create_stage_run)
+        mp.setattr(TaskService, "mark_build_running", fake_mark_build_running)
+        mp.setattr(TaskService, "log_event", fake_log_event)
+        mp.setattr(TaskService, "complete_stage_run", fake_complete_stage_run)
+        mp.setattr(TaskService, "mark_build_completed", fake_mark_build_completed)
+        mp.setattr(TaskService, "mark_completed", fake_mark_completed)
+        runner_module.STAGE_HANDLERS[StageName.BUILD] = fake_build_stage
+        try:
+            asyncio.run(runner_module._async_run_pipeline(task_id, build_id))
+        finally:
+            runner_module.STAGE_HANDLERS[StageName.BUILD] = previous_build_handler
+            TaskService.create_stage_run = original_create_stage_run
+            TaskService.mark_build_running = original_mark_build_running
+            TaskService.log_event = original_log_event
+            TaskService.complete_stage_run = original_complete_stage_run
+            TaskService.mark_build_completed = original_mark_build_completed
+            TaskService.mark_completed = original_mark_completed
+
+    assert called_stage_names[0] == StageName.BUILD.value
+
+
 def test_run_capture_stage_fails_when_essential_pages_are_missing(tmp_path, monkeypatch):
     async def _fake_execute_capture_flow(**_kwargs):
         return 10, 1, ["系统首页", "授信主体管理"]

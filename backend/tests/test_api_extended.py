@@ -139,6 +139,36 @@ class TestTaskLifecycle:
             assert [build.build_no for build in builds] == [1, 2]
             assert [build.trigger_type for build in builds] == ["create", "retry"]
             assert str(builds[-1].id) == str(task.active_build_id)
+            assert builds[-1].current_stage == "capture"
+
+    async def test_retry_rejects_invalid_from_stage(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "非法重试阶段测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            first_build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert first_build is not None
+            first_build.status = "completed"
+            first_build.current_stage = "completed"
+            await session.commit()
+
+        retry_resp = await async_client.post(
+            f"/api/v1/tasks/{task_id}/retry",
+            json={"from_stage": "bad-stage"},
+        )
+        assert retry_resp.status_code == 400
+        payload = retry_resp.json()
+        detail = payload["detail"] if "detail" in payload else payload
+        assert detail["code"] == "INVALID_RETRY_STAGE"
 
     async def test_retry_rejects_when_active_build_is_running(self, async_client):
         create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "重试抢占测试"})

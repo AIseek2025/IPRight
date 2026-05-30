@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.state_machine import StageStatus
 from app.core.database import get_db
 from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
-from app.services import TaskService
+from app.services import TaskService, normalize_retry_stage
 from app.schemas.api import (
     ArtifactItem,
     ArtifactListResponse,
@@ -422,6 +422,16 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
+    retry_stage = normalize_retry_stage(body.from_stage)
+    if body.from_stage and retry_stage is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_RETRY_STAGE",
+                "message": f"unsupported retry stage: {body.from_stage}",
+            },
+        )
+
     active_build = await _resolve_effective_build_id(db, task, task.active_build_id)
     if active_build:
         active_build_obj = await db.get(Build, active_build)
@@ -435,14 +445,14 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
             )
 
     service = TaskService(db)
-    build = await service.start_build(task, trigger_type="retry")
+    build = await service.start_build(task, trigger_type="retry", from_stage=retry_stage)
 
     event = TaskEvent(
         task_id=task.id,
         build_id=build.id,
         event_type="task_retry",
         title="任务重试",
-        detail=f"从阶段 {body.from_stage} 重试" if body.from_stage else "全局重试",
+        detail=f"从阶段 {retry_stage.value} 重试" if retry_stage else "全局重试",
     )
     db.add(event)
     await db.commit()
@@ -458,7 +468,7 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
                 fresh_task = await db.get(Task, task.id)
                 if fresh_task:
                     fresh_task.status = "failed"
-                    fresh_task.current_stage = body.from_stage or "planning"
+                    fresh_task.current_stage = retry_stage.value if retry_stage else "planning"
                 db.add(TaskEvent(
                     task_id=task.id,
                     build_id=build.id,

@@ -30,6 +30,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STAGE_HANDLERS: dict[StageName, Callable] = {}
+_PREVIOUS_STATUS_FOR_STAGE: dict[StageName, TopLevelStatus] = {
+    StageName.PLAN: TopLevelStatus.QUEUED,
+    StageName.BUILD: TopLevelStatus.CODING,
+    StageName.VERIFY_RUN: TopLevelStatus.BUILDING,
+    StageName.CAPTURE: TopLevelStatus.RUNNING,
+    StageName.COMPOSE_MANUAL: TopLevelStatus.CAPTURING,
+    StageName.COMPOSE_CODE_BOOK: TopLevelStatus.WRITING_MANUAL,
+    StageName.PUBLISH: TopLevelStatus.WRITING_CODE_BOOK,
+}
 
 
 def register_stage(stage: StageName):
@@ -99,7 +108,7 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                 await db.commit()
             return
 
-        current_status = TopLevelStatus(task.status)
+        current_status = _resolve_pipeline_start_status(task, build)
 
         while current_status in STAGE_TRANSITIONS:
             await db.refresh(task)
@@ -206,6 +215,16 @@ async def _async_run_pipeline(task_id: uuid.UUID, build_id: uuid.UUID) -> None:
                 return
 
             await db.commit()
+
+
+def _resolve_pipeline_start_status(task: Task, build: Build) -> TopLevelStatus:
+    try:
+        requested_stage = StageName(str(build.current_stage))
+    except ValueError:
+        return TopLevelStatus(task.status)
+    return _PREVIOUS_STATUS_FOR_STAGE.get(requested_stage, TopLevelStatus(task.status))
+
+
 @dataclass
 class StageContext:
     task_id: str

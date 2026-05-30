@@ -8,11 +8,37 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.state_machine import (
+    StageName,
     STAGE_TRANSITIONS,
     StageStatus,
     TopLevelStatus,
 )
 from app.models.db import Build, StageRun, Task, TaskEvent
+
+
+_RETRY_STAGE_ALIASES: dict[str, StageName] = {
+    "plan": StageName.PLAN,
+    "planning": StageName.PLAN,
+    "build": StageName.BUILD,
+    "building": StageName.BUILD,
+    "verify_run": StageName.VERIFY_RUN,
+    "running": StageName.VERIFY_RUN,
+    "capture": StageName.CAPTURE,
+    "capturing": StageName.CAPTURE,
+    "compose_manual": StageName.COMPOSE_MANUAL,
+    "writing_manual": StageName.COMPOSE_MANUAL,
+    "compose_code_book": StageName.COMPOSE_CODE_BOOK,
+    "writing_code_book": StageName.COMPOSE_CODE_BOOK,
+    "publish": StageName.PUBLISH,
+    "publishing": StageName.PUBLISH,
+}
+
+
+def normalize_retry_stage(from_stage: str | None) -> StageName | None:
+    value = str(from_stage or "").strip().lower()
+    if not value:
+        return None
+    return _RETRY_STAGE_ALIASES.get(value)
 
 
 class TaskService:
@@ -56,7 +82,13 @@ class TaskService:
         self.db.add(event)
         await self.db.flush()
 
-    async def start_build(self, task: Task, trigger_type: str = "create") -> Build:
+    async def start_build(
+        self,
+        task: Task,
+        trigger_type: str = "create",
+        *,
+        from_stage: StageName | None = None,
+    ) -> Build:
         stale_builds_q = await self.db.execute(
             select(Build).where(
                 Build.task_id == task.id,
@@ -83,7 +115,7 @@ class TaskService:
             build_no=build_no,
             status="queued",
             trigger_type=trigger_type,
-            current_stage="plan",
+            current_stage=(from_stage.value if from_stage else StageName.PLAN.value),
         )
         self.db.add(build)
         task.active_build_id = build_id
