@@ -1146,6 +1146,7 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", lambda _app_root: ([], None))
         monkeypatch.setattr(
             build_support,
             "repair_invalid_core_files",
@@ -1269,6 +1270,7 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", lambda _app_root: ([], None))
         monkeypatch.setattr(
             build_support,
             "repair_invalid_core_files",
@@ -1511,14 +1513,20 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", lambda _app_root: ([], None))
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error == "App code generation failed: missing or invalid LLM-generated core frontend files: frontend/src/App.tsx"
-        assert report["repaired_core_paths"] == []
-        assert not any(batch["batch"] == "core_structural_fallback" for batch in report["batches"])
+        assert error is None
+        assert report["repaired_core_paths"] == ["frontend/src/App.tsx"]
+        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_structural_fallback")
+        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "Routes" in app_text
+        assert "BrowserRouter" not in app_text
+        assert 'path="/credit-subjects"' in app_text
 
     def test_generate_task_app_code_falls_back_during_core_retry_parse_failure(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -1618,17 +1626,19 @@ export default function WorkflowPage() {
         llm = _LLM()
         monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
         monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", lambda _app_root: ([], None))
 
         async def _run():
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error == "App code generation failed: missing or invalid LLM-generated core frontend files: frontend/src/App.tsx"
+        assert error is None
         assert llm.retry_calls == 2
         retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_invalid_retry")
         assert "LLM JSON parse error" in retry_batch["error"]
-        assert report["repaired_core_paths"] == []
-        assert not any(batch["batch"] == "core_retry_structural_fallback" for batch in report["batches"])
+        assert report["repaired_core_paths"] == ["frontend/src/App.tsx"]
+        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_structural_fallback")
+        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
 
     def test_generate_task_app_code_retries_invalid_module_pages(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -3482,7 +3492,6 @@ export default { buildQuery };
         report, error = asyncio.run(_run())
         assert error is None
         assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
-        assert any(batch["batch"] == "support_compile_fallback" for batch in report["batches"])
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
         profile = {

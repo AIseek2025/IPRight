@@ -199,6 +199,99 @@ def _build_route_shell_module_pages(module_pages: list[dict]) -> list[dict]:
     ]
 
 
+def _render_structured_app_tsx(profile: dict) -> str:
+    module_pages = _build_route_shell_module_pages(build_codegen_requirements(profile).get("module_pages", []))
+    import_lines = [
+        "import { useEffect, useState } from 'react';",
+        "import { Navigate, Route, Routes, useLocation } from 'react-router-dom';",
+        "import Login from './pages/Login';",
+        "import Dashboard from './pages/Dashboard';",
+    ]
+    for page in module_pages:
+        component_name = page.get("component_name")
+        if component_name:
+            import_lines.append(f"import {component_name} from './pages/{component_name}';")
+
+    protected_routes = [
+        '        <Route path="/dashboard" element={loggedIn ? <Dashboard /> : <Navigate to="/login" replace />} />'
+    ]
+    for page in module_pages:
+        component_name = page.get("component_name")
+        route = str(page.get("route") or "").strip()
+        if component_name and route:
+            protected_routes.append(
+                '        <Route path="'
+                + route
+                + '" element={loggedIn ? <'
+                + component_name
+                + ' /> : <Navigate to="/login" replace />} />'
+            )
+
+    fallback_dashboard_route = "/dashboard"
+    return "\n".join(
+        [
+            *import_lines,
+            "",
+            "const AUTH_KEY = 'ipright_demo_auth';",
+            "",
+            "function readLoggedIn(): boolean {",
+            "  if (typeof window === 'undefined') {",
+            "    return false;",
+            "  }",
+            "  const storage = window.localStorage;",
+            "  return Boolean(storage.getItem(AUTH_KEY) || storage.getItem('token') || storage.getItem('user'));",
+            "}",
+            "",
+            "export default function App() {",
+            "  const [loggedIn, setLoggedIn] = useState<boolean>(() => readLoggedIn());",
+            "  const location = useLocation();",
+            "",
+            "  useEffect(() => {",
+            "    setLoggedIn(readLoggedIn());",
+            "  }, [location.pathname]);",
+            "",
+            "  const handleLogin = () => {",
+            "    window.localStorage.setItem(AUTH_KEY, 'true');",
+            "    setLoggedIn(true);",
+            "  };",
+            "",
+            "  return (",
+            "    <Routes>",
+            '      <Route path="/" element={<Navigate to={loggedIn ? "'
+            + fallback_dashboard_route
+            + '" : "/login"} replace />} />',
+            '      <Route path="/login" element={loggedIn ? <Navigate to="/dashboard" replace /> : <Login onLogin={handleLogin} />} />',
+            *protected_routes,
+            '      <Route path="*" element={<Navigate to={loggedIn ? "'
+            + fallback_dashboard_route
+            + '" : "/login"} replace />} />',
+            "    </Routes>",
+            "  );",
+            "}",
+            "",
+        ]
+    )
+
+
+def _synthesize_structured_core_files(
+    generated_files: dict[str, str],
+    profile: dict,
+    required_files: list[str],
+    *,
+    overwrite_existing: bool = False,
+) -> tuple[dict[str, str], list[str]]:
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+
+    for relative_path in required_files:
+        content = str(synthesized.get(relative_path, "") or "")
+        if relative_path == "frontend/src/App.tsx" and (overwrite_existing or not content.strip()):
+            synthesized[relative_path] = _render_structured_app_tsx(profile)
+            repaired_paths.append(relative_path)
+
+    return synthesized, repaired_paths
+
+
 def build_seed_copy_ignore(extra_names: set[str] | None = None):
     extra_names = extra_names or set()
 
@@ -1099,6 +1192,30 @@ async def generate_task_app_code(
                 if not invalid_core_paths:
                     break
     repaired_core_paths: list[str] = []
+    if invalid_core_paths:
+        generated_files, repaired_invalid_core_paths = _synthesize_structured_core_files(
+            generated_files,
+            profile,
+            invalid_core_paths,
+            overwrite_existing=True,
+        )
+        if repaired_invalid_core_paths:
+            repaired_core_paths = sorted(set([*repaired_core_paths, *repaired_invalid_core_paths]))
+            generated_files, invalid_core_paths = repair_invalid_core_files(app_root, generated_files, profile)
+            batch_reports.append(
+                {
+                    "batch": "core_structural_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_invalid_core_paths),
+                    "generated_paths": sorted(repaired_invalid_core_paths),
+                    "fallback_to_template": bool(invalid_core_paths),
+                    "error": (
+                        "still invalid after structural fallback: " + ", ".join(invalid_core_paths)
+                        if invalid_core_paths
+                        else None
+                    ),
+                }
+            )
     if invalid_core_paths:
         invalid_core_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
