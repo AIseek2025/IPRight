@@ -18,6 +18,7 @@ _CORE_FRONTEND_DEPENDENCIES = {
     "dayjs": "^1.11.0",
 }
 _OPTIONAL_FRONTEND_DEPENDENCIES = {
+    "@ant-design/charts": "^2.6.5",
     "@ant-design/pro-components": "^2.8.6",
     "echarts": "^5.5.0",
     "echarts-for-react": "^3.0.2",
@@ -63,9 +64,18 @@ def sync_frontend_dependencies(frontend_root: str) -> None:
         dependencies.setdefault(name, version)
 
     imported_modules = _iter_frontend_source_imports(frontend_root)
+    needs_ant_design_charts = "@ant-design/charts" in imported_modules
     needs_pro_components = "@ant-design/pro-components" in imported_modules
     needs_echarts_for_react = "echarts-for-react" in imported_modules
     needs_echarts = needs_echarts_for_react or "echarts" in imported_modules
+
+    if needs_ant_design_charts:
+        dependencies.setdefault(
+            "@ant-design/charts",
+            _OPTIONAL_FRONTEND_DEPENDENCIES["@ant-design/charts"],
+        )
+    else:
+        dependencies.pop("@ant-design/charts", None)
 
     if needs_pro_components:
         dependencies.setdefault(

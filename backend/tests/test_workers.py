@@ -2207,6 +2207,34 @@ export default function WorkflowPage() {
         assert '"echarts-for-react": "^3.0.2"' in updated
         assert '"@ant-design/pro-components"' not in updated
 
+    def test_sync_frontend_dependencies_keeps_ant_design_charts_when_used(self, tmp_path):
+        frontend_root = tmp_path / "frontend"
+        src_root = frontend_root / "src"
+        src_root.mkdir(parents=True, exist_ok=True)
+        package_json = frontend_root / "package.json"
+        package_json.write_text(
+            json.dumps(
+                {
+                    "dependencies": {
+                        "react": "^18.3.0",
+                        "@ant-design/charts": "^2.6.5",
+                        "@ant-design/pro-components": "^2.8.6",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_root / "Dashboard.tsx").write_text(
+            "import { Line } from '@ant-design/charts';\nexport default function Dashboard(){ return <Line data={[]} xField=\"x\" yField=\"y\" />; }\n",
+            encoding="utf-8",
+        )
+
+        sync_frontend_dependencies(str(frontend_root))
+
+        updated = package_json.read_text(encoding="utf-8")
+        assert '"@ant-design/charts": "^2.6.5"' in updated
+        assert '"@ant-design/pro-components"' not in updated
+
     def test_ensure_backend_dependencies_adds_pyjwt(self, tmp_path):
         backend_root = tmp_path / "backend"
         backend_root.mkdir(parents=True, exist_ok=True)
