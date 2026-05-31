@@ -100,6 +100,12 @@ def _bundle_target(task: Task) -> tuple[Path, str, Path]:
     return bundle_path, bundle_name, root_prefix
 
 
+def _screenshot_image_url(request: Request, task_id: uuid.UUID, screenshot_id: uuid.UUID | str | None) -> Optional[str]:
+    if not screenshot_id:
+        return None
+    return str(request.url_for("download_task_screenshot_image", task_id=str(task_id), screenshot_id=str(screenshot_id)))
+
+
 def _should_skip_bundle_path(task_root: Path, file_path: Path) -> bool:
     try:
         relative_parts = file_path.resolve().relative_to(task_root.resolve()).parts
@@ -394,6 +400,7 @@ async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(ge
 @router.get("/tasks/{task_id}/screenshots")
 async def get_task_screenshots(
     task_id: uuid.UUID,
+    request: Request,
     build_id: Optional[uuid.UUID] = Query(default=None),
     limit: int = Query(24, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -412,8 +419,35 @@ async def get_task_screenshots(
         screenshots_stmt.order_by(Screenshot.created_at.desc(), Screenshot.scenario_id.desc()).limit(limit)
     )
     screenshots = list(reversed(screenshots_q.scalars().all()))
-    items = [ScreenshotItem.model_validate(s) for s in screenshots]
+    items = []
+    for screenshot in screenshots:
+        item = ScreenshotItem.model_validate(screenshot)
+        item.image_url = _screenshot_image_url(request, task_id, screenshot.id) if request else None
+        items.append(item)
     return {"code": "OK", "message": "success", "data": ScreenshotListResponse(items=items).model_dump()}
+
+
+@router.get("/tasks/{task_id}/screenshots/{screenshot_id}/image", name="download_task_screenshot_image")
+async def download_task_screenshot_image(
+    task_id: uuid.UUID,
+    screenshot_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    screenshot = await db.get(Screenshot, screenshot_id)
+    if not screenshot or screenshot.task_id != task_id:
+        raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_NOT_FOUND", "message": "screenshot does not exist"})
+    if not screenshot.image_artifact_id:
+        raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_IMAGE_MISSING", "message": "screenshot image does not exist"})
+
+    artifact = await db.get(Artifact, screenshot.image_artifact_id)
+    if not artifact or not artifact.local_path:
+        raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_IMAGE_MISSING", "message": "screenshot image does not exist"})
+
+    file_path = Path(artifact.local_path).expanduser().resolve(strict=False)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_IMAGE_MISSING", "message": "screenshot image file not found"})
+
+    return FileResponse(path=file_path, filename=artifact.artifact_name or file_path.name, media_type=artifact.mime_type or "image/png")
 
 
 @router.post("/tasks/{task_id}/retry")

@@ -162,6 +162,8 @@ class ScreenshotItem(ORMBaseModel):
     page_title: str
     route: str
     caption: Optional[str]
+    image_artifact_id: Optional[str] = None
+    image_url: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

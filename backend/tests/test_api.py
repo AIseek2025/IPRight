@@ -19,7 +19,7 @@ os.environ["IPRIGHT_AUTO_DISPATCH_TASKS"] = "false"
 
 from app.main import app
 from app.core.database import Base, _get_engine, get_session_factory
-from app.models.db import Artifact, Build, Export, Task
+from app.models.db import Artifact, Build, Export, Screenshot, Task
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -251,6 +251,65 @@ class TestTaskBundleAPI:
         with zipfile.ZipFile(bundle_path, "r") as zf:
             names = zf.namelist()
             assert any(name.endswith("/recovered/software_manual_docx/software_manual.docx") for name in names)
+
+
+@pytest.mark.asyncio
+class TestTaskScreenshotAPI:
+    async def test_task_screenshots_include_preview_url_and_image_download(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        workspace_root = tmp_path / "workspace_root"
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(workspace_root))
+
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "截图预览测试", "product_name": "截图预览系统"})
+        assert create_resp.status_code == 201
+        task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
+
+        screenshot_file = tmp_path / "legacy_screens" / "dashboard.png"
+        screenshot_file.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_file.write_bytes(b"png-data")
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            build = Build(task_id=task.id, build_no=2, status="completed", trigger_type="retry")
+            session.add(build)
+            await session.flush()
+            task.active_build_id = build.id
+
+            artifact = Artifact(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_type="screenshot_image",
+                artifact_name="dashboard.png",
+                local_path=str(screenshot_file),
+                mime_type="image/png",
+            )
+            session.add(artifact)
+            await session.flush()
+
+            screenshot = Screenshot(
+                task_id=task.id,
+                build_id=build.id,
+                scenario_id="dashboard",
+                page_title="系统首页",
+                route="/dashboard",
+                image_artifact_id=artifact.id,
+                caption="图: 系统首页",
+            )
+            session.add(screenshot)
+            await session.commit()
+
+        list_resp = await async_client.get(f"/api/v1/tasks/{task_id}/screenshots")
+        assert list_resp.status_code == 200
+        payload = list_resp.json()["data"]["items"]
+        assert len(payload) == 1
+        assert payload[0]["image_artifact_id"]
+        assert payload[0]["image_url"].endswith(f"/api/v1/tasks/{task_id}/screenshots/{payload[0]['id']}/image")
+
+        image_resp = await async_client.get(payload[0]["image_url"])
+        assert image_resp.status_code == 200
+        assert image_resp.content == b"png-data"
 
     async def test_task_bundle_reuses_existing_download(self, async_client, tmp_path, monkeypatch):
         from app.core.config import settings

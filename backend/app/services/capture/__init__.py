@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +16,34 @@ _ROUTE_MARKER_ALIASES = {
     "analytics": ["分析", "洞察", "报表", "趋势"],
     "reports": ["报表", "分析", "统计"],
 }
+
+
+@lru_cache(maxsize=1)
+def _embedded_capture_font_css() -> str:
+    candidate_paths = [
+        Path(__file__).resolve().parents[4] / "assets" / "fonts" / "IPRightCJK.ttf",
+        Path("/opt/ipright/assets/fonts/IPRightCJK.ttf"),
+    ]
+    for font_path in candidate_paths:
+        try:
+            if not font_path.is_file():
+                continue
+            font_bytes = font_path.read_bytes()
+            font_base64 = base64.b64encode(font_bytes).decode("ascii")
+            return (
+                "@font-face {"
+                "  font-family: 'IPRight CJK';"
+                "  src: url(data:font/ttf;base64,"
+                + font_base64
+                + ") format('truetype');"
+                "  font-weight: 400;"
+                "  font-style: normal;"
+                "  font-display: swap;"
+                "}"
+            )
+        except Exception:
+            continue
+    return ""
 
 
 @dataclass
@@ -169,18 +200,24 @@ class PlaywrightCapture:
             pass
         try:
             await page.add_style_tag(
-                content="""
+                content=_embedded_capture_font_css()
+                + """
                 html, body {
                   writing-mode: horizontal-tb !important;
                   text-orientation: mixed !important;
                   font-family: "IPRight CJK", "Noto Sans SC", "Noto Sans CJK SC",
                     "PingFang SC", "Microsoft YaHei", sans-serif !important;
+                  -webkit-font-smoothing: antialiased !important;
+                  text-rendering: optimizeLegibility !important;
                 }
                 * {
                   text-orientation: mixed !important;
                   writing-mode: horizontal-tb !important;
                   font-family: "IPRight CJK", "Noto Sans SC", "Noto Sans CJK SC",
                     "PingFang SC", "Microsoft YaHei", sans-serif !important;
+                }
+                #root, main, [role="main"] {
+                  min-height: 100vh !important;
                 }
                 input, button, textarea, select, option, table, thead, tbody, tr, th, td,
                 span, div, p, label, h1, h2, h3, h4, h5, h6, a {
@@ -195,6 +232,9 @@ class PlaywrightCapture:
                   white-space: normal !important;
                   word-break: keep-all !important;
                   overflow-wrap: break-word !important;
+                }
+                img, canvas, svg {
+                  max-width: 100% !important;
                 }
                 """
             )
@@ -212,6 +252,10 @@ class PlaywrightCapture:
                         await Promise.race([
                             document.fonts.ready,
                             new Promise((resolve) => setTimeout(resolve, 4000)),
+                        ]);
+                        await Promise.race([
+                            document.fonts.load('14px "IPRight CJK"'),
+                            new Promise((resolve) => setTimeout(resolve, 2500)),
                         ]);
                     } catch (_) {
                     }

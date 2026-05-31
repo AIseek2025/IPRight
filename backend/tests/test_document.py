@@ -67,6 +67,11 @@ def test_manual_excludes_removed_sections_and_text():
     assert "后续迭代建议" not in joined
     assert "建议在研发阶段同步执行" not in joined
     assert "验收时应重点核对" not in joined
+    assert "适用领域" not in joined
+    assert "适用对象" not in joined
+    assert "交互与版式策略" not in joined
+    assert "使用角色" not in joined
+    assert "页面构成" not in joined
 
 
 def test_manual_normalizes_spacing_and_ui_symbols():
@@ -180,16 +185,16 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "结算与对账" in joined
     assert "后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作" in joined
     assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
-    assert "典型应用场景" in joined
     assert "数据组织与结果输出说明" in joined
-    assert "产品开发与技术实现说明" in joined
-    assert "模块实现拆解" in joined
-    assert "实施交付与验收说明" in joined
-    assert "交互与版式策略" in joined
     assert "页面重点" in joined
     assert "安全、审计与运维说明" in joined
     assert "FastAPI" in joined
     assert "React" in joined
+    assert "适用领域" not in joined
+    assert "适用对象" not in joined
+    assert "交互与版式策略" not in joined
+    assert "产品开发与技术实现说明" not in joined
+    assert "实施交付与验收说明" not in joined
 
 
 def test_manual_renders_only_selected_optional_modules():
@@ -219,12 +224,12 @@ def test_manual_renders_only_selected_optional_modules():
     )
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "数据组织与结果输出说明" in joined
-    assert "产品开发与技术实现说明" in joined
     assert "安全、审计与运维说明" in joined
     assert "版本演进与变更管理说明" in joined
     assert "核心业务对象详解" not in joined
     assert "实施交付与验收说明" not in joined
     assert "附录与补充说明" not in joined
+    assert "产品开发与技术实现说明" not in joined
 
 
 def test_application_form_can_generate_required_fields():

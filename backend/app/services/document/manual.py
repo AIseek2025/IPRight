@@ -7,35 +7,28 @@ import unicodedata
 
 from docx import Document
 
-from app.services.document.base import WordTemplateBase
+from app.services.document.base import WordTemplateBase, pick_word_style_profile
 
 REQUIRED_MANUAL_MODULES = [
     {"key": "document_info", "title": "文档说明"},
     {"key": "introduction", "title": "引言"},
-    {"key": "system_design", "title": "开发设计 / 系统设计"},
+    {"key": "system_design", "title": "系统组成说明"},
     {"key": "overview", "title": "软件概述"},
-    {"key": "runtime_environment", "title": "开发运行环境 / 软件适配环境"},
+    {"key": "runtime_environment", "title": "运行环境说明"},
     {"key": "function_structure", "title": "功能结构说明"},
-    {"key": "role_permissions", "title": "角色权限说明"},
     {"key": "business_flows", "title": "业务流程说明"},
-    {"key": "page_instructions", "title": "软件使用说明"},
-    {"key": "tech_features", "title": "技术特点说明"},
+    {"key": "page_instructions", "title": "软件操作说明"},
+    {"key": "tech_features", "title": "软件特点说明"},
 ]
 
 OPTIONAL_MANUAL_MODULES = [
-    {"key": "data_and_output", "title": "数据组织与结果输出说明", "description": "围绕数据对象、输出材料和交付内容做展开说明。"},
-    {"key": "business_object_details", "title": "核心业务对象详解", "description": "围绕关键对象、字段口径和业务关系做更细说明。"},
-    {"key": "interface_and_data_flow", "title": "接口协同与数据流转说明", "description": "说明页面、服务和数据链路之间的承接关系。"},
-    {"key": "development_details", "title": "产品开发与技术实现说明", "description": "说明前后端分层、工件流转和模块实现拆解。"},
-    {"key": "delivery_and_acceptance", "title": "实施交付与验收说明", "description": "说明实施阶段划分、交付物构成和交付核对内容。"},
-    {"key": "test_and_quality_plan", "title": "测试策略与质量保障说明", "description": "说明功能核查、截图质量和文档一致性控制内容。"},
-    {"key": "training_and_rollout", "title": "培训推广与上线准备说明", "description": "说明培训组织方式、上线准备内容和持续使用支撑机制。"},
-    {"key": "security_and_maintenance", "title": "安全、审计与运维说明", "description": "说明权限控制、日志留痕和运行维护重点。"},
+    {"key": "data_and_output", "title": "数据与输出说明", "description": "围绕页面数据内容、查询结果和导出信息做事实性说明。"},
+    {"key": "interface_and_data_flow", "title": "数据处理与结果流转说明", "description": "围绕页面录入、结果回显和输出链路做客观说明。"},
+    {"key": "data_governance_and_caliber", "title": "数据口径说明", "description": "说明页面字段、状态信息和数据命名口径。"},
+    {"key": "security_and_maintenance", "title": "运行维护说明", "description": "说明账号访问控制、运行检查与维护要点。"},
+    {"key": "operations_checklist_and_incident_response", "title": "日常检查与异常处理说明", "description": "说明日常检查项与异常处理方式。"},
+    {"key": "version_evolution_and_change_management", "title": "版本信息说明", "description": "说明版本标识和版本更新时需要同步的内容。"},
     {"key": "appendix", "title": "附录与补充说明", "description": "补充术语、维护记录和模块扩展信息。"},
-    {"key": "data_governance_and_caliber", "title": "数据治理与口径控制说明", "description": "说明字段口径、数据治理、样例数据和统一命名规则。"},
-    {"key": "implementation_milestones_and_collaboration", "title": "项目实施里程碑与角色协同矩阵", "description": "说明项目阶段拆解、角色协同和关键里程碑。"},
-    {"key": "operations_checklist_and_incident_response", "title": "运维巡检与异常处置清单", "description": "说明日常巡检项、异常分类和处置流程。"},
-    {"key": "version_evolution_and_change_management", "title": "版本演进与变更管理说明", "description": "说明版本迭代、变更登记和材料同步机制。"},
 ]
 
 
@@ -47,10 +40,20 @@ class SoftwareManualGenerator(WordTemplateBase):
         profile: dict | None = None,
         doc: Document | None = None,
     ):
-        super().__init__(doc)
+        resolved_profile = profile or {}
+        super().__init__(doc, style_profile=pick_word_style_profile(self._manual_style_seed(product_name, version, resolved_profile)))
         self.product_name = product_name
         self.version = version
-        self.profile = profile or {}
+        self.profile = resolved_profile
+
+    def _manual_style_seed(self, product_name: str, version: str, profile: dict) -> str:
+        parts = [
+            str(profile.get("design_seed") or "").strip(),
+            str(profile.get("keyword") or "").strip(),
+            str(profile.get("product_name") or product_name).strip(),
+            str(version or "").strip(),
+        ]
+        return "|".join(parts)
 
     def _strip_unsupported_symbols(self, text: str) -> str:
         chars: list[str] = []
@@ -114,7 +117,17 @@ class SoftwareManualGenerator(WordTemplateBase):
                     seen.add(key)
             if valid:
                 return valid
-        return ordered_keys
+        default_keys = [
+            "data_and_output",
+            "data_governance_and_caliber",
+            "security_and_maintenance",
+            "operations_checklist_and_incident_response",
+            "appendix",
+        ]
+        seed = self._manual_style_seed(self.product_name, self.version, self.profile)
+        if seed and int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:2], 16) % 2 == 0:
+            default_keys.insert(1, "interface_and_data_flow")
+        return [key for key in default_keys if key in ordered_keys]
 
     def _module_steps(self, module: dict) -> list[str]:
         if module.get("steps"):
@@ -129,12 +142,12 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def _module_field_summary(self, module: dict) -> str:
         headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
-        filter_placeholder = self._sanitize_doc_text(str(module.get("filter_placeholder", "")).strip())
         if not headers:
-            return "页面通常包含标题区、筛选区、结果列表、状态标签与操作反馈区域。"
-        header_text = "页面重点字段包括：" + "、".join(headers[:8]) + "。"
-        if filter_placeholder:
-            header_text += f" 检索区通常支持按“{filter_placeholder}”快速定位目标记录。"
+            return "页面通常由标题信息区、查询条件区、结果列表区和操作反馈区构成。"
+        header_text = "页面主要展示以下信息：" + "、".join(headers[:8]) + "。"
+        rows = [list(row) for row in module.get("rows", []) if isinstance(row, list)]
+        if rows:
+            header_text += " 页面列表区会结合实际业务记录展示对应字段值，并支持对单条记录进行查看或处理。"
         return self._sanitize_doc_text(header_text)
 
     def _module_business_value(self, module: dict) -> str:
@@ -162,29 +175,28 @@ class SoftwareManualGenerator(WordTemplateBase):
     def _module_tech_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
-        page_variant = self._sanitize_doc_text(str(module.get("page_variant", "records")))
         primary_action = self._sanitize_doc_text(str(module.get("primary_action", f"处理{title}")))
         focus = "、".join(headers[:4]) if headers else "标题、筛选项、结果列表与状态反馈"
         return [
             self._sanitize_doc_text(
-                f"{title}页面在前端通常采用 {page_variant} 型布局组织标题区、工具区与结果区，使“{primary_action}”等主动作保持固定入口。"
+                f"{title}页面围绕“{primary_action}”组织标题信息、查询条件、结果列表和处理入口，使相关业务记录能够集中展示。"
             ),
             self._sanitize_doc_text(
                 f"模块核心字段围绕{focus}展开，便于用户在单页内完成查询、录入、复核和结果确认。"
             ),
             self._sanitize_doc_text(
-                f"从实现角度看，该模块需要同时兼顾页面展示、状态切换、结果留痕和导出整理，确保业务处理与文档交付保持一致。"
+                f"相关处理结果会在页面反馈信息、状态标识和记录更新时间中同步体现，便于后续查询、核对与结果留存。"
             ),
         ]
 
     def _core_entities_text(self) -> str:
         entities = [self._sanitize_doc_text(str(item)) for item in self.profile.get("core_entities", []) if str(item).strip()]
         if not entities:
-            return "系统围绕业务对象、处理任务、状态结果和审计记录等核心数据对象开展页面设计、流程推进和材料输出。"
+            return "系统围绕业务资料、处理记录、状态结果和输出信息等基础数据内容组织页面展示与结果输出。"
         return self._sanitize_doc_text(
-            "系统建设围绕"
+            "系统中的主要数据内容包括"
             + "、".join(entities[:6])
-            + "等核心业务对象展开，并通过统一字段口径、统一状态表达和统一导出命名保证前后链路一致。"
+            + "等信息项，这些内容会在相关页面和输出结果中保持统一命名。"
         )
 
     def _project_dna_notes(self) -> list[str]:
@@ -400,11 +412,11 @@ class SoftwareManualGenerator(WordTemplateBase):
         p = self.doc.add_paragraph()
         p.alignment = 1
         run = p.add_run(f"版本号: {self.version}")
-        self._apply_run_font(run, font_name="宋体", font_size=14)
+        self._apply_run_font(run, font_name=self.style_profile["cover_font"], font_size=14)
         p2 = self.doc.add_paragraph()
         p2.alignment = 1
         run2 = p2.add_run("软件说明书 / 操作手册")
-        self._apply_run_font(run2, font_name="宋体", font_size=14)
+        self._apply_run_font(run2, font_name=self.style_profile["cover_font"], font_size=14)
         self.doc.add_page_break()
 
     def generate_document_info(self, screenshots_meta: list[dict]) -> None:
@@ -413,7 +425,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "overview_version_summary",
-                "文档内容覆盖引言、开发设计/系统设计、开发运行环境、功能结构说明、软件使用说明和技术特点说明。",
+                "文档内容主要包括软件概述、运行环境、功能结构、业务流程、页面操作说明以及运行维护等内容。",
             )
         )
 
@@ -433,12 +445,6 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "本软件通过统一入口、结构化页面和标准化模块，帮助使用单位建立清晰、稳定且可追踪的业务管理流程，提升数据可见性和协同效率。",
             )
         )
-        self.add_title("适用领域", level=2)
-        self.add_paragraph(self.profile.get("industry_scope", "通用业务管理、行业信息化管理和后台协同场景。"))
-        self.add_title("适用对象", level=2)
-        self.add_paragraph(
-            f"本文档适用于{'、'.join(self._role_profiles())}等角色，用于指导页面使用、业务处理和材料整理。"
-        )
 
     def generate_overview(self, prd_summary: dict | None = None, modules: list[str] | None = None) -> None:
         self.add_title("软件概述", level=1)
@@ -452,37 +458,20 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         self.add_paragraph(
             self._profile_text(
-                "product_positioning",
-                f"{self.product_name}围绕{self.profile.get('topic_label', self.product_name)}这一主题构建，强调任务专属页面结构、行业化模块命名和与业务场景相匹配的操作重点，确保不同产品形成清晰可辨的内容侧重点。",
-            )
-        )
-        self.add_paragraph(
-            self._profile_text(
                 "overview_version_summary",
-                f"当前软件版本为{self.version}。系统强调页面分区明确、信息展示直观和操作路径稳定，并根据当前任务标题、关键词、行业和模块结构生成对应的页面内容与说明书正文。",
-            )
-        )
-        self.add_paragraph(
-            self._profile_text(
-                "design_focus",
-                f"本软件在内容组织上重点突出{self.profile.get('scene', '业务协同')}场景中的关键模块、核心数据视图、角色分工和结果输出要求，使说明书能够准确体现当前软件产品的业务特征。",
+                f"当前软件版本为{self.version}。系统采用浏览器访问方式，围绕统一入口、模块页面、状态结果和输出内容组织整体功能。",
             )
         )
         self.add_title("软件主要功能", level=2)
         for mod in module_items:
             self.add_paragraph(f"- {mod}")
-        self.add_title("使用角色", level=2)
-        for role in self._role_profiles(prd_summary):
-            self.add_paragraph(f"- {role}")
-        self.add_title("建设目标", level=2)
+        self.add_title("产品目标", level=2)
         self.add_paragraph(
             self._profile_text(
                 "development_purpose",
-                "系统建设目标是形成统一入口、统一口径和统一材料输出的业务平台，使使用单位能够在稳定页面中完成查询、处理、复核和归档。",
+                "本软件的目标是通过统一页面和标准化业务记录方式，提高日常处理、查询复核和结果输出的效率与一致性。",
             )
         )
-        self.add_title("核心业务对象", level=2)
-        self.add_paragraph(self._core_entities_text())
 
     def generate_runtime_environment(self) -> None:
         self.add_title("开发运行环境 / 软件适配环境", level=1)
@@ -501,7 +490,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
 
     def generate_system_design(self, arch_diagram_path: str = "") -> None:
-        self.add_title("开发设计 / 系统设计", level=1)
+        self.add_title("系统组成说明", level=1)
         self.add_title("系统总体架构", level=2)
         self.add_paragraph(
             self._profile_text(
@@ -512,14 +501,14 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "system_pipeline_summary",
-                f"系统在设计上将页面、截图采集、说明书编排和导出发布串联为统一流水线，从而保证生成的软件内容、截图内容和导出材料保持一致。"
+                "系统通过统一的数据组织方式和模块页面结构承接信息录入、查询处理、状态反馈和结果输出，使软件各功能模块保持连贯一致。"
             )
         )
         self.add_title("开发技术说明", level=2)
         self.add_paragraph(
             self._profile_text(
                 "development_tech_overview",
-                "软件采用前后端分层与模块化设计方式，前端负责页面展示、状态反馈和下载入口，后端负责任务管理、运行检查、文档生成和导出发布，运行时通过标准清单控制应用启动、截图与导出行为。",
+                "软件采用前后端分层与模块化组织方式，前端负责页面展示、交互处理和结果回显，后端负责业务处理、数据组织、状态记录和结果输出。",
             )
         )
         self.add_title("开发语言说明", level=2)
@@ -529,16 +518,6 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(self._profile_text("tech_selection_frontend", "页面展示层采用 React 组件化方式构建，以保证页面结构清晰、模块职责明确并便于后续扩展。"))
         self.add_paragraph(self._profile_text("tech_selection_backend", "后端服务层采用 FastAPI 构建接口服务，以支持任务管理、下载分发和工件查询。"))
         self.add_paragraph(self._profile_text("tech_selection_data", "数据层支持 PostgreSQL 与 SQLite，用于适配生产环境和轻量测试环境。"))
-        self.add_title("产品特性与设计侧重点", level=2)
-        for item in self._profile_focus_list(
-            "distinguishing_features",
-            [
-                f"围绕{self.profile.get('topic_label', self.product_name)}主题组织模块内容，突出当前软件产品的核心业务链路。",
-                "模块命名、页面字段和说明书正文根据当前任务重新生成，避免不同产品之间出现大段重复描述。",
-                "截图、页面说明、功能结构和技术特点保持同一业务主线，便于交付、培训与正式材料整理。",
-            ],
-        ):
-            self.add_paragraph(f"- {item}")
         self.add_title("系统架构图", level=2)
         if arch_diagram_path and os.path.exists(arch_diagram_path):
             if arch_diagram_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
@@ -556,51 +535,30 @@ class SoftwareManualGenerator(WordTemplateBase):
             )
         )
         self.add_paragraph(self._profile_text("function_elements_summary", "功能元素主要由导航菜单、统计卡片、筛选输入框、列表表格、操作按钮、状态标签、导出入口和配置项组成。"))
-        self.add_title("交互与版式策略", level=2)
-        for note in self._project_dna_notes():
-            self.add_paragraph(note)
 
     def generate_function_structure(self, modules: list[str] | None = None) -> None:
         self.add_title("功能结构说明", level=1)
         if self._module_profiles():
             for module in self._module_profiles():
                 self.add_title(module["title"], level=2)
-                self.add_title("功能定位", level=3)
+                self.add_title("功能说明", level=3)
                 self.add_paragraph(module.get("description", f"{module['title']}模块用于承载该业务主题的主要操作。"))
-                self.add_title("页面构成", level=3)
+                self.add_title("主要数据内容", level=3)
                 self.add_paragraph(self._module_field_summary(module))
-                primary_action = module.get("primary_action") or f"处理{module['title']}"
-                summary_parts = [f"本模块常用主操作为“{primary_action}”。"]
-                if module.get("filter_placeholder"):
-                    summary_parts.append(f"检索区会优先围绕“{module['filter_placeholder']}”组织筛选入口。")
-                if module.get("page_variant"):
-                    summary_parts.append(f"当前页面采用 {module['page_variant']} 版式组织标题区、信息区和结果区。")
-                self.add_paragraph(self._sanitize_doc_text(" ".join(summary_parts)))
                 self.add_title("功能要点", level=3)
                 for highlight in module.get("highlights", []):
                     self.add_paragraph(f"- {highlight}")
                 self.add_title("典型操作说明", level=3)
                 for index, step in enumerate(self._module_steps(module), 1):
                     self.add_paragraph(f"{index}. {step}")
-                self.add_title("业务价值", level=3)
+                self.add_title("处理说明", level=3)
                 self.add_paragraph(self._module_business_value(module))
-                self.add_title("核心字段与数据样例", level=3)
+                self.add_title("数据样例", level=3)
                 self.add_paragraph(self._module_example_record(module))
-                self.add_title("模块开发与实现说明", level=3)
+                self.add_title("结果记录说明", level=3)
                 for note in self._module_tech_notes(module):
                     self.add_paragraph(note)
-                self.add_title("模块实施与交付说明", level=3)
-                for note in self._module_delivery_notes(module):
-                    self.add_paragraph(note)
-                self.add_title("模块协同与风控说明", level=3)
-                for note in self._module_collaboration_notes(module):
-                    self.add_paragraph(note)
-                for note in self._module_risk_and_controls(module):
-                    self.add_paragraph(note)
-                self.add_title("模块验收与维护要点", level=3)
-                for note in self._module_acceptance_notes(module):
-                    self.add_paragraph(note)
-                self.add_title("字段口径补充说明", level=3)
+                self.add_title("字段说明", level=3)
                 for note in self._module_data_dictionary_notes(module):
                     self.add_paragraph(note)
         else:
@@ -647,11 +605,11 @@ class SoftwareManualGenerator(WordTemplateBase):
                 "使用人员首先通过登录页完成身份验证，进入系统首页后查看统计信息与待办摘要，再根据左侧导航进入具体功能模块完成录入、维护、查询、统计或配置等操作。",
             )
         )
-        self.add_title("材料生成流程", level=2)
+        self.add_title("功能处理流程", level=2)
         self.add_paragraph(
             self._profile_text(
                 "business_flow_materials",
-                "系统在任务创建后依次执行需求整理、应用构建、运行校验、页面截图、说明书生成、源码文档生成和导出发布等阶段，确保最终下载文件与页面展示保持一致。",
+                "系统围绕信息录入、结果查询、状态流转、处理反馈和结果输出形成连续处理链路，使页面操作与结果记录保持一致。",
             )
         )
         if self._module_profiles():
@@ -659,19 +617,9 @@ class SoftwareManualGenerator(WordTemplateBase):
             self.add_paragraph(
                 self._profile_text(
                     "business_flow_module_collaboration",
-                    f"针对“{self.profile.get('keyword', self.product_name)}”任务，用户可沿着当前任务模块顺序完成信息录入、过程推进、结果复核和材料沉淀。",
+                    f"围绕{self.product_name}的功能模块，软件支持按照模块顺序完成信息登记、处理推进、结果查看和记录留存。"
                 )
             )
-        self.add_title("典型应用场景", level=2)
-        for item in self._profile_focus_list(
-            "typical_scenarios",
-            [
-                f"面向{self.profile.get('industry_scope', '当前行业')}场景中的日常业务受理、状态跟踪与结果复核。",
-                "面向需要统一入口、统一字段口径和统一导出材料的业务协同环境。",
-                "面向多角色协作、需要保留过程记录和阶段状态的正式交付场景。",
-            ],
-        ):
-            self.add_paragraph(f"- {item}")
 
     def generate_data_and_output(self) -> None:
         self.add_title("数据组织与结果输出说明", level=1)
@@ -679,28 +627,28 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "data_organization",
-                f"{self.product_name}围绕{self.profile.get('topic_label', self.product_name)}主题组织业务数据，页面中的列表字段、状态标签、筛选项和操作按钮保持统一命名方式，便于不同角色在同一数据口径下开展协同处理。",
+                f"{self.product_name}围绕软件中的业务记录、状态信息、查询条件和结果数据组织页面内容，页面中的字段名称、状态标签、筛选项和操作入口保持统一命名方式。",
             )
         )
         self.add_title("结果输出说明", level=2)
         self.add_paragraph(
             self._profile_text(
                 "result_output",
-                "系统支持围绕当前任务输出页面截图、说明书正文、源码文档、申请表与相关工件，使业务结果、页面表现和交付材料可以形成对应关系，便于正式归档与提交。",
+                "系统中的处理结果可通过页面回显、列表记录、详情信息和导出内容进行查看，用于保留业务处理过程与结果信息。",
             )
         )
-        self.add_title("材料整理说明", level=2)
+        self.add_title("数据一致性说明", level=2)
         self.add_paragraph(
             self._profile_text(
                 "material_arrangement",
-                "在材料整理过程中，应优先核对模块标题、页面图注、关键字段、角色权限说明和导出文件名称，确保说明书内容与当前软件产品的业务主题、功能结构和截图顺序保持一致。",
+                "同一类业务数据在不同页面中保持统一编号方式、字段命名和状态表达，便于对相关记录进行查询、统计和结果核对。",
             )
         )
-        self.add_title("数据对象口径说明", level=2)
+        self.add_title("主要数据内容说明", level=2)
         self.add_paragraph(self._core_entities_text())
         self.add_paragraph(
             self._sanitize_doc_text(
-                "同一业务对象在首页统计、模块列表、截图图注、说明书正文和交付清单中的命名应保持统一，避免因字段别名、状态描述不一致或导出标题漂移而影响培训、验收和正式归档。"
+                "同一类业务对象在首页统计、模块列表、详情信息和结果输出中的命名应保持统一，避免出现字段别名或状态描述不一致的情况。"
             )
         )
 
@@ -1149,8 +1097,8 @@ class SoftwareManualGenerator(WordTemplateBase):
             self.add_paragraph(note)
 
     def generate_page_instructions(self, screenshots_meta: list[dict]) -> None:
-        self.add_title("软件使用说明", level=1)
-        self.add_title("使用说明总述", level=2)
+        self.add_title("软件操作说明", level=1)
+        self.add_title("操作说明总述", level=2)
         self.add_paragraph(
             self._profile_text(
                 "usage_overview",
@@ -1216,17 +1164,17 @@ class SoftwareManualGenerator(WordTemplateBase):
                     self.add_paragraph(f"{j}. {step}")
 
     def generate_tech_features(self) -> None:
-        self.add_title("技术特点说明", level=1)
+        self.add_title("软件特点说明", level=1)
         self.add_paragraph(
             self._profile_text(
                 "technical_features",
-                "本软件采用 B/S 架构，支持主流浏览器访问，具备模块化页面、统一数据入口、角色权限控制和结果导出等典型后台能力。",
+                "本软件采用 B/S 架构，支持主流浏览器访问，具备统一入口、模块化页面、业务记录查询、状态反馈和结果输出等功能特点。",
             )
         )
         self.add_paragraph(
             self._profile_text(
                 "technical_feature_detail",
-                f"{self.product_name}在实现上强调任务专属化内容生成与页面结构稳定并重，既保证不同产品拥有各自的业务重点、模块命名与说明书侧重点，也保证整体交互风格、材料输出和运行访问方式保持统一。",
+                f"{self.product_name}通过统一的数据组织方式和清晰的模块入口承接各项业务处理，能够在同一系统中完成信息维护、状态查看、结果查询和记录留存。",
             )
         )
         features = self._profile_list("technical_feature_bullets", [
@@ -1259,7 +1207,6 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.generate_overview(prd_summary, modules)
         self.generate_runtime_environment()
         self.generate_function_structure(modules)
-        self.generate_role_permissions(prd_summary)
         self.generate_business_flows()
         if "data_and_output" in selected_optional_modules:
             self.generate_data_and_output()

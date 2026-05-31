@@ -14,6 +14,8 @@ import {
   Result,
   Empty,
   Grid,
+  Image,
+  Card,
 } from 'antd';
 import {
   DownloadOutlined,
@@ -31,6 +33,7 @@ import {
   getTaskStreamUrl,
   retryTask,
   cancelTask,
+  withAuthorizedUrl,
 } from '@/api/client';
 import {
   STATUS_LABELS,
@@ -420,15 +423,25 @@ export default function TaskDetail() {
             dataSource={screenshots}
             renderItem={(s: ScreenshotItem) => (
               <List.Item>
-                <List.Item.Meta
-                  title={`${s.page_title} (${s.scenario_id})`}
-                  description={
-                    <>
-                      <div>路由: {s.route}</div>
-                      {s.caption && <div>图注: {s.caption}</div>}
-                    </>
-                  }
-                />
+                <Card style={{ width: '100%' }} bodyStyle={{ padding: 16 }}>
+                  {s.image_url ? (
+                    <Image
+                      src={withAuthorizedUrl(s.image_url)}
+                      alt={s.page_title}
+                      style={{ width: '100%', maxHeight: 320, objectFit: 'contain', marginBottom: 12 }}
+                    />
+                  ) : null}
+                  <List.Item.Meta
+                    title={`${s.page_title} (${s.scenario_id})`}
+                    description={
+                      <>
+                        <div>路由: {s.route}</div>
+                        {s.caption && <div>图注: {s.caption}</div>}
+                        {!s.image_url && <div>截图文件暂不可预览</div>}
+                      </>
+                    }
+                  />
+                </Card>
               </List.Item>
             )}
           />

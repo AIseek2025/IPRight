@@ -54,6 +54,8 @@ export interface ScreenshotItem {
   page_title: string;
   route: string;
   caption: string | null;
+  image_artifact_id: string | null;
+  image_url: string | null;
   created_at: string;
 }
 

@@ -84,6 +84,10 @@ function withTokenQuery(url: string): string {
   return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
+export function withAuthorizedUrl(url: string): string {
+  return withTokenQuery(url);
+}
+
 export async function createTask(params: {
   keyword: string;
   product_name?: string;
