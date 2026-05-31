@@ -199,8 +199,39 @@ def _build_route_shell_module_pages(module_pages: list[dict]) -> list[dict]:
     ]
 
 
-def _render_structured_app_tsx(profile: dict) -> str:
+def _build_available_route_shell_module_pages(
+    profile: dict,
+    generated_files: dict[str, str],
+) -> list[dict]:
     module_pages = _build_route_shell_module_pages(build_codegen_requirements(profile).get("module_pages", []))
+    module_page_by_component = {
+        str(page.get("component_name") or "").strip(): page
+        for page in module_pages
+        if str(page.get("component_name") or "").strip()
+    }
+    available_pages: list[dict] = []
+    for relative_path in sorted(generated_files):
+        if not relative_path.startswith("frontend/src/pages/") or not relative_path.endswith(".tsx"):
+            continue
+        component_name = Path(relative_path).stem
+        if component_name in {"Login", "Dashboard"}:
+            continue
+        module_page = module_page_by_component.get(component_name)
+        if not module_page:
+            continue
+        available_pages.append(
+            {
+                "title": module_page.get("title"),
+                "route": module_page.get("route"),
+                "file_path": relative_path,
+                "component_name": component_name,
+            }
+        )
+    return available_pages
+
+
+def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
+    module_pages = _build_available_route_shell_module_pages(profile, generated_files)
     import_lines = [
         "import { useEffect, useState } from 'react';",
         "import { Navigate, Route, Routes, useLocation } from 'react-router-dom';",
@@ -286,7 +317,7 @@ def _synthesize_structured_core_files(
     for relative_path in required_files:
         content = str(synthesized.get(relative_path, "") or "")
         if relative_path == "frontend/src/App.tsx" and (overwrite_existing or not content.strip()):
-            synthesized[relative_path] = _render_structured_app_tsx(profile)
+            synthesized[relative_path] = _render_structured_app_tsx(profile, synthesized)
             repaired_paths.append(relative_path)
 
     return synthesized, repaired_paths
@@ -1375,6 +1406,43 @@ async def generate_task_app_code(
 
     sync_frontend_dependencies(os.path.join(app_root, "frontend"))
     invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+    if "frontend/src/App.tsx" in invalid_compile_paths:
+        generated_files, repaired_compile_core_paths = _synthesize_structured_core_files(
+            generated_files,
+            profile,
+            ["frontend/src/App.tsx"],
+            overwrite_existing=True,
+        )
+        if repaired_compile_core_paths:
+            repaired_core_paths = sorted(set([*repaired_core_paths, *repaired_compile_core_paths]))
+            applied, apply_error = apply_generated_code_bundle(
+                app_root,
+                generated_files,
+                codegen_requirements["required_files"],
+            )
+            if not applied:
+                return _build_codegen_report(
+                    repaired_core_paths=sorted(repaired_core_paths),
+                    repaired_module_paths=sorted(repaired_module_paths),
+                    repaired_support_paths=sorted(repaired_support_paths),
+                    apply_error=apply_error,
+                ), f"App code generation failed: {apply_error}"
+            sync_frontend_dependencies(os.path.join(app_root, "frontend"))
+            invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+            batch_reports.append(
+                {
+                    "batch": "core_compile_fallback",
+                    "attempt": 1,
+                    "required_files": ["frontend/src/App.tsx"],
+                    "generated_paths": sorted(repaired_compile_core_paths),
+                    "fallback_to_template": bool(invalid_compile_paths),
+                    "error": (
+                        "still invalid after compile fallback: " + ", ".join(invalid_compile_paths)
+                        if invalid_compile_paths
+                        else None
+                    ),
+                }
+            )
     compile_invalid_support_paths = [
         path
         for path in invalid_compile_paths
