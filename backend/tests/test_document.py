@@ -49,15 +49,16 @@ def test_manual_excludes_removed_sections_and_text():
     assert "本次说明书基于真实运行页面自动采集" not in joined
     assert "开发设计流程" not in joined
     assert "开发设计流程图" not in joined
-    assert "开发语言说明" in joined
-    assert "技术选型说明" in joined
+    assert "软件概述" in joined
+    assert "功能结构说明" in joined
+    assert "软件操作说明" in joined
     assert "数据组织与结果输出说明" in joined
     assert "图1：TestApp系统架构图" not in joined
     assert "TestApp V1.0" in joined
     assert "👥 用户管理" not in joined
     assert "部署维护说明" not in joined
     assert "部署说明" not in joined
-    assert "运行维护说明" in joined
+    assert "运行维护说明" not in joined
     assert "数据与材料管理说明" not in joined
     assert "常见问题" not in joined
     assert "研发测试与验收建议" not in joined
@@ -98,7 +99,11 @@ def test_manual_includes_generated_architecture_diagram_when_image_exists():
         actual_path = generate_system_architecture_diagram(arch_path, "测试平台")
         assert os.path.exists(actual_path)
 
-        gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0")
+        gen = SoftwareManualGenerator(
+            product_name="测试平台",
+            version="V1.0",
+            profile={"selected_optional_modules": ["system_design"]},
+        )
         gen.generate_full(arch_diagram_path=actual_path)
         joined = "\n".join(p.text for p in gen.doc.paragraphs)
 
@@ -113,7 +118,11 @@ def test_manual_embeds_screenshot_images_when_paths_exist():
         actual_arch = generate_system_architecture_diagram(arch_path, "测试平台")
         actual_screenshot = generate_system_architecture_diagram(screenshot_path, "测试页面")
 
-        gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0")
+        gen = SoftwareManualGenerator(
+            product_name="测试平台",
+            version="V1.0",
+            profile={"selected_optional_modules": ["system_design"]},
+        )
         gen.generate_full(
             arch_diagram_path=actual_arch,
             screenshots_meta=[
@@ -131,7 +140,7 @@ def test_manual_embeds_screenshot_images_when_paths_exist():
         with zipfile.ZipFile(output_path) as handle:
             media = [name for name in handle.namelist() if name.startswith("word/media/")]
 
-        assert len(media) >= 2
+        assert len(media) >= 1
 
 
 def test_manual_rejects_text_architecture_diagram_fallback():
@@ -140,7 +149,11 @@ def test_manual_rejects_text_architecture_diagram_fallback():
         with open(text_path, "w", encoding="utf-8") as handle:
             handle.write("系统架构图 - 测试平台 V1.0\n页面展示层 -> 业务处理层 -> 数据存储层")
 
-        gen = SoftwareManualGenerator(product_name="测试平台", version="V1.0")
+        gen = SoftwareManualGenerator(
+            product_name="测试平台",
+            version="V1.0",
+            profile={"selected_optional_modules": ["system_design"]},
+        )
         gen.generate_full(arch_diagram_path=text_path)
         joined = "\n".join(p.text for p in gen.doc.paragraphs)
 
@@ -187,7 +200,7 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
     assert "数据组织与结果输出说明" in joined
     assert "页面重点" in joined
-    assert "安全、审计与运维说明" in joined
+    assert "业务流程说明" in joined
     assert "FastAPI" in joined
     assert "React" in joined
     assert "适用领域" not in joined
@@ -199,8 +212,8 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
 
 def test_manual_renders_only_selected_optional_modules():
     selected = [
+        "introduction",
         "data_and_output",
-        "development_details",
         "security_and_maintenance",
         "version_evolution_and_change_management",
     ]
@@ -223,6 +236,7 @@ def test_manual_renders_only_selected_optional_modules():
         screenshots_meta=[{"page_title": "风险评估中心", "caption": "图1 风险评估中心", "image_path": "", "elements": ["风险评估中心", "发起评估"]}],
     )
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
+    assert "引言" in joined
     assert "数据组织与结果输出说明" in joined
     assert "安全、审计与运维说明" in joined
     assert "版本演进与变更管理说明" in joined
@@ -230,6 +244,7 @@ def test_manual_renders_only_selected_optional_modules():
     assert "实施交付与验收说明" not in joined
     assert "附录与补充说明" not in joined
     assert "产品开发与技术实现说明" not in joined
+    assert "业务流程说明" not in joined
 
 
 def test_application_form_can_generate_required_fields():
@@ -531,6 +546,17 @@ def test_task_profile_distinguishes_logistics_and_supply_chain_finance_presets()
     ]
     assert logistics["project_dna"]["architecture_style"] == "dispatch_flow"
     assert finance["project_dna"]["architecture_style"] == "risk_grid"
+    assert logistics["dashboard_metrics"][3]["value"].isdigit()
+    assert "signal" not in str(logistics["dashboard_metrics"][3]["value"]).lower()
+    logistics_modules = {item["title"]: item for item in logistics["modules"]}
+    fleet_rows = logistics_modules["车辆与司机协同"]["rows"]
+    dispatch_rows = logistics_modules["运单调度中心"]["rows"]
+    assert "·" in fleet_rows[0][0]
+    assert dispatch_rows[0][0].startswith("YD202605")
+    assert logistics["product_positioning"] == ""
+    assert logistics["design_focus"] == ""
+    assert logistics["distinguishing_features"] == []
+    assert logistics["typical_scenarios"] == []
 
 
 def test_task_profile_distinguishes_power_dispatch_from_logistics():

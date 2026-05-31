@@ -633,6 +633,31 @@ def _pick_names(seed: str, count: int) -> list[str]:
     return [_REALISTIC_NAMES[(offset + idx) % len(_REALISTIC_NAMES)] for idx in range(count)]
 
 
+def _realistic_plate_number(seed: str) -> str:
+    provinces = ["沪", "苏", "浙", "粤", "京", "鲁", "川", "鄂", "闽", "皖"]
+    prefix_letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    suffix_chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
+    digest = hashlib.md5(seed.encode("utf-8")).hexdigest().upper()
+    province = provinces[int(digest[0:2], 16) % len(provinces)]
+    prefix = prefix_letters[int(digest[2:4], 16) % len(prefix_letters)]
+    body = "".join(suffix_chars[int(digest[i : i + 2], 16) % len(suffix_chars)] for i in range(4, 12, 2))
+    return f"{province}{prefix}·{body[:5]}"
+
+
+def _realistic_mobile_number(seed: str) -> str:
+    prefixes = ["131", "133", "135", "136", "138", "139", "150", "151", "156", "158", "166", "177", "181", "188", "199"]
+    digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
+    prefix = prefixes[int(digest[0:2], 16) % len(prefixes)]
+    tail_number = 10000000 + (int(digest[2:10], 16) % 90000000)
+    return f"{prefix}{tail_number:08d}"
+
+
+def _realistic_waybill_number(seed: str) -> str:
+    digest = hashlib.md5(seed.encode("utf-8")).hexdigest().upper()
+    numeric = str(int(digest[:10], 16)).zfill(10)[-8:]
+    return f"YD202605{numeric}"
+
+
 def _seed_index(seed: str, modulo: int) -> int:
     if modulo <= 0:
         return 0
@@ -1363,15 +1388,15 @@ def _module_rows(
         ]
     if kind == "dispatch":
         return [
-            [f"{base_code}-211", "沪宁专线", names[0], "待派车", "4h 30m", "2026-05-02"],
-            [f"{base_code}-212", "华东集配", names[1], "在途", "6h 10m", "2026-05-01"],
-            [f"{base_code}-213", "冷链次晨达", names[2], "已签收", "2h 50m", "2026-04-30"],
+            [_realistic_waybill_number(f"{product_code}|{title}|dispatch|0"), "上海青浦 -> 苏州工业园区", names[0], "待派车", "4h 30m", "2026-05-02"],
+            [_realistic_waybill_number(f"{product_code}|{title}|dispatch|1"), "无锡锡山 -> 南京江宁", names[1], "在途", "6h 10m", "2026-05-01"],
+            [_realistic_waybill_number(f"{product_code}|{title}|dispatch|2"), "嘉兴南湖 -> 杭州滨江", names[2], "已签收", "2h 50m", "2026-04-30"],
         ]
     if kind == "fleet":
         return [
-            [f"{base_code}-221", "沪A-3278D", names[0], "待发车", "华东仓配", "嘉定分拨场", "2026-05-02"],
-            [f"{base_code}-222", "苏B-9182K", names[1], "运输中", "冷链专线", "无锡中转站", "2026-05-01"],
-            [f"{base_code}-223", "浙C-7731P", names[2], "待回场", "城配末端", "杭州东站点", "2026-04-30"],
+            [_realistic_plate_number(f"{product_code}|{title}|fleet|0"), names[0], "待发车", "华东仓配", "嘉定分拨场", "2026-05-02"],
+            [_realistic_plate_number(f"{product_code}|{title}|fleet|1"), names[1], "运输中", "冷链专线", "无锡中转站", "2026-05-01"],
+            [_realistic_plate_number(f"{product_code}|{title}|fleet|2"), names[2], "待回场", "城配末端", "杭州东站点", "2026-04-30"],
         ]
     if kind == "routes":
         return [
@@ -2204,7 +2229,7 @@ def _build_dashboard_metrics(
         metrics[0]["value"] = str(max(len(modules) * 2, int(metrics[0]["value"] or "0")))
         metrics[1]["value"] = str(max(len(roles) + len(focus_terms), 1))
         metrics[2]["value"] = str(max(len(focus_terms) * 2, 3))
-        metrics[3]["value"] = blueprint.get("name", "已规划").replace("_", " ").title()
+        metrics[3]["value"] = str(max(len(modules), 4))
     return metrics
 
 
@@ -2587,10 +2612,10 @@ def build_task_profile(
         "development_purpose": _build_purpose_text(product_name, keyword, scene, roles, profile_modules),
         "main_functions": _build_main_functions(product_name, keyword, profile_modules, roles),
         "technical_features": _build_technical_features(product_name, keyword, profile_modules, roles, scene),
-        "product_positioning": _build_product_positioning(product_name, keyword, industry_scope, scene, profile_modules),
-        "design_focus": _build_design_focus(product_name, keyword, scene, roles, focus_terms),
-        "distinguishing_features": _build_distinguishing_features(product_name, keyword, industry_scope, profile_modules, focus_terms),
-        "typical_scenarios": _build_typical_scenarios(product_name, keyword, scene, profile_modules),
+        "product_positioning": "",
+        "design_focus": "",
+        "distinguishing_features": [],
+        "typical_scenarios": [],
         "user_roles": roles,
         "dashboard_metrics": _build_dashboard_metrics(profile_modules, roles, focus_terms, preset, experience_blueprint),
         "modules": profile_modules,
@@ -2718,7 +2743,7 @@ def build_frontend_profile_source(profile: dict) -> str:
         "  project_dna?: Record<string, unknown>;\n"
         "  differentiation_hint?: string;\n"
         "};\n\n"
-        f"export const APP_PROFILE: AppProfile = {payload} as AppProfile;\n"
+        f"export const APP_PROFILE: AppProfile = {payload} as unknown as AppProfile;\n"
     )
 
 

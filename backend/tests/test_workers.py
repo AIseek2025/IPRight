@@ -884,6 +884,71 @@ export default function Login() {
         assert invalid_paths == []
         assert "ReactECharts" in repaired["frontend/src/pages/Dashboard.tsx"]
 
+    def test_repair_invalid_core_files_rejects_unsupported_utility_class_pages(self, tmp_path):
+        app_root = tmp_path / "app"
+        _, invalid_paths = repair_invalid_core_files(
+            str(app_root),
+            generated_files={
+                "frontend/src/App.tsx": """
+import { Routes, Route } from 'react-router-dom';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+
+export default function App() {
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+      </Routes>
+    </div>
+  );
+}
+""",
+                "frontend/src/pages/Dashboard.tsx": """
+export default function Dashboard() {
+  return <section>工作台</section>;
+}
+""",
+                "frontend/src/pages/Login.tsx": """
+export default function Login() {
+  return <button>登录</button>;
+}
+""",
+            },
+            profile={"modules": []},
+        )
+
+        assert "frontend/src/App.tsx" in invalid_paths
+
+    def test_repair_invalid_module_pages_rejects_unsupported_utility_class_pages(self):
+        generated_files = {
+            "frontend/src/pages/DispatchPage.tsx": """
+export default function DispatchPage() {
+  return (
+    <div className="p-6 bg-gray-50 min-h-screen">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded-lg shadow bg-white px-4 py-3">调度任务</div>
+      </div>
+    </div>
+  );
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "title": "调度中心",
+                    "key": "dispatch",
+                    "route": "/dispatch",
+                }
+            ]
+        }
+
+        _, invalid_paths = repair_invalid_module_pages(generated_files, profile)
+
+        assert invalid_paths == ["frontend/src/pages/DispatchPage.tsx"]
+
     def test_repair_invalid_core_files_rejects_inline_module_shell_app(self, tmp_path):
         app_root = tmp_path / "app"
         _, invalid_paths = repair_invalid_core_files(

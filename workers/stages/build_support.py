@@ -23,6 +23,20 @@ _OPTIONAL_FRONTEND_DEPENDENCIES = {
     "echarts": "^5.5.0",
     "echarts-for-react": "^3.0.2",
 }
+_UNSUPPORTED_UTILITY_CLASS_TOKENS = (
+    "bg-",
+    "text-",
+    "grid-cols-",
+    "rounded-",
+    "shadow",
+    "p-",
+    "m-",
+    "px-",
+    "py-",
+    "gap-",
+    "space-y-",
+    "min-h-screen",
+)
 
 
 def _write_text(path: str, content: str) -> None:
@@ -684,6 +698,22 @@ def _has_balanced_delimiters(content: str) -> bool:
     return not stack and in_string is None and not in_block_comment
 
 
+def _uses_unsupported_utility_classes(content: str) -> bool:
+    class_names = re.findall(r'className\s*=\s*["\']([^"\']+)["\']', content or "")
+    if not class_names:
+        return False
+
+    hits = 0
+    for class_name in class_names:
+        tokens = [token.strip() for token in class_name.split() if token.strip()]
+        for token in tokens:
+            if any(marker in token for marker in _UNSUPPORTED_UTILITY_CLASS_TOKENS):
+                hits += 1
+        if hits >= 3:
+            return True
+    return False
+
+
 def _synthesize_support_runtime_files(
     generated_files: dict[str, str],
     profile: dict,
@@ -803,6 +833,7 @@ def repair_invalid_core_files(
             and "模块开发中" not in content
             and "BrowserRouter" not in content
             and _has_balanced_delimiters(content)
+            and not _uses_unsupported_utility_classes(content)
             and not _references_unknown_page_import(content)
             and not _has_duplicate_page_imports_or_routes(content)
             and _has_component_export(content, "App")
@@ -811,12 +842,14 @@ def repair_invalid_core_files(
             bool(content.strip())
             and "模块开发中" not in content
             and _has_balanced_delimiters(content)
+            and not _uses_unsupported_utility_classes(content)
             and _has_component_export(content, "Dashboard")
         ),
         "frontend/src/pages/Login.tsx": lambda content: (
             bool(content.strip())
             and "模块开发中" not in content
             and _has_balanced_delimiters(content)
+            and not _uses_unsupported_utility_classes(content)
             and _has_component_export(content, "Login")
         ),
     }
@@ -848,6 +881,7 @@ def repair_invalid_module_pages(
         is_valid = (
             bool(content.strip())
             and "模块开发中" not in content
+            and not _uses_unsupported_utility_classes(content)
         )
         if is_valid:
             continue
@@ -869,8 +903,10 @@ def _build_core_validation_hints(profile: dict, invalid_paths: list[str]) -> lis
         hints.append("App.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
         hints.append("App.tsx 只能引用当前批次真实存在的页面组件，避免导入不存在页面或重复声明同一路由。")
         hints.append("`frontend/src/main.tsx` 已负责挂载路由容器，`App.tsx` 不要再次渲染 `BrowserRouter`。")
+        hints.append("不要输出依赖 Tailwind utility class 的页面骨架；若未同时生成完整样式配置，请改用当前工程可直接运行的组件和样式。")
     if "frontend/src/pages/Dashboard.tsx" in invalid_paths:
         hints.append("Dashboard.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
+        hints.append("Dashboard.tsx 中的指标、表格和摘要请优先读取 `APP_PROFILE` 提供的任务数据，不要硬编码通用 demo 数组。")
     if "frontend/src/pages/Login.tsx" in invalid_paths:
         hints.append("Login.tsx 需要输出完整可运行组件，不能留空，也不要保留“模块开发中”占位文本。")
     return hints
@@ -893,6 +929,8 @@ def _build_module_validation_hints(profile: dict, invalid_paths: list[str]) -> l
         hints.append(f"{relative_path} 需要输出 {title} 的完整可运行页面组件，不能留空，也不要保留“模块开发中”占位文本。")
         if route:
             hints.append(f"{relative_path} 应与路由 {route} 对应，避免输出与当前模块无关的页面内容。")
+        hints.append(f"{relative_path} 请优先读取 `APP_PROFILE` 中的字段、样例记录和指标数据，避免硬编码通用后台示例。")
+        hints.append(f"{relative_path} 不要只写 Tailwind utility class；如果没有完整样式配置，请改用当前工程可直接运行的组件和样式。")
     return hints
 
 

@@ -10,25 +10,21 @@ from docx import Document
 from app.services.document.base import WordTemplateBase, pick_word_style_profile
 
 REQUIRED_MANUAL_MODULES = [
-    {"key": "document_info", "title": "文档说明"},
-    {"key": "introduction", "title": "引言"},
-    {"key": "system_design", "title": "系统组成说明"},
-    {"key": "overview", "title": "软件概述"},
-    {"key": "runtime_environment", "title": "运行环境说明"},
-    {"key": "function_structure", "title": "功能结构说明"},
-    {"key": "business_flows", "title": "业务流程说明"},
-    {"key": "page_instructions", "title": "软件操作说明"},
-    {"key": "tech_features", "title": "软件特点说明"},
+    {"key": "overview", "title": "软件产品说明"},
+    {"key": "function_structure", "title": "功能说明"},
+    {"key": "page_instructions", "title": "操作手册"},
 ]
 
 OPTIONAL_MANUAL_MODULES = [
-    {"key": "data_and_output", "title": "数据与输出说明", "description": "围绕页面数据内容、查询结果和导出信息做事实性说明。"},
-    {"key": "interface_and_data_flow", "title": "数据处理与结果流转说明", "description": "围绕页面录入、结果回显和输出链路做客观说明。"},
-    {"key": "data_governance_and_caliber", "title": "数据口径说明", "description": "说明页面字段、状态信息和数据命名口径。"},
-    {"key": "security_and_maintenance", "title": "运行维护说明", "description": "说明账号访问控制、运行检查与维护要点。"},
-    {"key": "operations_checklist_and_incident_response", "title": "日常检查与异常处理说明", "description": "说明日常检查项与异常处理方式。"},
-    {"key": "version_evolution_and_change_management", "title": "版本信息说明", "description": "说明版本标识和版本更新时需要同步的内容。"},
-    {"key": "appendix", "title": "附录与补充说明", "description": "补充术语、维护记录和模块扩展信息。"},
+    {"key": "introduction", "title": "引言", "description": "简要说明软件名称、版本与文档用途。"},
+    {"key": "system_design", "title": "系统组成说明", "description": "客观说明软件由哪些页面与功能模块组成。"},
+    {"key": "runtime_environment", "title": "运行环境说明", "description": "说明软件的运行环境与使用方式。"},
+    {"key": "business_flows", "title": "业务流程说明", "description": "说明软件中的主要处理流程与页面衔接关系。"},
+    {"key": "data_and_output", "title": "数据与结果说明", "description": "围绕页面数据内容、结果信息和导出内容做事实性说明。"},
+    {"key": "tech_features", "title": "软件特点说明", "description": "围绕已具备的软件功能与页面组织方式做客观说明。"},
+    {"key": "security_and_maintenance", "title": "运行维护说明", "description": "说明访问控制、运行检查与维护要点。"},
+    {"key": "version_evolution_and_change_management", "title": "版本信息说明", "description": "说明软件版本标识与版本更新信息。"},
+    {"key": "appendix", "title": "附录与补充说明", "description": "补充术语与说明。"},
 ]
 
 
@@ -118,15 +114,15 @@ class SoftwareManualGenerator(WordTemplateBase):
             if valid:
                 return valid
         default_keys = [
+            "introduction",
+            "runtime_environment",
+            "business_flows",
             "data_and_output",
-            "data_governance_and_caliber",
-            "security_and_maintenance",
-            "operations_checklist_and_incident_response",
-            "appendix",
+            "tech_features",
         ]
         seed = self._manual_style_seed(self.product_name, self.version, self.profile)
         if seed and int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:2], 16) % 2 == 0:
-            default_keys.insert(1, "interface_and_data_flow")
+            default_keys.append("version_evolution_and_change_management")
         return [key for key in default_keys if key in ordered_keys]
 
     def _module_steps(self, module: dict) -> list[str]:
@@ -137,7 +133,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         return [
             f"进入{title}页面后先确认标题区、筛选区和主操作按钮，核对当前处理对象与业务范围。",
             f"通过搜索条件、列表记录和状态标签定位目标事项，并按需执行“{action}”等主操作。",
-            f"完成处理后复核页面反馈、更新时间和相关记录，确保结果可追踪、可导出、可沉淀。",
+            f"完成处理后复核页面反馈、更新时间和相关记录，确认当前处理结果已经正确保存。",
         ]
 
     def _module_field_summary(self, module: dict) -> str:
@@ -257,14 +253,14 @@ class SoftwareManualGenerator(WordTemplateBase):
         if not headers:
             return [
                 self._sanitize_doc_text(
-                    f"{title}的数据字典应至少覆盖业务编号、主题对象、责任角色、处理状态、更新时间和结果说明等基础字段，用于支撑页面展示、结果导出与审计追踪。"
+                    f"{title}页面通常包含业务编号、主题对象、处理状态、更新时间和结果说明等基础字段，用于展示当前记录信息。"
                 )
             ]
         notes: list[str] = []
         for idx, header in enumerate(headers[:6], start=1):
             notes.append(
                 self._sanitize_doc_text(
-                    f"{idx}. 字段“{header}”用于描述{title}中的关键业务信息，既服务于页面检索和列表展示，也用于说明书、导出文件和后续归档中的统一口径。"
+                    f"{idx}. 字段“{header}”用于标识{title}页面中的对应信息项，便于用户在查询、列表查看和详情处理时快速识别记录内容。"
                 )
             )
         return notes
@@ -1024,7 +1020,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_title("权限与访问控制", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"{self.product_name}按照角色职责控制页面访问范围，常见角色如{'、'.join(self._role_profiles()[:4])}会基于授权查看对应数据、执行维护操作并输出材料。通过统一登录、页面权限和过程留痕，系统能够降低误操作风险并提升结果可追溯性。"
+                f"{self.product_name}按照账号权限控制页面访问范围，不同账号可在授权范围内查看对应数据并执行相关操作。通过统一登录、页面权限和过程记录，系统能够降低误操作风险并提升结果可追溯性。"
             )
         )
         self.add_title("日志与审计留痕", level=2)
@@ -1041,7 +1037,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         self.add_paragraph(
             self._sanitize_doc_text(
-                "在版本迭代过程中，模块标题、字段口径、页面路由、截图数量、说明书页数和导出物一致性会被同步核对，以确保软件功能、技术说明和交付内容保持同步更新。"
+                "在版本迭代过程中，模块标题、页面路由、截图数量、说明书页数和导出内容会同步更新，以确保软件功能与相关说明保持一致。"
             )
         )
 
@@ -1179,9 +1175,9 @@ class SoftwareManualGenerator(WordTemplateBase):
         )
         features = self._profile_list("technical_feature_bullets", [
             "采用浏览器访问模式，部署与使用门槛较低",
-            "页面结构清晰，功能区分明确，便于培训与上手",
+            "页面结构清晰，功能区分明确，便于快速理解和使用",
             "支持多模块统一访问，有利于集中管理业务数据和配置信息",
-            "支持截图、导出、统计和留痕等交付所需能力",
+            "支持截图、导出、统计和记录留存等常用功能",
             "支持多角色分工协同与标准化流程推进",
         ])
         for feature in features:
@@ -1202,36 +1198,23 @@ class SoftwareManualGenerator(WordTemplateBase):
         selected_optional_modules = set(self._selected_optional_module_keys())
         self.generate_cover()
         self.generate_document_info(screenshots_meta)
-        self.generate_introduction()
-        self.generate_system_design(arch_diagram_path)
         self.generate_overview(prd_summary, modules)
-        self.generate_runtime_environment()
         self.generate_function_structure(modules)
-        self.generate_business_flows()
+        self.generate_page_instructions(screenshots_meta)
+        if "introduction" in selected_optional_modules:
+            self.generate_introduction()
+        if "system_design" in selected_optional_modules:
+            self.generate_system_design(arch_diagram_path)
+        if "runtime_environment" in selected_optional_modules:
+            self.generate_runtime_environment()
+        if "business_flows" in selected_optional_modules:
+            self.generate_business_flows()
         if "data_and_output" in selected_optional_modules:
             self.generate_data_and_output()
-        if "business_object_details" in selected_optional_modules:
-            self.generate_business_object_details()
-        if "interface_and_data_flow" in selected_optional_modules:
-            self.generate_interface_and_data_flow()
-        if "data_governance_and_caliber" in selected_optional_modules:
-            self.generate_data_governance_and_caliber()
-        if "development_details" in selected_optional_modules:
-            self.generate_development_details()
-        if "implementation_milestones_and_collaboration" in selected_optional_modules:
-            self.generate_implementation_milestones_and_collaboration()
-        if "delivery_and_acceptance" in selected_optional_modules:
-            self.generate_delivery_and_acceptance()
-        if "test_and_quality_plan" in selected_optional_modules:
-            self.generate_test_and_quality_plan()
-        if "training_and_rollout" in selected_optional_modules:
-            self.generate_training_and_rollout()
-        self.generate_page_instructions(screenshots_meta)
-        self.generate_tech_features()
+        if "tech_features" in selected_optional_modules:
+            self.generate_tech_features()
         if "security_and_maintenance" in selected_optional_modules:
             self.generate_security_and_maintenance()
-        if "operations_checklist_and_incident_response" in selected_optional_modules:
-            self.generate_operations_checklist_and_incident_response()
         if "version_evolution_and_change_management" in selected_optional_modules:
             self.generate_version_evolution_and_change_management()
         if "appendix" in selected_optional_modules:
