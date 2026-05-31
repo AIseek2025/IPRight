@@ -3516,6 +3516,94 @@ src/services/api.ts(106,69): error TS2345: Argument of type 'PigQueryParams | un
         assert 'path="/pigs/transfer"' in app_text
         assert '/reports/production' not in app_text
 
+    def test_generate_task_app_code_repairs_app_compile_invalid_login_props(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "生猪饲养管理系统",
+            "scene": "猪场管理",
+            "industry_scope": "畜牧",
+            "user_roles": ["场长"],
+            "modules": [
+                {"key": "pigs-transfer", "route": "/pigs/transfer", "title": "转群调拨", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp(
+                        {
+                            "frontend/src/App.tsx": (
+                                "import { Routes, Route } from 'react-router-dom'; "
+                                "import Login from './pages/Login'; "
+                                "import Dashboard from './pages/Dashboard'; "
+                                "const handleLogin = () => {}; "
+                                "export default function App(){ return <Routes>"
+                                "<Route path='/login' element={<Login onLogin={handleLogin} />} />"
+                                "<Route path='/dashboard' element={<Dashboard />} />"
+                                "</Routes>; }"
+                            )
+                        }
+                    )
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录 用户名 密码</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": "export async function request(){ return { success: true }; }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '生猪饲养管理系统'; export const APP_VERSION = 'V1.0';",
+                        "frontend/src/types/models.ts": "export interface LoginResponse { token?: string; }",
+                    })
+                if required == ("frontend/src/pages/PigsTransferPage.tsx",):
+                    return _Resp({"frontend/src/pages/PigsTransferPage.tsx": "export default function PigsTransferPage(){ return <div>转群调拨</div>; }"})
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            app_text = (Path(current_app_root) / "frontend/src/App.tsx").read_text(encoding="utf-8")
+            if "<Login onLogin=" in app_text:
+                return ["frontend/src/App.tsx"], "src/App.tsx(1,1): error TS2322: Property 'onLogin' does not exist"
+            return [], None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/App.tsx" in report["repaired_core_paths"]
+        fallback_batch = next(batch for batch in report["batches"] if batch["batch"] == "core_compile_fallback")
+        assert fallback_batch["generated_paths"] == ["frontend/src/App.tsx"]
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        assert "<Login onLogin=" not in app_text
+        assert "<Login />" in app_text
+        assert 'path="/pigs/transfer"' in app_text
+
     def test_synthesize_support_runtime_files_normalizes_api_query_helper_signature(self):
         profile = {"product_name": "测试平台", "version": "V1.0"}
         generated_files = {
