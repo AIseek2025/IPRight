@@ -9,7 +9,7 @@ from app.services.document.application_form import ApplicationFormGenerator
 from app.services.document.manual import SoftwareManualGenerator
 from app.services.document.codebook import SourceCodeBookGenerator
 from app.services.document.diagrams import generate_system_architecture_diagram
-from app.services.project_profile import build_plan_seed, build_task_profile
+from app.services.project_profile import build_frontend_profile_source, build_plan_seed, build_task_profile
 from workers.stages.build_support import repair_invalid_core_files
 
 
@@ -49,10 +49,15 @@ def test_manual_excludes_removed_sections_and_text():
     assert "本次说明书基于真实运行页面自动采集" not in joined
     assert "开发设计流程" not in joined
     assert "开发设计流程图" not in joined
-    assert "软件概述" in joined
+    assert "引言" in joined
+    assert "系统组成说明" in joined
+    assert "开发运行环境 / 软件适配环境" in joined
+    assert "软件特点说明" in joined
     assert "功能结构说明" in joined
     assert "软件操作说明" in joined
-    assert "数据组织与结果输出说明" in joined
+    assert joined.index("引言") < joined.index("功能结构说明")
+    assert joined.index("系统组成说明") < joined.index("软件操作说明")
+    assert "数据组织与结果输出说明" not in joined
     assert "图1：TestApp系统架构图" not in joined
     assert "TestApp V1.0" in joined
     assert "👥 用户管理" not in joined
@@ -88,7 +93,7 @@ def test_manual_normalizes_spacing_and_ui_symbols():
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "智慧园区管理平台 面向企事业单位的信息化管理场景" not in joined
     assert "智慧园区管理平台 采用浏览器访问的软件架构" not in joined
-    assert "智慧园区管理平台面向企事业单位的信息化管理场景" in joined
+    assert "智慧园区管理平台围绕当前产品对应的业务场景构建" in joined
     assert "智慧园区管理平台采用浏览器访问的软件架构" in joined
     assert "本页面重点包括：智慧园区管理平台V1.0、用户管理。" in joined
 
@@ -108,7 +113,7 @@ def test_manual_includes_generated_architecture_diagram_when_image_exists():
         joined = "\n".join(p.text for p in gen.doc.paragraphs)
 
         assert "（系统架构图待生成后插入）" not in joined
-        assert "图1：测试平台系统架构图" in joined
+        assert "图1：测试平台系统组成图" in joined
 
 
 def test_manual_embeds_screenshot_images_when_paths_exist():
@@ -159,7 +164,7 @@ def test_manual_rejects_text_architecture_diagram_fallback():
 
         assert "（系统架构图待生成后插入）" not in joined
         assert "图1：测试平台系统架构图（文本版）" not in joined
-        assert "系统架构图生成失败，请检查图片生成链路。" in joined
+        assert "系统组成图生成失败，请检查图片生成链路。" in joined
 
 
 def test_manual_text_does_not_include_model_vendor_names():
@@ -194,15 +199,16 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     gen.generate_full(prd_summary={"user_roles": profile["user_roles"]}, screenshots_meta=screenshots)
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "星曜投放协同平台" in joined
-    assert "达人库管理" in joined
-    assert "结算与对账" in joined
+    assert profile["modules"][0]["title"] in joined
+    assert profile["modules"][-1]["title"] in joined
     assert "后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作" in joined
-    assert "星曜投放协同平台围绕“小红书达人投放”这一任务主题建设" in joined
-    assert "数据组织与结果输出说明" in joined
+    assert "星曜投放协同平台围绕“小红书达人投放”相关业务场景构建" in joined
+    assert "系统组成说明" in joined
+    assert "开发运行环境 / 软件适配环境" in joined
     assert "页面重点" in joined
-    assert "业务流程说明" in joined
-    assert "FastAPI" in joined
-    assert "React" in joined
+    assert "操作流程" in joined
+    assert "数据组织与结果输出说明" not in joined
+    assert "常见业务流程说明" not in joined
     assert "适用领域" not in joined
     assert "适用对象" not in joined
     assert "交互与版式策略" not in joined
@@ -282,13 +288,13 @@ def test_application_form_main_functions_is_padded_to_minimum_length():
         if row.cells[0].text == "软件的主要功能"
     )
     assert len(main_functions_text) >= 500
-    assert main_functions_text.count("系统还支持统一登录、信息检索、状态跟踪、结果留痕、导出归档与权限控制等能力") < 4
-    assert "在交付层面，系统可输出说明书、申请表、源码文档和截图材料" in main_functions_text
+    assert main_functions_text.count("系统支持统一登录、首页概览、条件检索、状态更新、结果查询和配置维护等基础能力") < 4
+    assert "软件在各模块页面中集中展示关键字段、列表记录、统计摘要和操作反馈" in main_functions_text
 
 
 def test_application_form_padding_avoids_duplicate_existing_filler():
     gen = ApplicationFormGenerator(product_name="测试平台", version="V1.0")
-    seed = "系统还支持统一登录、信息检索、状态跟踪、结果留痕、导出归档与权限控制等能力，用于保证业务过程连续、结果可追溯、交付材料可复核。"
+    seed = "系统支持统一登录、首页概览、条件检索、状态更新、结果查询和配置维护等基础能力，用于保持主要功能页面之间的连续使用体验。"
     gen.generate({
         "product_name": "测试平台",
         "version": "V1.0",
@@ -342,7 +348,7 @@ def test_task_profile_uses_only_core_page_screenshot_scenarios():
     )
     assert len(profile["screenshot_scenarios"]) == len(profile["modules"]) + 2
     assert not any("筛选结果" in item["title"] for item in profile["screenshot_scenarios"])
-    assert any(item["title"] == "达人库管理" for item in profile["modules"])
+    assert [item["title"] for item in profile["modules"]] == ["小红书达人投放", "星曜投放协同平台", "品牌营销"]
 
 
 def test_task_profile_uses_media_preset_for_short_drama_products():
@@ -353,9 +359,9 @@ def test_task_profile_uses_media_preset_for_short_drama_products():
         industry="内容平台",
     )
     assert profile["preset_key"] == "media"
-    assert profile["modules"][0]["title"] == "剧集管理"
+    assert profile["modules"][0]["title"] == "短剧平台"
     assert profile["modules"][0]["route"] == "/series"
-    assert any(item["title"] == "评论管理" for item in profile["modules"])
+    assert "内容编排" in profile["scene"]
 
 
 def test_task_profile_infers_desktop_client_from_title():
@@ -376,7 +382,9 @@ def test_plan_seed_preserves_app_type_hint():
         industry="园区运维",
     )
     assert seed["app_type"] == "desktop_client"
-    assert seed["visual_profile"]["name"]
+    assert "visual_profile" not in seed
+    assert "project_dna" not in seed
+    assert "differentiation_hint" not in seed
 
 
 def test_task_profile_accepts_product_type_hint_alias():
@@ -512,7 +520,7 @@ def test_supply_chain_modules_use_distinct_business_copy():
     assert modules["订单履约中心"]["table_headers"][0] == "履约单号"
     assert "到货排期" in modules["采购管理"]["description"]
     assert "库存批次" in modules["库存管理"]["description"]
-    assert "供方资质" in modules["供应商管理"]["description"]
+    assert "供应资质" in modules["供应商管理"]["description"]
     assert "履约阶段" in modules["订单履约中心"]["description"]
 
 
@@ -532,31 +540,21 @@ def test_task_profile_distinguishes_logistics_and_supply_chain_finance_presets()
 
     assert logistics["preset_key"] == "logistics"
     assert finance["preset_key"] == "supply_chain_finance"
-    assert [item["title"] for item in logistics["modules"][:4]] == [
-        "运单调度中心",
-        "车辆与司机协同",
-        "线路监控台",
-        "仓配协同台",
-    ]
-    assert [item["title"] for item in finance["modules"][:4]] == [
-        "授信主体管理",
-        "融资申请分析",
-        "资金敞口监控",
-        "贸易背景核验",
-    ]
+    assert [item["title"] for item in logistics["modules"]] == ["物流调度管理后台", "物流运输"]
+    assert [item["title"] for item in finance["modules"]] == ["供应链核心企业金融数据分析与监控平台", "V2.0", "供应链金融"]
     assert logistics["project_dna"]["architecture_style"] == "dispatch_flow"
     assert finance["project_dna"]["architecture_style"] == "risk_grid"
     assert logistics["dashboard_metrics"][3]["value"].isdigit()
     assert "signal" not in str(logistics["dashboard_metrics"][3]["value"]).lower()
     logistics_modules = {item["title"]: item for item in logistics["modules"]}
-    fleet_rows = logistics_modules["车辆与司机协同"]["rows"]
-    dispatch_rows = logistics_modules["运单调度中心"]["rows"]
-    assert "·" in fleet_rows[0][0]
+    dispatch_rows = logistics_modules["物流调度管理后台"]["rows"]
     assert dispatch_rows[0][0].startswith("YD202605")
-    assert logistics["product_positioning"] == ""
-    assert logistics["design_focus"] == ""
-    assert logistics["distinguishing_features"] == []
-    assert logistics["typical_scenarios"] == []
+    finance_modules = {item["title"]: item for item in finance["modules"]}
+    assert finance_modules["V2.0"]["table_headers"][0] == "记录编号"
+    assert "product_positioning" not in logistics
+    assert "design_focus" not in logistics
+    assert "distinguishing_features" not in logistics
+    assert "typical_scenarios" not in logistics
 
 
 def test_task_profile_distinguishes_power_dispatch_from_logistics():
@@ -568,13 +566,7 @@ def test_task_profile_distinguishes_power_dispatch_from_logistics():
     )
 
     assert power["preset_key"] == "power_dispatch"
-    assert [item["title"] for item in power["modules"][:5]] == [
-        "电网运行总览",
-        "负荷调度中心",
-        "发电计划协同",
-        "输变线路监测",
-        "检修工作票中心",
-    ]
+    assert [item["title"] for item in power["modules"]] == ["电力调度平台", "电网调度"]
     assert "电网运行监视" in power["scene"]
     assert power["project_dna"]["architecture_style"] == "control_tower"
     joined = json.dumps(power, ensure_ascii=False)
@@ -614,7 +606,7 @@ def test_task_profile_prefers_prd_summary_semantics_over_platform_defaults():
     assert profile["project_dna"]["source_of_truth"] == "raw_user_request"
 
 
-def test_task_profile_visual_profile_uses_non_sidebar_blueprint():
+def test_task_profile_keeps_internal_blueprint_but_plan_seed_is_minimal():
     profile = build_task_profile(
         keyword="物流调度管理后台",
         product_name="物流调度管理后台",
@@ -627,17 +619,55 @@ def test_task_profile_visual_profile_uses_non_sidebar_blueprint():
         industry="物流运输",
     )
 
-    for payload in (profile, seed):
-        assert payload["experience_blueprint"]["navigation_variant"] in {"top_tabs", "indexed", "sectioned"}
-        assert "sidebar" not in payload["visual_profile"]["name"]
-        expected_treatment = {
-            "top_tabs": "top_tabs",
-            "indexed": "indexed_topbar",
-            "sectioned": "sectioned_header",
-        }[payload["experience_blueprint"]["navigation_variant"]]
-        assert payload["visual_profile"]["chrome_treatment"] == expected_treatment
-        assert any(token in payload["visual_profile"]["layout_signal"] for token in ("顶部", "分段", "索引"))
-        assert "避免左侧竖栏后台" in payload["visual_profile"]["layout_signal"]
+    assert profile["experience_blueprint"]["navigation_variant"] in {"top_tabs", "indexed", "sectioned"}
+    assert "visual_profile" not in profile
+    assert "differentiation_hint" not in profile
+    assert "experience_blueprint" not in seed
+    assert "visual_profile" not in seed
+    assert "project_dna" not in seed
+
+
+def test_frontend_profile_source_omits_seed_visual_hints():
+    profile = build_task_profile(
+        keyword="物流调度管理后台",
+        product_name="物流调度管理后台",
+        version="V1.0",
+        industry="物流运输",
+    )
+    source = build_frontend_profile_source(profile)
+    assert "visual_profile" not in source
+    assert "project_dna" not in source
+    assert "differentiation_hint" not in source
+    assert "page_variant" not in source
+    assert "driver" not in source.lower()
+
+
+def test_logistics_profile_module_copy_stays_objective():
+    profile = build_task_profile(
+        keyword="城市物流管理系统",
+        product_name="城市物流管理系统",
+        version="V1.0",
+        industry="物流",
+        prd_summary={"user_roles": ["系统管理员", "调度员", "车队主管"]},
+    )
+    copy_text = "\n".join(
+        "\n".join(
+            [
+                module.get("description", ""),
+                module.get("business_value", ""),
+                *list(module.get("highlights", []) or []),
+            ]
+        )
+        for module in profile["modules"]
+    )
+
+    assert "方便调度主管" not in copy_text
+    assert "仓配角色" not in copy_text
+    assert "系统管理员" not in copy_text
+    assert "调度员" not in copy_text
+    assert "车队主管" not in copy_text
+    assert "组织页面信息、处理状态和结果摘要" in copy_text
+    assert "查询、处理和结果查看入口" in copy_text
 
 
 def test_architecture_diagram_changes_with_project_profile():

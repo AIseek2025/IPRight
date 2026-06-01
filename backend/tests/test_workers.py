@@ -24,6 +24,7 @@ from workers.stages.build_support import (
     _ensure_frontend_dependencies,
     _extract_frontend_compile_error_paths,
     _synthesize_support_runtime_files,
+    build_seed_copy_ignore,
     build_codegen_batches,
     build_codegen_requirements,
     generate_task_app_code,
@@ -572,6 +573,42 @@ class TestStageHandlers:
         )
 
         assert hydrated == {}
+
+    def test_hydrate_missing_files_from_template_skips_non_utf8_files(self, tmp_path):
+        app_root = tmp_path / "app"
+        asset_path = app_root / "frontend/src/services/api.ts"
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        asset_path.write_bytes(b"\xa3\x28not-utf8")
+
+        hydrated = hydrate_missing_files_from_template(
+            str(app_root),
+            generated_files={},
+            required_files=["frontend/src/services/api.ts"],
+        )
+
+        assert hydrated == {}
+
+    def test_build_seed_copy_ignore_skips_macos_metadata_files(self):
+        ignore = build_seed_copy_ignore()
+
+        ignored = ignore(
+            "/tmp/demo",
+            [
+                "node_modules",
+                ".DS_Store",
+                "__MACOSX",
+                "._App.tsx",
+                "App.tsx",
+                "main.pyc",
+            ],
+        )
+
+        assert "node_modules" in ignored
+        assert ".DS_Store" in ignored
+        assert "__MACOSX" in ignored
+        assert "._App.tsx" in ignored
+        assert "main.pyc" in ignored
+        assert "App.tsx" not in ignored
 
     def test_repair_invalid_core_files_reports_invalid_outputs_without_template_restore(self, tmp_path):
         app_root = tmp_path / "app"
@@ -3691,6 +3728,28 @@ function buildQuery(params: PageParams & Record<string, unknown>) {
         assert repaired_paths == ["frontend/src/services/api.ts"]
         assert "PageParams | Record<string, unknown>" in synthesized["frontend/src/services/api.ts"]
 
+    def test_synthesize_support_runtime_files_normalizes_api_record_cast(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+function buildQuery(params?: OrderQueryParams) {
+  return request(buildQueryString(params as Record<string, unknown>));
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface OrderQueryParams { keyword?: string; }",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        assert "as unknown as Record<string, unknown>" in synthesized["frontend/src/services/api.ts"]
+
     def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
@@ -3765,6 +3824,204 @@ export default { buildQuery };
         report, error = asyncio.run(_run())
         assert error is None
         assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
+
+    def test_generate_task_app_code_repairs_mixed_module_and_support_compile_invalid_paths(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "城市物流管理系统",
+            "scene": "城市物流调度",
+            "industry_scope": "物流",
+            "user_roles": ["调度员"],
+            "modules": [
+                {"key": "routes", "route": "/routes", "title": "线路规划", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import RoutesPage from './pages/RoutesPage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/routes' element={<RoutesPage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": """
+type OrderQueryParams = { keyword?: string };
+function request(value: unknown) { return value; }
+function buildQueryString(params: Record<string, unknown>) { return params; }
+export function getOrders(params?: OrderQueryParams) {
+  return request(buildQueryString(params as Record<string, unknown>));
+}
+""",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '城市物流管理系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/RoutesPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/RoutesPage.tsx": """
+import React from 'react';
+import { RouteOutlined, NodeIndexOutlined } from '@ant-design/icons';
+export default function RoutesPage() {
+  return <div><RouteOutlined />线路规划</div>;
+}
+""",
+                    })
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            api_text = (Path(current_app_root) / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+            route_text = (Path(current_app_root) / "frontend/src/pages/RoutesPage.tsx").read_text(encoding="utf-8")
+            invalid_paths = []
+            messages = []
+            if "as Record<string, unknown>" in api_text and "as unknown as Record<string, unknown>" not in api_text:
+                invalid_paths.append("frontend/src/services/api.ts")
+                messages.append("src/services/api.ts(2,1): error TS2345: bad types")
+            if "RouteOutlined" in route_text:
+                invalid_paths.append("frontend/src/pages/RoutesPage.tsx")
+                messages.append("src/pages/RoutesPage.tsx(1,1): error TS2724: bad icon")
+            return invalid_paths, "\n".join(messages) if messages else None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
+        assert "frontend/src/pages/RoutesPage.tsx" in report["repaired_module_paths"]
+        assert any(batch["batch"] == "module_compile_fallback" for batch in report["batches"])
+        api_text = (app_root / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+        route_text = (app_root / "frontend/src/pages/RoutesPage.tsx").read_text(encoding="utf-8")
+        assert "as unknown as Record<string, unknown>" in api_text
+        assert "RouteOutlined" not in route_text
+        assert "NodeIndexOutlined" in route_text
+
+    def test_generate_task_app_code_repairs_module_compile_patterns_for_status_and_align(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "城市物流管理系统",
+            "scene": "城市物流调度",
+            "industry_scope": "物流",
+            "user_roles": ["调度员"],
+            "modules": [
+                {"key": "routes", "route": "/routes", "title": "线路规划", "table_headers": [], "rows": [], "highlights": []},
+                {"key": "dispatch", "route": "/dispatch", "title": "调度派车", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import RoutesPage from './pages/RoutesPage'; import DispatchPage from './pages/DispatchPage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/routes' element={<RoutesPage />} /><Route path='/dispatch' element={<DispatchPage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": "export async function request(){ return { success: true }; }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '城市物流管理系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/RoutesPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/RoutesPage.tsx": """
+type RouteRecord = { id: string; status: 'active' | 'inactive' };
+const dataSource: RouteRecord[] = [{ id: '1', status: 'active' }];
+export default function RoutesPage() {
+  const newData = dataSource.map(item => ({ ...item, status: item.status === 'active' ? 'inactive' : 'active' }));
+  return <div>{newData.length}</div>;
+}
+""",
+                    })
+                if required == ("frontend/src/pages/DispatchPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/DispatchPage.tsx": """
+import { Space } from 'antd';
+export default function DispatchPage() {
+  return <Space direction=\"vertical\" align=\"right\"><span>调度</span></Space>;
+}
+""",
+                    })
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            route_text = (Path(current_app_root) / "frontend/src/pages/RoutesPage.tsx").read_text(encoding="utf-8")
+            dispatch_text = (Path(current_app_root) / "frontend/src/pages/DispatchPage.tsx").read_text(encoding="utf-8")
+            invalid_paths = []
+            messages = []
+            if "status: item.status === 'active' ? 'inactive' : 'active'" in route_text:
+                invalid_paths.append("frontend/src/pages/RoutesPage.tsx")
+                messages.append("src/pages/RoutesPage.tsx(160,23): error TS2345: bad status union")
+            if 'align="right"' in dispatch_text:
+                invalid_paths.append("frontend/src/pages/DispatchPage.tsx")
+                messages.append('src/pages/DispatchPage.tsx(460,50): error TS2322: bad align')
+            return invalid_paths, "\n".join(messages) if messages else None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/pages/RoutesPage.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/DispatchPage.tsx" in report["repaired_module_paths"]
+        route_text = (app_root / "frontend/src/pages/RoutesPage.tsx").read_text(encoding="utf-8")
+        dispatch_text = (app_root / "frontend/src/pages/DispatchPage.tsx").read_text(encoding="utf-8")
+        assert "as RouteRecord['status']" in route_text
+        assert 'align="end"' in dispatch_text
 
     def test_repair_invalid_module_pages_rejects_profile_aliases_and_unsafe_visual_profile(self):
         profile = {
@@ -4210,9 +4467,11 @@ export default function AlertsPage() {
 
         source = build_frontend_profile_source({"modules": []})
 
-        assert "steps?: string[];" in source
-        assert "business_value?: string;" in source
-        assert "page_variant?: string;" in source
+        assert "highlights: string[];" in source
+        assert "description: string;" in source
+        assert "steps?: string[];" not in source
+        assert "business_value?: string;" not in source
+        assert "page_variant?: string;" not in source
 
 
 class TestStageContextAndResult:

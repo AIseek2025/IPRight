@@ -256,11 +256,23 @@ def _build_available_route_shell_module_pages(
 
 def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
     module_pages = _build_available_route_shell_module_pages(profile, generated_files)
+    route_items = [{"key": "/dashboard", "label": "首页"}]
+    route_items.extend(
+        {
+            "key": str(page.get("route") or "").strip(),
+            "label": str(page.get("title") or page.get("component_name") or "").strip(),
+        }
+        for page in module_pages
+        if str(page.get("route") or "").strip()
+    )
     import_lines = [
-        "import { useEffect, useState } from 'react';",
-        "import { Navigate, Route, Routes, useLocation } from 'react-router-dom';",
+        "import type { ReactNode } from 'react';",
+        "import { useEffect, useMemo, useState } from 'react';",
+        "import { Avatar, Layout, Menu, Space, Typography } from 'antd';",
+        "import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';",
         "import Login from './pages/Login';",
         "import Dashboard from './pages/Dashboard';",
+        "import { APP_PROFILE } from './generated/appProfile';",
     ]
     for page in module_pages:
         component_name = page.get("component_name")
@@ -268,26 +280,28 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
             import_lines.append(f"import {component_name} from './pages/{component_name}';")
 
     protected_routes = [
-        '        <Route path="/dashboard" element={loggedIn ? <Dashboard /> : <Navigate to="/login" replace />} />'
+        '      <Route path="/dashboard" element={loggedIn ? <AppShell><Dashboard /></AppShell> : <Navigate to="/login" replace />} />'
     ]
     for page in module_pages:
         component_name = page.get("component_name")
         route = str(page.get("route") or "").strip()
         if component_name and route:
             protected_routes.append(
-                '        <Route path="'
+                '      <Route path="'
                 + route
-                + '" element={loggedIn ? <'
+                + '" element={loggedIn ? <AppShell><'
                 + component_name
-                + ' /> : <Navigate to="/login" replace />} />'
+                + ' /></AppShell> : <Navigate to="/login" replace />} />'
             )
 
     fallback_dashboard_route = "/dashboard"
+    route_items_json = json.dumps(route_items, ensure_ascii=False)
     return "\n".join(
         [
             *import_lines,
             "",
             "const AUTH_KEY = 'ipright_demo_auth';",
+            f"const ROUTE_ITEMS = {route_items_json};",
             "",
             "function readLoggedIn(): boolean {",
             "  if (typeof window === 'undefined') {",
@@ -295,6 +309,69 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
             "  }",
             "  const storage = window.localStorage;",
             "  return Boolean(storage.getItem(AUTH_KEY) || storage.getItem('token') || storage.getItem('user'));",
+            "}",
+            "",
+            "function findCurrentRoute(pathname: string): string {",
+            "  const matched = ROUTE_ITEMS.find((item) => item.key !== '/dashboard' && pathname.startsWith(item.key));",
+            "  return matched?.key || '/dashboard';",
+            "}",
+            "",
+            "function findCurrentTitle(pathname: string): string {",
+            "  return ROUTE_ITEMS.find((item) => item.key === findCurrentRoute(pathname))?.label || '系统首页';",
+            "}",
+            "",
+            "function AppShell({ children }: { children: ReactNode }) {",
+            "  const location = useLocation();",
+            "  const navigate = useNavigate();",
+            "  const selectedKey = useMemo(() => findCurrentRoute(location.pathname), [location.pathname]);",
+            "  const pageTitle = useMemo(() => findCurrentTitle(location.pathname), [location.pathname]);",
+            "  return (",
+            "    <Layout style={{ minHeight: '100vh', background: '#f6f8fb' }}>",
+            "      <Layout.Header",
+            "        style={{",
+            "          display: 'flex',",
+            "          alignItems: 'center',",
+            "          paddingInline: 28,",
+            "          background: '#ffffff',",
+            "          borderBottom: '1px solid #e5e7eb',",
+            "          position: 'sticky',",
+            "          top: 0,",
+            "          zIndex: 10,",
+            "        }}",
+            "      >",
+            "        <Space size={14} style={{ marginRight: 24 }}>",
+            "          <Avatar style={{ backgroundColor: '#1d4ed8', color: '#fff' }}>软</Avatar>",
+            "          <div>",
+            "            <Typography.Text style={{ color: '#64748b', fontSize: 12 }}>软件页面入口</Typography.Text>",
+            "            <Typography.Title level={5} style={{ color: '#0f172a', margin: 0 }}>{APP_PROFILE.product_name}</Typography.Title>",
+            "          </div>",
+            "        </Space>",
+            "        <Menu",
+            "          mode=\"horizontal\"",
+            "          selectedKeys={[selectedKey]}",
+            "          onClick={({ key }) => navigate(String(key))}",
+            "          items={ROUTE_ITEMS.map((item) => ({ key: item.key, label: item.label }))}",
+            "          style={{ flex: 1, minWidth: 0, background: 'transparent', borderBottom: 'none' }}",
+            "        />",
+            "      </Layout.Header>",
+            "      <Layout.Content style={{ padding: '28px 32px 40px' }}>",
+            "        <div style={{ maxWidth: 1440, margin: '0 auto' }}>",
+            "          <div",
+            "            style={{",
+            "              background: '#ffffff',",
+            "              borderRadius: 20,",
+            "              padding: 24,",
+            "              boxShadow: '0 18px 45px rgba(15, 23, 42, 0.06)',",
+            "              minHeight: 'calc(100vh - 220px)',",
+            "            }}",
+            "          >",
+            "            <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 20 }}>{pageTitle}</Typography.Title>",
+            "            {children}",
+            "          </div>",
+            "        </div>",
+            "      </Layout.Content>",
+            "    </Layout>",
+            "  );",
             "}",
             "",
             "export default function App() {",
@@ -362,7 +439,11 @@ def build_seed_copy_ignore(extra_names: set[str] | None = None):
         ignored = {
             name
             for name in names
-            if name in {"node_modules", "dist", ".vite", "__pycache__"} or name.endswith(".pyc")
+            if (
+                name in {"node_modules", "dist", ".vite", "__pycache__", ".DS_Store", "__MACOSX"}
+                or name.startswith("._")
+                or name.endswith(".pyc")
+            )
         }
         ignored.update(name for name in names if name in extra_names)
         return ignored
@@ -418,7 +499,6 @@ def build_codegen_requirements(profile: dict) -> dict:
                 "table_headers": list(module.get("table_headers", [])),
                 "rows": list(module.get("rows", []))[:6],
                 "highlights": list(module.get("highlights", [])),
-                "page_variant": module.get("page_variant", "records"),
             }
         )
     core_required_files = [
@@ -629,7 +709,7 @@ def hydrate_missing_files_from_template(
         try:
             with open(absolute_path, "r", encoding="utf-8") as f:
                 content = f.read()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if content.strip():
             hydrated[relative_path] = content
@@ -735,7 +815,85 @@ def _synthesize_support_runtime_files(
         ).replace(
             "Record<string, unknown> & PageParams",
             "PageParams | Record<string, unknown>",
+        ).replace(
+            " as Record<string, unknown>",
+            " as unknown as Record<string, unknown>",
         )
+        if normalized != content:
+            synthesized[relative_path] = normalized
+            repaired_paths.append(relative_path)
+
+    return synthesized, repaired_paths
+
+
+def _dedupe_ant_icon_imports(content: str) -> str:
+    pattern = re.compile(
+        r"import\s*\{(?P<body>[\s\S]*?)\}\s*from\s*['\"]@ant-design/icons['\"];?",
+        re.MULTILINE,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        parts = [part.strip() for part in match.group("body").replace("\n", " ").split(",")]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            if not part or part in seen:
+                continue
+            seen.add(part)
+            deduped.append(part)
+        return "import {\n  " + ", ".join(deduped) + "\n} from '@ant-design/icons';"
+
+    return pattern.sub(_replace, content, count=1)
+
+
+def _synthesize_module_compile_files(
+    generated_files: dict[str, str],
+    required_files: list[str],
+    *,
+    overwrite_existing: bool = False,
+) -> tuple[dict[str, str], list[str]]:
+    del overwrite_existing
+    synthesized = dict(generated_files)
+    repaired_paths: list[str] = []
+    icon_replacements = {
+        "RouteOutlined": "NodeIndexOutlined",
+    }
+
+    for relative_path in required_files:
+        if not relative_path.startswith("frontend/src/pages/") or not relative_path.endswith("Page.tsx"):
+            continue
+        content = str(synthesized.get(relative_path, "") or "")
+        if not content.strip():
+            continue
+
+        normalized = content
+        changed = False
+        for invalid_icon, safe_icon in icon_replacements.items():
+            if invalid_icon in normalized:
+                normalized = re.sub(rf"\b{invalid_icon}\b", safe_icon, normalized)
+                changed = True
+        status_toggle_patterns = [
+            (
+                "status: item.status === 'active' ? 'inactive' : 'active'",
+                "status: (item.status === 'active' ? 'inactive' : 'active') as RouteRecord['status']",
+            ),
+            (
+                'status: item.status === "active" ? "inactive" : "active"',
+                'status: (item.status === "active" ? "inactive" : "active") as RouteRecord["status"]',
+            ),
+        ]
+        for source, target in status_toggle_patterns:
+            if source in normalized:
+                normalized = normalized.replace(source, target)
+                changed = True
+        if 'align="right"' in normalized:
+            normalized = normalized.replace('align="right"', 'align="end"')
+            changed = True
+        if "align='right'" in normalized:
+            normalized = normalized.replace("align='right'", "align='end'")
+            changed = True
+        if changed:
+            normalized = _dedupe_ant_icon_imports(normalized)
         if normalized != content:
             synthesized[relative_path] = normalized
             repaired_paths.append(relative_path)
@@ -1508,7 +1666,7 @@ async def generate_task_app_code(
             "frontend/src/types/models.ts",
         }
     ]
-    if invalid_compile_paths and len(compile_invalid_support_paths) == len(invalid_compile_paths):
+    if compile_invalid_support_paths:
         generated_files, repaired_compile_support_paths = _synthesize_support_runtime_files(
             generated_files,
             profile,
@@ -1537,6 +1695,48 @@ async def generate_task_app_code(
                     "attempt": 1,
                     "required_files": list(repaired_compile_support_paths),
                     "generated_paths": sorted(repaired_compile_support_paths),
+                    "fallback_to_template": bool(invalid_compile_paths),
+                    "error": (
+                        "still invalid after compile fallback: " + ", ".join(invalid_compile_paths)
+                        if invalid_compile_paths
+                        else None
+                    ),
+                }
+            )
+    compile_invalid_module_paths = [
+        path
+        for path in invalid_compile_paths
+        if path.startswith("frontend/src/pages/")
+        and path not in {"frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx"}
+    ]
+    if compile_invalid_module_paths:
+        generated_files, repaired_compile_module_paths = _synthesize_module_compile_files(
+            generated_files,
+            compile_invalid_module_paths,
+            overwrite_existing=True,
+        )
+        if repaired_compile_module_paths:
+            repaired_module_paths = sorted(set([*repaired_module_paths, *repaired_compile_module_paths]))
+            applied, apply_error = apply_generated_code_bundle(
+                app_root,
+                generated_files,
+                codegen_requirements["required_files"],
+            )
+            if not applied:
+                return _build_codegen_report(
+                    repaired_core_paths=sorted(repaired_core_paths),
+                    repaired_module_paths=sorted(repaired_module_paths),
+                    repaired_support_paths=sorted(repaired_support_paths),
+                    apply_error=apply_error,
+                ), f"App code generation failed: {apply_error}"
+            sync_frontend_dependencies(os.path.join(app_root, "frontend"))
+            invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+            batch_reports.append(
+                {
+                    "batch": "module_compile_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_compile_module_paths),
+                    "generated_paths": sorted(repaired_compile_module_paths),
                     "fallback_to_template": bool(invalid_compile_paths),
                     "error": (
                         "still invalid after compile fallback: " + ", ".join(invalid_compile_paths)

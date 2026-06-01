@@ -10,18 +10,18 @@ from docx import Document
 from app.services.document.base import WordTemplateBase, pick_word_style_profile
 
 REQUIRED_MANUAL_MODULES = [
+    {"key": "introduction", "title": "引言"},
     {"key": "overview", "title": "软件产品说明"},
+    {"key": "system_design", "title": "系统组成说明"},
+    {"key": "runtime_environment", "title": "开发运行环境 / 软件适配环境"},
+    {"key": "tech_features", "title": "软件特点说明"},
     {"key": "function_structure", "title": "功能说明"},
     {"key": "page_instructions", "title": "操作手册"},
 ]
 
 OPTIONAL_MANUAL_MODULES = [
-    {"key": "introduction", "title": "引言", "description": "简要说明软件名称、版本与文档用途。"},
-    {"key": "system_design", "title": "系统组成说明", "description": "客观说明软件由哪些页面与功能模块组成。"},
-    {"key": "runtime_environment", "title": "运行环境说明", "description": "说明软件的运行环境与使用方式。"},
     {"key": "business_flows", "title": "业务流程说明", "description": "说明软件中的主要处理流程与页面衔接关系。"},
     {"key": "data_and_output", "title": "数据与结果说明", "description": "围绕页面数据内容、结果信息和导出内容做事实性说明。"},
-    {"key": "tech_features", "title": "软件特点说明", "description": "围绕已具备的软件功能与页面组织方式做客观说明。"},
     {"key": "security_and_maintenance", "title": "运行维护说明", "description": "说明访问控制、运行检查与维护要点。"},
     {"key": "version_evolution_and_change_management", "title": "版本信息说明", "description": "说明软件版本标识与版本更新信息。"},
     {"key": "appendix", "title": "附录与补充说明", "description": "补充术语与说明。"},
@@ -113,17 +113,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                     seen.add(key)
             if valid:
                 return valid
-        default_keys = [
-            "introduction",
-            "runtime_environment",
-            "business_flows",
-            "data_and_output",
-            "tech_features",
-        ]
-        seed = self._manual_style_seed(self.product_name, self.version, self.profile)
-        if seed and int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:2], 16) % 2 == 0:
-            default_keys.append("version_evolution_and_change_management")
-        return [key for key in default_keys if key in ordered_keys]
+        return []
 
     def _module_steps(self, module: dict) -> list[str]:
         if module.get("steps"):
@@ -195,58 +185,6 @@ class SoftwareManualGenerator(WordTemplateBase):
             + "等信息项，这些内容会在相关页面和输出结果中保持统一命名。"
         )
 
-    def _project_dna_notes(self) -> list[str]:
-        project_dna = self.profile.get("project_dna") or {}
-        visual_profile = self.profile.get("visual_profile") or {}
-        experience_blueprint = self.profile.get("experience_blueprint") or {}
-        notes = [
-            self._sanitize_doc_text(
-                f"项目主题以“{self.profile.get('topic_label', self.product_name)}”为核心主线，页面结构、截图说明与导出文档均围绕该主题组织，避免出现与当前产品定位无关的模块语义。"
-            ),
-            self._sanitize_doc_text(
-                f"在交互设计上，系统优先采用{visual_profile.get('layout_signal', '清晰稳定的业务工作台布局')}，并通过 {visual_profile.get('chrome_treatment', '统一导航结构')} 保证用户进入系统后能够快速识别当前模块与工作入口。"
-            ),
-            self._sanitize_doc_text(
-                f"项目架构风格参考 {project_dna.get('architecture_style', '模块化业务协同')} 进行拆解，强调首页概览、模块处理、状态反馈、结果导出与材料沉淀的连续性。"
-            ),
-            self._sanitize_doc_text(
-                f"页面体验蓝图采用 {experience_blueprint.get('navigation_variant', '稳定导航')} 导航方式，并结合模块变体 {', '.join(experience_blueprint.get('module_variants', [])[:4]) or '列表、概览、分析和流程'} 组织不同业务页面。"
-            ),
-        ]
-        return notes
-
-    def _module_delivery_notes(self, module: dict) -> list[str]:
-        title = module.get("title", "当前模块")
-        primary_action = self._sanitize_doc_text(str(module.get("primary_action", f"处理{title}")))
-        roles = "、".join(self._role_profiles()[:3])
-        return [
-            self._sanitize_doc_text(
-                f"{title}在交付时不仅需要完成页面开发，还需要同步确认字段命名、默认筛选项、操作反馈文案和图注说明，使真实运行页面与说明书正文保持同一语义。"
-            ),
-            self._sanitize_doc_text(
-                f"若该模块需要承接“{primary_action}”等关键动作，实施阶段应重点验证角色权限、状态流转、列表结果和导出内容是否与业务规则一致。"
-            ),
-            self._sanitize_doc_text(
-                f"在系统使用与交付过程中，{roles or '管理员、业务主管、业务专员'}通常分别从配置维护、日常处理和结果复核角度参与该模块的使用与确认，使页面能够稳定支撑真实工作流程。"
-            ),
-        ]
-
-    def _module_acceptance_notes(self, module: dict) -> list[str]:
-        title = module.get("title", "当前模块")
-        headers = [str(item).strip() for item in module.get("table_headers", []) if str(item).strip()]
-        checks = "、".join(headers[:4]) if headers else "模块标题、筛选条件、列表结果、状态反馈"
-        return [
-            self._sanitize_doc_text(
-                f"{title}在交付核对过程中，{checks}等关键内容需要与业务规则保持一致，页面中的主操作、回显信息和说明书图注之间也需要形成对应关系。"
-            ),
-            self._sanitize_doc_text(
-                f"若{title}承接正式业务处理，相关记录通常会同时保留样例数据、处理结果、责任角色和时间信息，以支撑后续运维、审计和材料归档。"
-            ),
-            self._sanitize_doc_text(
-                f"模块上线后还应持续关注字段口径变更、列表状态演进和导出格式调整，避免页面、截图和交付文档出现信息漂移。"
-            ),
-        ]
-
     def _module_data_dictionary_notes(self, module: dict) -> list[str]:
         title = module.get("title", "当前模块")
         headers = [self._sanitize_doc_text(str(item)) for item in module.get("table_headers", []) if str(item).strip()]
@@ -265,62 +203,6 @@ class SoftwareManualGenerator(WordTemplateBase):
             )
         return notes
 
-    def _module_collaboration_notes(self, module: dict) -> list[str]:
-        title = module.get("title", "当前模块")
-        roles = self._role_profiles()
-        role_text = "、".join(roles[:4]) if roles else "管理员、业务主管、业务专员"
-        return [
-            self._sanitize_doc_text(
-                f"{title}通常需要{role_text}等角色协同参与，其中部分角色负责录入与维护，部分角色负责复核、审批、处置跟踪或结果汇总，从而形成明确的职责边界。"
-            ),
-            self._sanitize_doc_text(
-                f"在协同过程中，模块页面应能够清晰展示当前记录由谁创建、当前处于何种状态、下一步由谁继续处理，以及最终结果如何沉淀到正式材料中。"
-            ),
-        ]
-
-    def _core_entity_details(self) -> list[str]:
-        entities = [self._sanitize_doc_text(str(item)) for item in self.profile.get("core_entities", []) if str(item).strip()]
-        if not entities:
-            entities = ["业务对象", "处理记录", "状态结果", "审计日志"]
-        notes: list[str] = []
-        for entity in entities[:8]:
-            notes.append(
-                self._sanitize_doc_text(
-                    f"{entity}属于系统中的关键业务对象，其命名、状态和关联关系需要在首页统计、模块列表、说明书正文和导出材料中保持一致，避免不同环节对同一对象出现多套解释。"
-                )
-            )
-        return notes
-
-    def _module_risk_and_controls(self, module: dict) -> list[str]:
-        title = module.get("title", "当前模块")
-        return [
-            self._sanitize_doc_text(
-                f"{title}在运行过程中可能面临数据遗漏、状态误判、角色越权、结果回填不一致等风险，因此页面设计需要同步提供清晰的状态标签、提示信息和结果留痕。"
-            ),
-            self._sanitize_doc_text(
-                f"从控制措施看，可通过字段校验、操作确认、权限控制、日志记录和导出复核等方式降低{title}处理过程中的业务偏差与交付风险。"
-            ),
-        ]
-
-    def _role_module_matrix_notes(self, role: str) -> list[str]:
-        modules = self._module_profiles()
-        if not modules:
-            return [
-                self._sanitize_doc_text(
-                    f"{role}需要围绕首页概览、业务处理、结果复核和导出归档等环节开展工作，并结合授权范围完成相应操作。"
-                )
-            ]
-        notes: list[str] = []
-        for module in modules[:6]:
-            title = module.get("title", "当前模块")
-            action = self._sanitize_doc_text(str(module.get("primary_action", f"处理{title}")))
-            notes.append(
-                self._sanitize_doc_text(
-                    f"在“{title}”模块中，{role}通常需要重点关注与其职责相关的查询、录入、复核或“{action}”等关键动作，确保页面结果、处理状态和导出内容保持一致。"
-                )
-            )
-        return notes
-
     def _page_business_rule_notes(self, title: str, page_profile: dict) -> list[str]:
         primary_action = self._sanitize_doc_text(str(page_profile.get("primary_action", f"处理{title}")))
         filter_placeholder = self._sanitize_doc_text(str(page_profile.get("filter_placeholder", "")).strip())
@@ -331,7 +213,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 f"{title}页面的业务规则通常围绕{field_focus}等字段展开，用户在页面中进行筛选、查看和处理时，需要保证这些字段与正式业务口径完全一致。"
             ),
             self._sanitize_doc_text(
-                f"页面内的主操作“{primary_action}”通常对应一个明确的业务节点，因此在页面设计与实施培训中，应说明该动作的触发条件、执行结果、状态变化和后续责任归属。"
+                f"页面内的主操作“{primary_action}”通常对应一个明确的业务节点，使用说明中应交代该动作的触发条件、执行结果、状态变化和后续处理关系。"
             ),
         ]
         if filter_placeholder:
@@ -343,29 +225,28 @@ class SoftwareManualGenerator(WordTemplateBase):
         return notes
 
     def _page_collaboration_and_output_notes(self, title: str, page_profile: dict) -> list[str]:
-        roles = "、".join(self._role_profiles()[:4]) or "管理员、业务主管、业务专员"
         return [
             self._sanitize_doc_text(
-                f"{title}不仅服务于单个用户的页面操作，还承接{roles}等角色之间的信息协同，因此页面中的状态标签、更新时间、责任信息和结果摘要都应具备清晰的解释性。"
+                f"{title}承接当前模块中的信息录入、状态展示和结果回写，因此页面中的状态标签、更新时间、责任信息和结果摘要都应具备清晰的解释性。"
             ),
             self._sanitize_doc_text(
-                f"从交付视角看，{title}页面中的字段展示、图注说明和截图顺序会直接影响软件说明书、培训资料和正式验收材料，因此页面输出必须兼顾业务使用与文档归档双重要求。"
+                f"{title}页面中的字段展示、图注说明和截图顺序需要与软件说明书正文保持一致，避免页面内容与文档表述出现偏差。"
             ),
             self._sanitize_doc_text(
-                f"若该页面需要支持导出、汇总或结果沉淀，则应在使用说明中交代导出内容的命名规范、字段范围、使用场景以及与后续审核、归档环节的关系。"
+                f"若该页面支持导出、汇总或结果查看，应在使用说明中交代输出内容的命名方式、字段范围与适用场景。"
             ),
         ]
 
     def _page_exception_notes(self, title: str, page_profile: dict) -> list[str]:
         return [
             self._sanitize_doc_text(
-                f"{title}在实际运行中常见的异常包括筛选结果为空、状态回显不一致、关键字段缺失、角色权限不足或操作反馈不明确。页面说明中应提前提示这些风险点，帮助使用人员快速判断当前页面是否符合预期。"
+                f"{title}在实际运行中常见的异常包括筛选结果为空、状态回显不一致、关键字段缺失或操作反馈不明确。页面说明中应提前提示这些风险点，帮助判断当前页面是否符合预期。"
             ),
             self._sanitize_doc_text(
                 f"在实施和运维过程中，{title}通常配套固定巡检项，包括页面标题、筛选入口、表格字段、主操作按钮、状态标签、时间信息和截图内容是否齐全，以便在问题出现时快速定位。"
             ),
             self._sanitize_doc_text(
-                f"若页面需要作为说明书截图来源，还应在验收时同步检查页面布局稳定性、中文字体显示、数据样例完整性和图注对应关系，避免页面可运行但截图材料不可用的情况再次发生。"
+                f"若页面需要作为说明书截图来源，还应同步检查页面布局稳定性、中文字体显示、数据样例完整性和图注对应关系，避免页面可运行但截图内容不可用。"
             ),
         ]
 
@@ -378,15 +259,9 @@ class SoftwareManualGenerator(WordTemplateBase):
                 )
             ),
             self._sanitize_doc_text(
-                f"在正式验收时，这类变体页应重点核对筛选条件是否生效、结果数量是否合理、状态标签是否与主页面一致，以及图注描述能否准确反映当前页面所处的业务语境。"
+                f"对于这类变体页，应重点核对筛选条件是否生效、结果数量是否合理、状态标签是否与主页面一致，以及图注描述能否准确反映当前页面所处的业务语境。"
             ),
         ]
-
-    def _role_work_scope(self, role: str, modules: list[str]) -> str:
-        module_phrase = "、".join(modules[:4]) if modules else "首页概览、业务处理、结果查询、材料导出"
-        return self._sanitize_doc_text(
-            f"{role}在日常工作中主要围绕{module_phrase}开展查询、录入、复核、统计或配置操作，并根据权限查看相应的业务结果与过程记录。"
-        )
 
     def _profile_focus_list(self, key: str, fallback: list[str]) -> list[str]:
         values = self.profile.get(key)
@@ -421,24 +296,24 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "overview_version_summary",
-                "文档内容主要包括软件概述、运行环境、功能结构、业务流程、页面操作说明以及运行维护等内容。",
+                "文档内容主要包括引言、软件产品说明、系统组成说明、运行环境、软件特点、功能说明以及页面操作说明等内容。",
             )
         )
 
     def generate_introduction(self) -> None:
         self.add_title("引言", level=1)
-        self.add_title("开发背景", level=2)
+        self.add_title("产品引言", level=2)
         self.add_paragraph(
             self._profile_text(
                 "development_background",
-                f"{self.product_name}面向企事业单位的信息化管理场景，用于解决业务资料分散、流程执行依赖人工协调以及统计结果回收不及时等问题。",
+                f"{self.product_name}围绕当前产品对应的业务场景构建，主要用于承接日常信息处理、状态查看和结果查询等软件功能。",
             )
         )
-        self.add_title("开发目的", level=2)
+        self.add_title("文档用途", level=2)
         self.add_paragraph(
             self._profile_text(
                 "development_purpose",
-                "本软件通过统一入口、结构化页面和标准化模块，帮助使用单位建立清晰、稳定且可追踪的业务管理流程，提升数据可见性和协同效率。",
+                "本文档用于对软件的组成、页面功能和操作方式进行客观说明，便于围绕当前软件产品形成完整、正式的产品资料。",
             )
         )
 
@@ -449,13 +324,13 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "overview_product_intro",
-                f"{self.product_name} 是一套围绕{self.profile.get('scene', '业务管理与流程协同')}构建的 Web 软件系统，主要覆盖{'、'.join(module_items[:6]) if module_items else '统一登录、首页概览和业务处理'}等业务能力。",
+                f"{self.product_name}是一套围绕{self.profile.get('scene', '当前产品相关业务处理与结果查看')}构建的软件产品，主要包含{'、'.join(module_items[:6]) if module_items else '软件首页与主要业务页面'}等功能内容。",
             )
         )
         self.add_paragraph(
             self._profile_text(
                 "overview_version_summary",
-                f"当前软件版本为{self.version}。系统采用浏览器访问方式，围绕统一入口、模块页面、状态结果和输出内容组织整体功能。",
+                f"当前软件版本为{self.version}。软件以浏览器访问方式运行，并围绕页面入口、处理界面、状态反馈和结果信息组织整体功能。",
             )
         )
         self.add_title("软件主要功能", level=2)
@@ -465,21 +340,19 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "development_purpose",
-                "本软件的目标是通过统一页面和标准化业务记录方式，提高日常处理、查询复核和结果输出的效率与一致性。",
+                "本软件通过统一页面和连续操作界面组织产品功能，使相关业务内容能够在同一软件中连续呈现和处理。",
             )
         )
 
     def generate_runtime_environment(self) -> None:
         self.add_title("开发运行环境 / 软件适配环境", level=1)
-        self.add_title("开发硬件环境", level=2)
-        self.add_paragraph(self.profile.get("hardware_environment", "CPU: 2核及以上；内存: 8GB及以上；磁盘: 100GB及以上。"))
         self.add_title("运行硬件环境", level=2)
+        self.add_paragraph(self.profile.get("hardware_environment", "CPU: 2核及以上；内存: 8GB及以上；磁盘: 100GB及以上。"))
+        self.add_title("客户端访问环境", level=2)
         self.add_paragraph(self.profile.get("runtime_hardware_environment", "CPU: 2核及以上；内存: 4GB及以上；磁盘: 50GB及以上。"))
         self.add_title("软件环境", level=2)
-        self.add_paragraph(f"开发操作系统: {self.profile.get('development_os', 'Linux / Windows / macOS')}")
         self.add_paragraph(f"运行平台/操作系统: {self.profile.get('runtime_platform', 'Linux 服务器 + 主流浏览器环境')}")
         self.add_paragraph(f"运行支撑环境/支持软件: {self.profile.get('support_environment', 'Chrome/Edge 浏览器、Node.js 18+、Python 3.11+、PostgreSQL 或 SQLite')}")
-        self.add_paragraph(f"开发工具: {self.profile.get('development_tools', 'Python 3.11、FastAPI、React、TypeScript、Vite、python-docx')}")
         self.add_title("适配说明", level=2)
         self.add_paragraph(
             f"{self.product_name}采用浏览器访问的软件架构，可在常见桌面浏览器环境中稳定运行，并适配日常办公场景下的常用分辨率。"
@@ -487,50 +360,41 @@ class SoftwareManualGenerator(WordTemplateBase):
 
     def generate_system_design(self, arch_diagram_path: str = "") -> None:
         self.add_title("系统组成说明", level=1)
-        self.add_title("系统总体架构", level=2)
+        self.add_title("系统组成", level=2)
         self.add_paragraph(
             self._profile_text(
                 "system_architecture_summary",
-                f"{self.product_name} 采用前后端分层的软件结构，由页面展示层、业务处理层、任务编排层和数据存储层组成。"
+                f"{self.product_name}由登录入口、系统首页以及各业务功能页面组成，各页面围绕当前产品主题承接信息查看、状态处理和结果呈现。"
             )
         )
         self.add_paragraph(
             self._profile_text(
                 "system_pipeline_summary",
-                "系统通过统一的数据组织方式和模块页面结构承接信息录入、查询处理、状态反馈和结果输出，使软件各功能模块保持连贯一致。"
+                "软件通过统一页面入口、页面导航和结果反馈组织整体结构，使相关功能页面能够在同一产品界面中连续访问。"
             )
         )
-        self.add_title("开发技术说明", level=2)
-        self.add_paragraph(
-            self._profile_text(
-                "development_tech_overview",
-                "软件采用前后端分层与模块化组织方式，前端负责页面展示、交互处理和结果回显，后端负责业务处理、数据组织、状态记录和结果输出。",
-            )
-        )
-        self.add_title("开发语言说明", level=2)
-        self.add_paragraph(self._profile_text("development_language_frontend", "前端页面主要采用 TypeScript / JavaScript 实现页面布局、交互逻辑与浏览器端渲染。"))
-        self.add_paragraph(self._profile_text("development_language_backend", "后端服务主要采用 Python 实现任务流转、接口输出、文档生成、截图管理和导出逻辑。"))
-        self.add_title("技术选型说明", level=2)
-        self.add_paragraph(self._profile_text("tech_selection_frontend", "页面展示层采用 React 组件化方式构建，以保证页面结构清晰、模块职责明确并便于后续扩展。"))
-        self.add_paragraph(self._profile_text("tech_selection_backend", "后端服务层采用 FastAPI 构建接口服务，以支持任务管理、下载分发和工件查询。"))
-        self.add_paragraph(self._profile_text("tech_selection_data", "数据层支持 PostgreSQL 与 SQLite，用于适配生产环境和轻量测试环境。"))
-        self.add_title("系统架构图", level=2)
+        self.add_title("功能页面关系", level=2)
+        module_titles = self._module_titles()
+        if module_titles:
+            self.add_paragraph("软件主要页面包括：" + "、".join(module_titles[:10]) + "。")
+        else:
+            self.add_paragraph("软件页面关系将围绕登录入口、系统首页和各业务功能页面展开。")
+        self.add_title("系统组成图", level=2)
         if arch_diagram_path and os.path.exists(arch_diagram_path):
             if arch_diagram_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
                 self.add_image(arch_diagram_path, width_inches=6.0)
-                self.add_caption(f"图1：{self.product_name}系统架构图")
+                self.add_caption(f"图1：{self.product_name}系统组成图")
             else:
-                self.add_paragraph("系统架构图生成失败，请检查图片生成链路。")
+                self.add_paragraph("系统组成图生成失败，请检查图片生成链路。")
         else:
-            self.add_paragraph("系统架构图生成失败，请检查中文字体与图片生成链路。")
-        self.add_title("软件核心功能 / 功能元素", level=2)
+            self.add_paragraph("系统组成图生成失败，请检查中文字体与图片生成链路。")
+        self.add_title("主要功能内容", level=2)
         self.add_paragraph(
             self._profile_text(
                 "main_functions",
-                "软件核心功能包括登录访问、首页概览、业务对象管理、流程推进、资料管理、分析报表、预警提醒与系统配置。",
+                "软件主要功能围绕登录访问、系统首页、业务页面处理、状态反馈和结果查看展开。",
             )
         )
-        self.add_paragraph(self._profile_text("function_elements_summary", "功能元素主要由导航菜单、统计卡片、筛选输入框、列表表格、操作按钮、状态标签、导出入口和配置项组成。"))
 
     def generate_function_structure(self, modules: list[str] | None = None) -> None:
         self.add_title("功能结构说明", level=1)
@@ -539,58 +403,16 @@ class SoftwareManualGenerator(WordTemplateBase):
                 self.add_title(module["title"], level=2)
                 self.add_title("功能说明", level=3)
                 self.add_paragraph(module.get("description", f"{module['title']}模块用于承载该业务主题的主要操作。"))
-                self.add_title("主要数据内容", level=3)
-                self.add_paragraph(self._module_field_summary(module))
                 self.add_title("功能要点", level=3)
                 for highlight in module.get("highlights", []):
                     self.add_paragraph(f"- {highlight}")
-                self.add_title("典型操作说明", level=3)
-                for index, step in enumerate(self._module_steps(module), 1):
-                    self.add_paragraph(f"{index}. {step}")
-                self.add_title("处理说明", level=3)
+                self.add_title("页面作用", level=3)
                 self.add_paragraph(self._module_business_value(module))
-                self.add_title("数据样例", level=3)
-                self.add_paragraph(self._module_example_record(module))
-                self.add_title("结果记录说明", level=3)
-                for note in self._module_tech_notes(module):
-                    self.add_paragraph(note)
-                self.add_title("字段说明", level=3)
-                for note in self._module_data_dictionary_notes(module):
-                    self.add_paragraph(note)
         else:
-            modules = modules or ["登录认证", "仪表盘/首页", "数据管理", "报表统计", "告警管理", "系统设置"]
+            modules = modules or ["软件首页", "主要业务页面"]
             for mod in modules:
                 self.add_title(mod, level=2)
-                self.add_paragraph(f"{mod}模块提供完整的业务管理和操作支持能力。")
-
-    def generate_role_permissions(self, prd_summary: dict | None = None) -> None:
-        self.add_title("角色权限说明", level=1)
-        module_titles = self._module_titles()
-        for role in self._role_profiles(prd_summary):
-            self.add_title(role, level=2)
-            self.add_paragraph(
-                self._sanitize_doc_text(
-                    (self.profile.get("role_permissions") or {}).get(
-                        role,
-                        f"{role}可在授权范围内访问与其职责相关的页面、列表和统计数据，并对负责模块执行查询、维护、导出或审核等操作。",
-                    )
-                )
-            )
-            self.add_paragraph(self._role_work_scope(role, module_titles))
-            self.add_title("职责覆盖模块", level=3)
-            for note in self._role_module_matrix_notes(role):
-                self.add_paragraph(note)
-            self.add_title("角色交付关注点", level=3)
-            self.add_paragraph(
-                self._sanitize_doc_text(
-                    f"{role}在参与正式交付时，不仅需要关注自身日常使用页面，还需要关注截图是否真实反映业务数据、说明书是否准确描述角色职责、以及导出结果是否符合实际业务口径。"
-                )
-            )
-            self.add_paragraph(
-                self._sanitize_doc_text(
-                    f"若{role}承担复核、审批或归档职责，还应在培训和验收中重点检查状态流转、责任边界、结果留痕和导出材料名称，避免上线后因职责定义不清导致业务推进受阻。"
-                )
-            )
+                self.add_paragraph(f"{mod}用于呈现当前产品中的相关功能内容和页面处理入口。")
 
     def generate_business_flows(self) -> None:
         self.add_title("常见业务流程说明", level=1)
@@ -648,225 +470,34 @@ class SoftwareManualGenerator(WordTemplateBase):
             )
         )
 
-    def generate_business_object_details(self) -> None:
-        self.add_title("核心业务对象详解", level=1)
-        self.add_title("对象范围说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"{self.product_name}并不是只展示页面，而是围绕若干真实业务对象组织数据、流程和结果输出。为了让产品说明、页面行为和交付材料保持统一，需要先明确系统内哪些对象是平台处理的核心主线。"
-            )
-        )
-        for note in self._core_entity_details():
-            self.add_paragraph(note)
-        self.add_title("对象间关系说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "从业务关系上看，核心对象通常会形成“基础资料 -> 处理记录 -> 状态结果 -> 导出材料 -> 审计留痕”的串联关系。页面中的统计卡片、筛选区、表格列和图注说明，实质上都是围绕这一对象关系链展开。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "当用户在不同模块间切换时，系统应保证这些对象的编号、主题、状态和责任信息不会发生语义漂移，使培训、实施和后续版本迭代都能基于同一套对象定义推进。"
-            )
-        )
-        self.add_title("对象口径治理说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "项目实施过程中通常同步建立对象口径表，用于明确对象名称、主键字段、状态枚举、责任角色、更新时间和归档位置。该口径表既支撑说明书正文，也支撑接口联调、截图校验和正式交付时的统一表述。"
-            )
-        )
-
-    def generate_interface_and_data_flow(self) -> None:
-        self.add_title("接口协同与数据流转说明", level=1)
-        self.add_title("页面到服务的数据路径", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在系统实现上，页面层会围绕列表加载、筛选查询、详情查看、主操作提交和导出下载等典型动作访问后端服务。后端再根据任务状态、项目画像和页面路由返回结构化结果，使前端能够稳定展示标题、卡片、表格、状态与图注。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "这一路径之所以重要，是因为说明书中的页面截图、字段说明和图注内容都依赖同一条数据链路。如果页面与服务返回的数据口径不一致，最终交付文档也会出现错位。"
-            )
-        )
-        self.add_title("任务工件流转", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "任务级工件通常包括需求摘要、项目画像、页面源码、运行清单、截图清单、软件说明书、源码文档和发布包等。这些工件并不是彼此独立，而是逐级承接。项目画像决定页面模块和字段，截图清单决定说明书插图，说明书和源码文档又共同构成正式交付件。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "因此，在系统设计中必须把工件流转看作正式开发的一部分，而不是附属产物。只有工件链路清晰，才能在出现异常时通过时间线、阶段日志和工件内容快速定位根因。"
-            )
-        )
-        self.add_title("一致性控制说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统围绕模块名称、页面路由、字段标题、样例数据、截图标题和导出文件名称建立一致性控制。版本变化涉及上述任一内容时，页面、说明书和交付清单会同步更新，避免运行页面与正式材料脱节。"
-            )
-        )
-
-    def generate_test_and_quality_plan(self) -> None:
-        self.add_title("测试策略与质量保障说明", level=1)
-        self.add_title("测试范围", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "测试范围应覆盖登录入口、首页概览、模块页面、关键路由跳转、主操作反馈、截图采集、说明书生成、源码文档生成以及整包下载等交付全链路能力。对于真实产品交付，不宜只验证页面能打开，还应验证页面展示内容是否真正反映业务语义。"
-            )
-        )
-        self.add_title("功能核查内容", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "功能核查内容覆盖模块标题、筛选区、表格字段、样例数据、按钮文案、状态标签和导出行为。若任何一个模块仍残留占位内容、假数据或与产品主题无关的行业语义，则页面内容与当前产品主题不一致。"
-            )
-        )
-        self.add_title("文档一致性测试", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "文档一致性测试主要确认说明书中的章节、模块名、图注、截图顺序、关键字段、角色职责和技术说明是否与页面产物相匹配。页面和文档不一致时，即使系统功能可运行，也会对客户培训、正式验收和归档申报造成实质影响。"
-            )
-        )
-        self.add_title("发布前检查清单", level=2)
-        checks = [
-            "确认登录页、首页及核心模块页均可正常访问",
-            "确认截图数量满足项目要求，且核心页面无缺失",
-            "确认说明书包含产品、技术、实施、运维等完整章节",
-            "确认源码文档、申请表和下载包均已成功生成",
-            "确认页面字段、图注说明和导出文件名称保持一致",
-        ]
-        for item in checks:
-            self.add_paragraph(f"- {item}")
-
-    def generate_training_and_rollout(self) -> None:
-        self.add_title("培训推广与上线准备说明", level=1)
-        self.add_title("培训分层说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"系统培训内容围绕{'、'.join(self._role_profiles()[:4])}等角色进行分层组织。管理角色重点理解首页看板、权限边界与结果汇总，执行角色重点掌握筛选、录入、处理和导出操作，复核角色重点关注状态流转、结果校验和材料归档。"
-            )
-        )
-        self.add_title("上线准备项", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "上线前应完成账号准备、角色映射、默认演示数据确认、模块路由检查、截图与说明书校验、导出链路核查以及版本信息留档。只有同时满足运行、展示和文档交付三方面要求，才适合进入正式上线窗口。"
-            )
-        )
-        self.add_title("推广与持续使用说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统投入使用后，说明书和截图清单共同构成培训底稿，并结合真实页面开展场景化演示。对于首次接触系统的使用单位，培训材料通常围绕登录、首页、核心模块和导出结果四条主线组织，帮助使用角色快速建立整体认知。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在持续使用阶段，页面变更、字段调整、模块新增和说明书更新点会按月份或版本维度整理，使培训资料与当前系统保持同步，避免文档脱离实际页面。"
-            )
-        )
-
     def generate_appendix(self) -> None:
         self.add_title("附录与补充说明", level=1)
         self.add_title("术语与缩略语说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "本文档中的“模块”通常指具备独立页面入口和业务职责的功能单元；“工件”指任务在执行过程中生成并可复核的中间或最终产物；“交付物”指说明书、源码文档、申请表、截图材料和下载包等正式对外交付内容。"
+                "本文档中的“模块”通常指具备独立页面入口和业务职责的功能单元；“工件”指任务在执行过程中生成并可复核的中间或最终产物；“导出文件”指说明书、源码文档、申请表、截图材料和下载包等输出内容。"
             )
         )
         self.add_title("维护记录说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "后续版本通常维护变更记录表，用于记录每次版本迭代涉及的模块、字段、截图、导出物和说明书章节变化。该记录既便于内部回顾，也便于交付阶段理解版本差异。"
+                "后续版本通常维护变更记录表，用于记录每次版本迭代涉及的模块、字段、截图、导出内容和说明书章节变化，便于持续查看版本差异。"
             )
         )
         self.add_title("模块补充清单", level=2)
         for module in self._module_profiles():
             self.add_paragraph(
                 self._sanitize_doc_text(
-                    f"{module.get('title', '当前模块')}：附录中补充字段口径、责任角色、主操作入口、状态流转、导出结果和培训要点等信息，用于后续版本迭代与项目复盘时统一参考。"
+                    f"{module.get('title', '当前模块')}：附录中补充字段口径、责任角色、主操作入口、状态流转和结果查看要点等信息，用于后续版本迭代时统一参考。"
                 )
             )
-
-    def generate_data_governance_and_caliber(self) -> None:
-        self.add_title("数据治理与口径控制说明", level=1)
-        self.add_title("字段口径统一原则", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统中的编号、主题、状态、责任角色、更新时间、处理结果等字段应在页面展示、截图图注、说明书正文、导出材料和后续培训资料中保持统一命名，避免同一对象出现多套口径。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"对于{self.product_name}这类真实业务产品，项目实施早期通常同步建立字段口径表，明确字段定义、来源系统、更新频率、展示位置和归档用途，从源头减少页面、截图和说明书之间的语义偏差。"
-            )
-        )
-        self.add_title("样例数据与页面一致性", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "说明书中的截图、页面说明和字段样例必须引用当前任务真实生成的页面数据结构，不得混用占位数据、行业无关示例或与当前任务无关的旧任务术语。"
-            )
-        )
-        for module in self._module_profiles()[:6]:
-            self.add_paragraph(
-                self._sanitize_doc_text(
-                    f"{module.get('title', '当前模块')}对应模块标题、表格字段、筛选条件、主操作入口和结果回显，需要与截图图注、页面说明和导出材料保持一致。"
-                )
-            )
-
-    def generate_implementation_milestones_and_collaboration(self) -> None:
-        self.add_title("项目实施里程碑与角色协同矩阵", level=1)
-        self.add_title("实施里程碑说明", level=2)
-        milestones = [
-            "完成需求确认、业务对象梳理和角色职责对齐",
-            "完成页面结构设计、模块顺序确认和字段口径冻结",
-            "完成前后端联调、运行验证和截图场景校验",
-            "完成说明书、源码文档、申请表和发布包整理",
-            "完成培训演示、交付验收与版本归档",
-        ]
-        for idx, item in enumerate(milestones, start=1):
-            self.add_paragraph(f"{idx}. {item}")
-        self.add_title("角色协同矩阵说明", level=2)
-        roles = self._role_profiles()[:4]
-        modules = self._module_titles()[:6]
-        if roles and modules:
-            for role in roles:
-                self.add_paragraph(
-                    self._sanitize_doc_text(
-                        f"{role}通常需要围绕{'、'.join(modules)}等模块参与需求确认、业务处理、结果复核、材料确认或培训推广中的一个或多个环节，并对本角色关注的数据与结果负责。"
-                    )
-                )
-        else:
-            self.add_paragraph("项目成员通常围绕需求确认、页面实现、运行验证、截图核对和交付整理等环节形成协同配合。")
-
-    def generate_operations_checklist_and_incident_response(self) -> None:
-        self.add_title("运维巡检与异常处置清单", level=1)
-        self.add_title("日常巡检项", level=2)
-        checklist = [
-            "检查登录页、首页和核心模块页是否可正常访问",
-            "检查关键字段、样例数据、状态标签和主操作按钮是否完整显示",
-            "检查截图数量、图注顺序和说明书章节是否与当前任务一致",
-            "检查导出文件、整包下载和时间线事件是否可正常使用",
-            "检查近期版本变更是否同步更新到页面、截图和说明书",
-        ]
-        for idx, item in enumerate(checklist, start=1):
-            self.add_paragraph(f"{idx}. {item}")
-        self.add_title("异常处置说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "若运行中发现页面缺页、截图缺失、说明书章节异常、导出文件不一致或任务长时间停留在单阶段，应优先结合阶段日志、工件落盘时间、运行清单和截图清单定位问题来源，再执行定点修复。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "对于正式交付场景，异常关闭前应补充复核记录，确认页面、截图、说明书、源码文档和下载包重新恢复一致，避免修复页面后遗漏文档或导出材料。"
-            )
-        )
 
     def generate_version_evolution_and_change_management(self) -> None:
         self.add_title("版本演进与变更管理说明", level=1)
         self.add_title("版本演进说明", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                f"{self.product_name}在后续版本演进中，会围绕模块新增、字段调整、角色变化、截图更新和说明书章节同步建立变更记录，确保版本差异可以被实施人员和交付人员快速理解。"
+                f"{self.product_name}在后续版本演进中，会围绕模块新增、字段调整、角色变化、截图更新和说明书章节同步建立变更记录，确保版本差异能够被快速理解。"
             )
         )
         self.add_paragraph(
@@ -878,142 +509,11 @@ class SoftwareManualGenerator(WordTemplateBase):
         controls = [
             "模块标题、页面路由与角色权限变化时同步更新说明书章节",
             "字段口径、状态枚举与导出格式变化时同步更新截图和图注",
-            "新增业务流程或页面变体时同步更新培训资料和验收清单",
+            "新增业务流程或页面变体时同步更新页面说明与截图清单",
             "发布前复核导出文件名称、版本号、页数和截图数量",
         ]
         for idx, item in enumerate(controls, start=1):
             self.add_paragraph(f"{idx}. {item}")
-
-    def generate_development_details(self) -> None:
-        self.add_title("产品开发与技术实现说明", level=1)
-        self.add_title("前端实现说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"{self.product_name}前端采用 React + TypeScript 的组件化组织方式，围绕登录页、首页、模块页和导出入口构成统一交互层。页面实现重点在于导航壳层、筛选区、统计卡片、结果表格、操作按钮和状态反馈的协同，使用户在单个模块内即可完成查询、录入、复核与结果输出。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在页面工程上，系统通过统一字体链、桌面端布局宽度、模块化路由和任务画像驱动的数据结构约束，保证不同产品既具备专属业务表达，又保留稳定的运行和截图效果。"
-            )
-        )
-        self.add_title("后端实现说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "后端采用 FastAPI 提供接口、运行校验和导出服务，并通过任务编排机制串联需求整理、应用构建、运行验证、截图采集、说明书生成、源码文档生成与发布等阶段。这样可以确保页面内容、截图内容和导出材料来源一致，减少交付过程中的信息偏差。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "服务侧重点不仅包括业务接口本身，还包括健康检查、任务状态记录、导出文件登记、截图工件落盘、说明书组装和下载分发等支撑能力，从而形成完整的项目交付闭环。"
-            )
-        )
-        self.add_title("前端工程分层", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "前端工程通常由登录入口、首页工作台、模块页面、公共样式、路由管理和画像数据源等部分构成。登录页负责完成身份进入与演示账号写入，首页负责展示当前产品主题、统计摘要和模块入口，模块页负责承载真实业务数据与主操作流程。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在真实项目开发中，这种分层方式有利于把页面壳层稳定性、模块业务表达和截图采集一致性拆开治理，既保证系统可以运行，也保证说明书中的页面说明能够准确对应到真实可访问的功能路由。"
-            )
-        )
-        self.add_title("后端服务分层", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "后端服务通常拆分为接口访问层、任务编排层、运行校验层、截图采集层、文档生成层和发布分发层。接口层负责提供任务、工件和时间线访问能力，任务编排层负责推进各阶段状态，文档层负责把页面产物、截图材料和正式说明书组织为统一交付件。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "这种服务分层不是单纯为了代码整洁，更重要的是让问题定位路径足够清晰。例如页面生成异常、截图缺页、说明书过薄或导出文件缺失等问题，都可以回溯到具体阶段并通过日志快速确认根因。"
-            )
-        )
-        self.add_title("任务编排与工件流转", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "从交付流水线看，系统会依次经历需求整理、应用构建、运行验证、页面截图、说明书生成、源码文档生成和导出发布。每个阶段既要产出当前工件，也要为下一个阶段提供可复核的输入，例如截图清单直接影响说明书插图数量，项目画像直接影响页面字段与正文结构。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在真实项目实施中，这种分阶段工件流转机制可以显著降低返工成本。当某个阶段发现异常时，可以围绕对应清单、日志和产物做定点修复，而不是整体推倒重来。"
-            )
-        )
-        self.add_title("模块实现拆解", level=2)
-        for module in self._module_profiles():
-            self.add_title(module.get("title", "当前模块"), level=3)
-            self.add_paragraph(self._sanitize_doc_text(f"{module.get('title', '当前模块')}在开发时需要同步考虑页面布局、字段组织、筛选逻辑、主操作入口、结果反馈和页面说明生成。"))
-            self.add_paragraph(self._module_example_record(module))
-            for note in self._module_tech_notes(module):
-                self.add_paragraph(note)
-            for note in self._module_delivery_notes(module):
-                self.add_paragraph(note)
-        self.add_title("数据与页面联动说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统通过任务画像中的模块列表、字段标题、样例数据、角色列表和业务亮点驱动页面渲染，使首页指标、模块表格、截图说明和说明书正文能够围绕同一套业务语义展开。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "在真实交付过程中，这种数据联动方式可以减少前端页面、截图材料和文档正文之间的语义漂移，提升验收、培训和后续维护的一致性。"
-            )
-        )
-        self.add_title("研发测试与验收情况", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统研发阶段同步覆盖页面可访问性检查、关键路由检查、截图质量检查、说明书结构检查和导出物一致性检查。只有页面真实渲染模块字段和样例数据，截图与说明书才能准确反映软件成品质量。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "系统交付核对内容覆盖模块标题、列表字段、数据样例、截图数量、图注描述、角色权限说明和导出文件名称，并结合时间线日志确认各阶段产物均已完成。"
-            )
-        )
-
-    def generate_delivery_and_acceptance(self) -> None:
-        self.add_title("实施交付与验收说明", level=1)
-        self.add_title("实施阶段划分", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "正式实施通常可划分为需求确认、原型对齐、页面开发、接口联调、运行验证、截图取证、说明书整理和交付验收等阶段。每个阶段都应输出明确的中间结果，以保证项目过程可追踪、交付边界可确认。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"对于{self.product_name}这类真实业务产品，需求确认阶段会同步整理主题对象、角色职责、模块顺序、字段口径和导出材料要求，从而减少后续页面和文档返工。"
-            )
-        )
-        self.add_title("培训与上线说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                f"上线前会围绕{'、'.join(self._role_profiles()[:4])}等角色开展分角色培训，分别说明首页看板、模块入口、关键字段、主操作、异常反馈和结果导出方式，使不同岗位都能够按照各自职责进入系统开展工作。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "培训资料应与说明书、截图和真实页面保持一致，避免培训话术与系统实际界面不一致。对于需要正式申报、归档或交付的软件产品，还应同步整理源码文档、申请表、版本信息和下载包。"
-            )
-        )
-        self.add_title("交付物清单说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "标准交付物通常包括运行中的应用页面、页面截图清单、软件说明书、源码文档、申请表、运行清单、项目画像和发布包。若客户需要正式验收材料，还可补充阶段日志、截图质量记录和版本说明。"
-            )
-        )
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "验收环节应把截图数量、说明书页数、关键章节完整度和导出包可下载性作为硬指标；只有同时满足页面可运行、内容可复核和材料可归档，才算真正完成交付。"
-            )
-        )
-        self.add_title("后续迭代说明", level=2)
-        self.add_paragraph(
-            self._sanitize_doc_text(
-                "后续版本迭代时，项目画像中的模块语义、字段示例和角色分工会先完成同步更新，随后再更新页面、截图和说明书，从而保证版本变化不仅体现在代码中，也完整反映到交付文档与培训材料中。"
-            )
-        )
 
     def generate_security_and_maintenance(self) -> None:
         self.add_title("安全、审计与运维说明", level=1)
@@ -1026,7 +526,7 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_title("日志与审计留痕", level=2)
         self.add_paragraph(
             self._sanitize_doc_text(
-                "系统在任务执行、页面截图、导出生成和状态切换过程中保留关键事件记录，用于定位异常、解释交付结果和追溯关键节点。对于正式业务模块，也可围绕编号、状态、责任角色、更新时间等字段建立审计维度。"
+                "系统在任务执行、页面截图、导出生成和状态切换过程中保留关键事件记录，用于定位异常、解释结果并追溯关键节点。对于正式业务模块，也可围绕编号、状态、责任角色、更新时间等字段建立审计维度。"
             )
         )
         self.add_title("运行维护说明", level=2)
@@ -1088,7 +588,7 @@ class SoftwareManualGenerator(WordTemplateBase):
             self.add_paragraph(self._sanitize_doc_text("该功能主要涵盖：" + "、".join(elements[:10]) + "。"))
         else:
             self.add_paragraph("该功能状态下应重点关注筛选条件、结果列表、状态标签和主操作入口。")
-        self.add_title("变体页验收说明", level=4)
+        self.add_title("变体页核查说明", level=4)
         for note in self._variant_page_review_notes(title, page_profile):
             self.add_paragraph(note)
 
@@ -1164,21 +664,21 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "technical_features",
-                "本软件采用 B/S 架构，支持主流浏览器访问，具备统一入口、模块化页面、业务记录查询、状态反馈和结果输出等功能特点。",
+                "本软件围绕统一页面入口、连续页面操作、状态反馈和结果查看等方面组织产品特点，相关功能以正式软件页面方式呈现。",
             )
         )
         self.add_paragraph(
             self._profile_text(
                 "technical_feature_detail",
-                f"{self.product_name}通过统一的数据组织方式和清晰的模块入口承接各项业务处理，能够在同一系统中完成信息维护、状态查看、结果查询和记录留存。",
+                f"{self.product_name}通过统一页面入口、清晰导航和连续操作路径承接各项业务处理，能够在同一软件中完成信息查看、状态处理和结果呈现。",
             )
         )
         features = self._profile_list("technical_feature_bullets", [
-            "采用浏览器访问模式，部署与使用门槛较低",
-            "页面结构清晰，功能区分明确，便于快速理解和使用",
-            "支持多模块统一访问，有利于集中管理业务数据和配置信息",
-            "支持截图、导出、统计和记录留存等常用功能",
-            "支持多角色分工协同与标准化流程推进",
+            "采用浏览器访问方式，软件页面可在统一入口中连续访问",
+            "页面结构清晰，功能入口明确，便于围绕当前产品主题展开使用",
+            "支持状态反馈、结果查看和连续页面处理",
+            "支持围绕主要业务页面组织查询、处理和结果呈现",
+            "页面信息与说明书内容保持对应，便于围绕产品功能形成完整资料",
         ])
         for feature in features:
             self.add_paragraph(f"- {feature}")
@@ -1198,21 +698,17 @@ class SoftwareManualGenerator(WordTemplateBase):
         selected_optional_modules = set(self._selected_optional_module_keys())
         self.generate_cover()
         self.generate_document_info(screenshots_meta)
+        self.generate_introduction()
         self.generate_overview(prd_summary, modules)
+        self.generate_system_design(arch_diagram_path)
+        self.generate_runtime_environment()
+        self.generate_tech_features()
         self.generate_function_structure(modules)
         self.generate_page_instructions(screenshots_meta)
-        if "introduction" in selected_optional_modules:
-            self.generate_introduction()
-        if "system_design" in selected_optional_modules:
-            self.generate_system_design(arch_diagram_path)
-        if "runtime_environment" in selected_optional_modules:
-            self.generate_runtime_environment()
         if "business_flows" in selected_optional_modules:
             self.generate_business_flows()
         if "data_and_output" in selected_optional_modules:
             self.generate_data_and_output()
-        if "tech_features" in selected_optional_modules:
-            self.generate_tech_features()
         if "security_and_maintenance" in selected_optional_modules:
             self.generate_security_and_maintenance()
         if "version_evolution_and_change_management" in selected_optional_modules:

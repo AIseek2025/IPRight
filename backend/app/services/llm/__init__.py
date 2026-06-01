@@ -347,7 +347,7 @@ class LLMClient:
 8. `frontend/src/main.tsx` 已预置并负责挂载路由容器；如果本次生成 `frontend/src/App.tsx`，不要再次渲染 `BrowserRouter`。
 9. 生成的前端代码必须能通过当前工程的 TypeScript 编译；不要引入基础环境未安装的新依赖，不要使用 `moment`，回调参数与辅助函数签名要避免触发 implicit any 或类型不兼容错误。
 10. 页面中的统计卡片、表格、筛选项、详情摘要必须使用本次输入里提供的业务字段和样例记录来构造真实模拟数据；不要输出空表、`示例1/测试数据/张三李四` 这类泛化占位数据，也不要复用通用后台 demo 数组。
-11. 若生成页面需要共享产品名称、模块列表、指标或样例记录，优先从 `src/generated/appProfile.ts` 中读取 `APP_PROFILE`。
+11. 若需要共享产品名称、模块标题或页面路由，可参考 `src/generated/appProfile.ts` 中的 `APP_PROFILE`；不要机械复制其中的说明文案、字段结构或样例数据来套出统一页面壳子。
 12. 不要依赖 Tailwind utility class、shadcn 风格原子类或其他未配置样式体系来表现页面；除非本次请求明确要求并且你同时输出完整可运行的样式配置，否则默认使用当前已安装依赖、Ant Design 组件、普通 CSS 文件或内联样式完成成品界面。
 13. 如需模拟手机号、车牌号、运单号、订单号、地址、姓名等业务数据，必须使用符合中国大陆真实书写习惯的格式，例如 `138****6721`、`沪A·3278D`、`YD202605020031` 这类看起来真实的样式。
 14. 不要输出 Markdown 代码块，不要输出解释文字。
@@ -403,7 +403,7 @@ class LLMClient:
 写作前提：
 1. 必须以企业申报软件著作权的正式口吻撰写，目标是陈述软件产品设计、功能构成、页面用途和处理流程等客观事实。
 2. 页面标题已经出现在对应图片上方，因此不要再使用“该截图展示了”“截图中重点可见”“从截图可以看出”“下图所示”等围绕截图本身的提示语。
-3. 描述应直接围绕当前标题所代表的功能展开，使用“本功能用于……”“系统提供……”“该页面支持……”这类陈述式表达。
+3. 描述应直接围绕当前标题所代表的功能展开，可以自然变化句式，不要反复使用同一套固定开头模板。
 4. 不得写成面向终端用户的口语化教程，不要使用“你可以”“用户只需”“点击这里即可”等提示式措辞。
 5. 不得出现 AI、自动生成、模型、供应商、平台自动采集等表述。
 6. 当前文档属于企业提交给版权局的软件产品说明书/操作手册，不是给研发或测试团队的建议书；不得输出“建议先”“验收时应”“测试建议”“优化建议”等建议式措辞。
@@ -467,15 +467,16 @@ class LLMClient:
         system_prompt = """你负责根据产品 PRD 和产品截图信息，直接生成正式软件说明书/申请表所需正文 JSON。
 要求：
 1. 全部使用中文撰写，技术名保留英文原名。
-2. 仅依据给定 PRD 和截图信息理解产品，不要引入平台模板、行业套话或额外假设。
+2. 仅依据给定 PRD、截图信息以及章节标题清单理解产品，不要引入平台模板、行业套话或额外假设。
 3. 必须以企业介绍自家成品软件的正式口吻陈述功能、页面、流程和技术实现，内容只做事实性说明，不写设计原理、开发过程、提示词策略、文档撰写原理或第三方视角点评。
-4. 必选模块只围绕 `required_manual_modules` 中给出的软件产品说明、功能说明和操作手册标题展开；其余内容只能从 `optional_manual_modules` 中挑选适合当前产品的模块，不要自创章节体系。
+4. 必选模块只围绕 `required_manual_modules` 中给出的固定标题展开；其余内容只能从 `optional_manual_modules` 中挑选适合当前产品的模块，不要自创章节体系，也不要把前置说明模块放到页面说明之后。
 5. 不得生成“适用领域”“适用对象”“产品特性与设计侧重点”“交互与版式策略”“使用角色”“核心业务对象”“页面构成”等从方案设计、适配分析或说明书写作方法出发的章节或段落。
 6. 如果某个可选模块对当前产品并非必要，可以不选，也不要为了凑页数硬写。
 7. 页面说明必须直接围绕页面功能本身展开，不要写“该截图展示了”“从截图可以看出”等围绕截图本身的套话。
 8. 不要写测试说明、研发建议、验收建议、部署建议、模块说明或面向老板/团队负责人的解释。
 9. 若需要描述软件特点，只能围绕软件已具备的功能、数据组织、操作路径和结果输出做客观陈述。
-10. 仅输出 JSON，不要输出 Markdown。
+10. 不要写“便于某角色/岗位查看、处理、判断”“支持系统管理员/调度员/主管……”这类以岗位身份为主语的表述；应改为直接陈述页面展示了什么、支持处理什么、输出了什么结果。
+11. 仅输出 JSON，不要输出 Markdown。
 
 输出 JSON 结构：
 {
@@ -506,7 +507,7 @@ class LLMClient:
   "usage_overview": "",
   "technical_features": "",
   "technical_feature_bullets": ["", "", "", ""],
-  "selected_optional_modules": ["optional_key_a", "optional_key_b", "optional_key_c", "optional_key_d"],
+  "selected_optional_modules": ["optional_key_a", "optional_key_b"],
   "module_overrides": [
     {"title": "", "description": "", "highlights": ["", ""], "primary_action": "", "business_value": ""}
   ],
@@ -518,7 +519,6 @@ class LLMClient:
         user_payload = {
             "product_name": product_name,
             "version": version,
-            "raw_user_request": profile.get("raw_user_request", {}),
             "prd_markdown": prd_summary.get("prd_markdown", ""),
             "screenshots": screenshot_briefs,
             "required_manual_modules": REQUIRED_MANUAL_MODULES,
@@ -559,7 +559,7 @@ class LLMClient:
             version=version,
             profile=profile,
             prd_summary=prd_summary,
-            screenshot_briefs=screenshot_briefs[:6],
+            screenshot_briefs=screenshot_briefs,
         )
         return overview_resp
 
