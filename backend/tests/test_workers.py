@@ -3750,6 +3750,32 @@ function buildQuery(params?: OrderQueryParams) {
         assert repaired_paths == ["frontend/src/services/api.ts"]
         assert "as unknown as Record<string, unknown>" in synthesized["frontend/src/services/api.ts"]
 
+    def test_synthesize_support_runtime_files_widens_api_qs_helper_signature(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+function qs(params: Record<string, string | number | boolean | undefined>): string {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
+  if (entries.length === 0) return '';
+  return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface PaginationParams { page?: number; pageSize?: number; }",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        assert "function qs(params?: Record<string, unknown>): string {" in synthesized["frontend/src/services/api.ts"]
+        assert "Object.entries(params ?? {})" in synthesized["frontend/src/services/api.ts"]
+        assert "v !== null" in synthesized["frontend/src/services/api.ts"]
+
     def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 

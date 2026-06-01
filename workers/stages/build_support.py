@@ -818,6 +818,12 @@ def _synthesize_support_runtime_files(
         ).replace(
             " as Record<string, unknown>",
             " as unknown as Record<string, unknown>",
+        ).replace(
+            "function qs(params: Record<string, string | number | boolean | undefined>): string {",
+            "function qs(params?: Record<string, unknown>): string {",
+        ).replace(
+            "  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');",
+            "  const entries = Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '');",
         )
         if normalized != content:
             synthesized[relative_path] = normalized
