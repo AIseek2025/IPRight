@@ -23,6 +23,7 @@ from workers.stages.build_support import (
     _ensure_backend_dependencies,
     _ensure_frontend_dependencies,
     _extract_frontend_compile_error_paths,
+    _synthesize_module_compile_files,
     _synthesize_support_runtime_files,
     build_seed_copy_ignore,
     build_codegen_batches,
@@ -3802,6 +3803,31 @@ export function getList(params: Record<string, unknown>) {
         assert "const request = {" in api_text
         assert "from './request'" not in api_text
 
+    def test_synthesize_support_runtime_files_inlines_request_client_for_nested_request_import(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+import request from "../utils/request";
+export function getDetail(id: string) {
+  return request.get(`/demo/${id}`);
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface DemoItem { id: string; }",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert 'from "../utils/request"' not in api_text
+        assert "const request = {" in api_text
+
     def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
@@ -4164,6 +4190,34 @@ export default function StorageColdStoragePage() {
         assert "CloudServerOutlined" in dashboard_text
         assert "const styles =" in storage_text
         assert "from './request'" not in api_text
+
+    def test_synthesize_module_compile_files_infers_missing_style_keys_from_page_usage(self):
+        generated_files = {
+            "frontend/src/pages/StorageColdStoragePage.tsx": """
+import React from 'react';
+export default function StorageColdStoragePage() {
+  return (
+    <section style={styles.header}>
+      <div style={styles.timeline}>A</div>
+      <span style={styles.badge}>B</span>
+    </section>
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/StorageColdStoragePage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/StorageColdStoragePage.tsx"]
+        page_text = synthesized["frontend/src/pages/StorageColdStoragePage.tsx"]
+        assert "const styles =" in page_text
+        assert "header: {} as React.CSSProperties" in page_text
+        assert "timeline: {} as React.CSSProperties" in page_text
+        assert "badge: {} as React.CSSProperties" in page_text
 
     def test_generate_task_app_code_repairs_module_compile_patterns_for_status_and_align(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support

@@ -825,12 +825,6 @@ def _synthesize_support_runtime_files(
             "  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');",
             "  const entries = Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '');",
         )
-        request_import_patterns = [
-            "import { request } from './request';",
-            'import { request } from "./request";',
-            "import request from './request';",
-            'import request from "./request";',
-        ]
         request_runtime = """const BASE_URL = '/api/v1';
 
 type RequestOptions = RequestInit & {
@@ -869,10 +863,11 @@ const request = {
   delete: <T>(url: string, options?: RequestOptions) => doRequest<T>(url, { ...(options ?? {}), method: 'DELETE' }),
 };
 """
-        for pattern in request_import_patterns:
-            if pattern in normalized:
-                normalized = normalized.replace(pattern, request_runtime, 1)
-                break
+        request_import_pattern = re.compile(
+            r"import\s+(?:\{[^}]*\}\s+from\s+|[A-Za-z_$][\w$]*\s+from\s+)?['\"][^'\"]*request(?:\.[a-z]+)?['\"];\s*",
+        )
+        if request_import_pattern.search(normalized):
+            normalized = request_import_pattern.sub(request_runtime, normalized, count=1)
         if normalized != content:
             synthesized[relative_path] = normalized
             repaired_paths.append(relative_path)
@@ -914,15 +909,6 @@ def _synthesize_module_compile_files(
         "OutboxOutlined": "ExportOutlined",
         "SnowflakeOutlined": "CloudServerOutlined",
     }
-    styles_block = """const styles = {
-  legend: { display: 'flex', gap: 16, flexWrap: 'wrap' as const, marginBottom: 16 },
-  legendItem: { display: 'flex', alignItems: 'center', gap: 8, color: '#475569' },
-  legendColor: { width: 12, height: 12, borderRadius: 999 },
-  slotGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 },
-  slotCell: { color: '#fff', borderRadius: 12, padding: 12, minHeight: 84, boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)' },
-};
-"""
-
     for relative_path in required_files:
         if not relative_path.startswith("frontend/src/pages/") or (
             not relative_path.endswith("Page.tsx") and relative_path != "frontend/src/pages/Dashboard.tsx"
@@ -959,6 +945,11 @@ def _synthesize_module_compile_files(
             normalized = normalized.replace("align='right'", "align='end'")
             changed = True
         if "styles." in normalized and "const styles =" not in normalized:
+            style_keys = sorted(set(re.findall(r"styles\.([A-Za-z_][A-Za-z0-9_]*)", normalized)))
+            style_entries = "\n".join([f"  {key}: {{}} as React.CSSProperties," for key in style_keys])
+            if not style_entries:
+                style_entries = "  container: {} as React.CSSProperties,"
+            styles_block = "const styles = {\n" + style_entries + "\n};\n"
             import_block = re.match(r"((?:import[^\n]*\n)+)", normalized)
             if import_block:
                 normalized = normalized[: import_block.end()] + "\n" + styles_block + "\n" + normalized[import_block.end() :]
