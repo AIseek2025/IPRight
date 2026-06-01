@@ -825,6 +825,54 @@ def _synthesize_support_runtime_files(
             "  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');",
             "  const entries = Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '');",
         )
+        request_import_patterns = [
+            "import { request } from './request';",
+            'import { request } from "./request";',
+            "import request from './request';",
+            'import request from "./request";',
+        ]
+        request_runtime = """const BASE_URL = '/api/v1';
+
+type RequestOptions = RequestInit & {
+  params?: Record<string, unknown>;
+};
+
+const buildQueryString = (params?: Record<string, unknown>) => {
+  const entries = Object.entries(params ?? {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
+  if (!entries.length) return '';
+  return '?' + entries.map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join('&');
+};
+
+async function doRequest<T>(url: string, options: RequestOptions = {}): Promise<T> {
+  const token = localStorage.getItem('token');
+  const { params, headers, ...rest } = options;
+  const response = await fetch(`${BASE_URL}${url}${buildQueryString(params)}`, {
+    ...rest,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`请求失败: ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+const request = {
+  get: <T>(url: string, options?: RequestOptions) => doRequest<T>(url, { ...(options ?? {}), method: 'GET' }),
+  post: <T>(url: string, data?: unknown, options?: RequestOptions) =>
+    doRequest<T>(url, { ...(options ?? {}), method: 'POST', body: data === undefined ? undefined : JSON.stringify(data) }),
+  put: <T>(url: string, data?: unknown, options?: RequestOptions) =>
+    doRequest<T>(url, { ...(options ?? {}), method: 'PUT', body: data === undefined ? undefined : JSON.stringify(data) }),
+  delete: <T>(url: string, options?: RequestOptions) => doRequest<T>(url, { ...(options ?? {}), method: 'DELETE' }),
+};
+"""
+        for pattern in request_import_patterns:
+            if pattern in normalized:
+                normalized = normalized.replace(pattern, request_runtime, 1)
+                break
         if normalized != content:
             synthesized[relative_path] = normalized
             repaired_paths.append(relative_path)
@@ -864,10 +912,21 @@ def _synthesize_module_compile_files(
     icon_replacements = {
         "RouteOutlined": "NodeIndexOutlined",
         "OutboxOutlined": "ExportOutlined",
+        "SnowflakeOutlined": "CloudServerOutlined",
     }
+    styles_block = """const styles = {
+  legend: { display: 'flex', gap: 16, flexWrap: 'wrap' as const, marginBottom: 16 },
+  legendItem: { display: 'flex', alignItems: 'center', gap: 8, color: '#475569' },
+  legendColor: { width: 12, height: 12, borderRadius: 999 },
+  slotGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 },
+  slotCell: { color: '#fff', borderRadius: 12, padding: 12, minHeight: 84, boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)' },
+};
+"""
 
     for relative_path in required_files:
-        if not relative_path.startswith("frontend/src/pages/") or not relative_path.endswith("Page.tsx"):
+        if not relative_path.startswith("frontend/src/pages/") or (
+            not relative_path.endswith("Page.tsx") and relative_path != "frontend/src/pages/Dashboard.tsx"
+        ):
             continue
         content = str(synthesized.get(relative_path, "") or "")
         if not content.strip():
@@ -898,6 +957,13 @@ def _synthesize_module_compile_files(
             changed = True
         if "align='right'" in normalized:
             normalized = normalized.replace("align='right'", "align='end'")
+            changed = True
+        if "styles." in normalized and "const styles =" not in normalized:
+            import_block = re.match(r"((?:import[^\n]*\n)+)", normalized)
+            if import_block:
+                normalized = normalized[: import_block.end()] + "\n" + styles_block + "\n" + normalized[import_block.end() :]
+            else:
+                normalized = styles_block + "\n" + normalized
             changed = True
         if changed:
             normalized = _dedupe_ant_icon_imports(normalized)
@@ -1714,7 +1780,7 @@ async def generate_task_app_code(
         path
         for path in invalid_compile_paths
         if path.startswith("frontend/src/pages/")
-        and path not in {"frontend/src/pages/Login.tsx", "frontend/src/pages/Dashboard.tsx"}
+        and path != "frontend/src/pages/Login.tsx"
     ]
     if compile_invalid_module_paths:
         generated_files, repaired_compile_module_paths = _synthesize_module_compile_files(

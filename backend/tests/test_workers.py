@@ -3776,6 +3776,32 @@ function qs(params: Record<string, string | number | boolean | undefined>): stri
         assert "Object.entries(params ?? {})" in synthesized["frontend/src/services/api.ts"]
         assert "v !== null" in synthesized["frontend/src/services/api.ts"]
 
+    def test_synthesize_support_runtime_files_inlines_request_client_when_request_module_missing(self):
+        profile = {"product_name": "测试平台", "version": "V1.0"}
+        generated_files = {
+            "frontend/src/services/api.ts": """
+import { request } from './request';
+export function getList(params: Record<string, unknown>) {
+  return request.get('/demo', { params });
+}
+""",
+            "frontend/src/types/constants.ts": "export const APP_NAME = '测试平台';",
+            "frontend/src/types/models.ts": "export interface DemoItem { id: string; }",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            profile,
+            list(generated_files.keys()),
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "const BASE_URL = '/api/v1';" in api_text
+        assert "const request = {" in api_text
+        assert "from './request'" not in api_text
+
     def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
 
@@ -4028,6 +4054,116 @@ export default function MaterialsPage() {
         page_text = (app_root / "frontend/src/pages/MaterialsPage.tsx").read_text(encoding="utf-8")
         assert "OutboxOutlined" not in page_text
         assert page_text.count("ExportOutlined") >= 2
+
+    def test_generate_task_app_code_repairs_dashboard_icon_styles_and_missing_request_module(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "冷冻食品生产集成系统",
+            "scene": "冷冻食品生产集成",
+            "industry_scope": "食品生产",
+            "user_roles": ["生产主管"],
+            "modules": [
+                {"key": "production-workshop", "route": "/production/workshop", "title": "生产车间", "table_headers": [], "rows": [], "highlights": []},
+                {"key": "production-quick-freeze", "route": "/production/quick-freeze", "title": "速冻管理", "table_headers": [], "rows": [], "highlights": []},
+                {"key": "storage-cold-storage", "route": "/storage/cold-storage", "title": "冷库存储", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import ProductionWorkshopPage from './pages/ProductionWorkshopPage'; import ProductionQuickFreezePage from './pages/ProductionQuickFreezePage'; import StorageColdStoragePage from './pages/StorageColdStoragePage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/production/workshop' element={<ProductionWorkshopPage />} /><Route path='/production/quick-freeze' element={<ProductionQuickFreezePage />} /><Route path='/storage/cold-storage' element={<StorageColdStoragePage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "import { SnowflakeOutlined } from '@ant-design/icons'; export default function Dashboard(){ return <div><SnowflakeOutlined />看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": "import { request } from './request'; export function getDashboard(){ return request.get('/dashboard'); }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '冷冻食品生产集成系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/ProductionWorkshopPage.tsx",):
+                    return _Resp({"frontend/src/pages/ProductionWorkshopPage.tsx": "import { SnowflakeOutlined } from '@ant-design/icons'; export default function ProductionWorkshopPage(){ return <div><SnowflakeOutlined />生产车间</div>; }"})
+                if required == ("frontend/src/pages/ProductionQuickFreezePage.tsx",):
+                    return _Resp({"frontend/src/pages/ProductionQuickFreezePage.tsx": "import { SnowflakeOutlined } from '@ant-design/icons'; export default function ProductionQuickFreezePage(){ return <div><SnowflakeOutlined />速冻管理</div>; }"})
+                if required == ("frontend/src/pages/StorageColdStoragePage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/StorageColdStoragePage.tsx": """
+import { SnowflakeOutlined } from '@ant-design/icons';
+export default function StorageColdStoragePage() {
+  return <div style={styles.legend}><SnowflakeOutlined />冷库存储</div>;
+}
+""",
+                    })
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            invalid_paths = []
+            messages = []
+            for page_name in [
+                "Dashboard.tsx",
+                "ProductionWorkshopPage.tsx",
+                "ProductionQuickFreezePage.tsx",
+                "StorageColdStoragePage.tsx",
+            ]:
+                page_text = (Path(current_app_root) / f"frontend/src/pages/{page_name}").read_text(encoding="utf-8")
+                if "SnowflakeOutlined" in page_text:
+                    invalid_paths.append(f"frontend/src/pages/{page_name}")
+                    messages.append(f"src/pages/{page_name}(1,1): error TS2724: bad icon")
+                if page_name == "StorageColdStoragePage.tsx" and "styles.legend" in page_text and "const styles =" not in page_text:
+                    if f"frontend/src/pages/{page_name}" not in invalid_paths:
+                        invalid_paths.append(f"frontend/src/pages/{page_name}")
+                    messages.append(f"src/pages/{page_name}(2,1): error TS2304: styles missing")
+            api_text = (Path(current_app_root) / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+            if "from './request'" in api_text:
+                invalid_paths.append("frontend/src/services/api.ts")
+                messages.append("src/services/api.ts(1,1): error TS2307: missing request module")
+            return invalid_paths, "\n".join(messages) if messages else None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/pages/Dashboard.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/ProductionWorkshopPage.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/ProductionQuickFreezePage.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/StorageColdStoragePage.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
+        dashboard_text = (app_root / "frontend/src/pages/Dashboard.tsx").read_text(encoding="utf-8")
+        storage_text = (app_root / "frontend/src/pages/StorageColdStoragePage.tsx").read_text(encoding="utf-8")
+        api_text = (app_root / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+        assert "SnowflakeOutlined" not in dashboard_text
+        assert "CloudServerOutlined" in dashboard_text
+        assert "const styles =" in storage_text
+        assert "from './request'" not in api_text
 
     def test_generate_task_app_code_repairs_module_compile_patterns_for_status_and_align(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
