@@ -9,18 +9,22 @@ from typing import Any, Optional
 from app.services.document.manual import OPTIONAL_MANUAL_MODULES, REQUIRED_MANUAL_MODULES
 
 logger = logging.getLogger(__name__)
-TEXT_MODEL = "qwen3.7-max"
-REASONING_MODEL = "qwen3.7-max"
-DEFAULT_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+PRD_MODEL = "deepseek-v4-flash"
+TEXT_MODEL = "deepseek-v4-pro"
+REASONING_MODEL = "deepseek-v4-pro"
+DEFAULT_API_BASE = "https://api.deepseek.com/v1"
 
 
 @dataclass
 class LLMConfig:
-    provider: str = "dashscope"
+    provider: str = "deepseek"
     api_key: str = ""
     api_base: str = DEFAULT_API_BASE
     model: str = REASONING_MODEL
     fallback_model: str = TEXT_MODEL
+    prd_model: str = PRD_MODEL
+    code_model: str = REASONING_MODEL
+    doc_model: str = TEXT_MODEL
     temperature: float = 0.7
     max_tokens: int = 4096
 
@@ -42,25 +46,30 @@ class LLMClient:
 
     def _load_config(self) -> LLMConfig:
         api_key = (
-            os.environ.get("DASHSCOPE_API_KEY")
-            or os.environ.get("DEEPSEEK_API_KEY")
+            os.environ.get("DEEPSEEK_API_KEY")
+            or os.environ.get("DASHSCOPE_API_KEY")
             or os.environ.get("OPENAI_API_KEY")
             or os.environ.get("LLM_API_KEY", "")
         )
         api_base = (
-            os.environ.get("DASHSCOPE_API_BASE")
-            or os.environ.get("DEEPSEEK_API_BASE")
+            os.environ.get("DEEPSEEK_API_BASE")
+            or os.environ.get("DASHSCOPE_API_BASE")
             or os.environ.get("OPENAI_API_BASE")
             or DEFAULT_API_BASE
         )
-        model = os.environ.get("LLM_MODEL") or REASONING_MODEL
-        fallback = os.environ.get("LLM_FALLBACK_MODEL") or TEXT_MODEL
+        code_model = os.environ.get("LLM_CODE_MODEL") or os.environ.get("LLM_MODEL") or REASONING_MODEL
+        prd_model = os.environ.get("LLM_PRD_MODEL") or PRD_MODEL
+        doc_model = os.environ.get("LLM_DOC_MODEL") or TEXT_MODEL
+        fallback = os.environ.get("LLM_FALLBACK_MODEL") or code_model
         return LLMConfig(
-            provider=os.environ.get("LLM_PROVIDER") or "dashscope",
+            provider=os.environ.get("LLM_PROVIDER") or "deepseek",
             api_key=api_key,
             api_base=api_base.strip().strip("`").strip().strip('"').strip("'"),
-            model=model,
+            model=code_model,
             fallback_model=fallback,
+            prd_model=prd_model,
+            code_model=code_model,
+            doc_model=doc_model,
         )
 
     @staticmethod
@@ -326,7 +335,7 @@ class LLMClient:
         return await self.chat_with_models(
             messages,
             response_format="json_object",
-            primary_model=REASONING_MODEL,
+            primary_model=self.config.prd_model,
             max_tokens_override=9000,
             temperature_override=0.7,
         )
@@ -339,18 +348,19 @@ class LLMClient:
 要求：
 1. 仅输出 JSON。
 2. 直接按照 PRD 开发，产品必须是正式面向市场和最终用户的正式版本，不是测试版、演示版、原型稿或后台模板。
-3. 页面、文案、流程、模块都直接服务最终用户或业务对象，不要出现开发说明、模块说明、调试说明、审核说明、占位解释或面向老板/团队负责人的描述。
-4. 产品必须包含大于 10 个真实可访问界面，并且各界面是实际业务页面，不是换标题的重复壳子。
-5. 代码必须可读、结构清晰、注释尽量少。
-6. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
-7. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
-8. `frontend/src/main.tsx` 已预置并负责挂载路由容器；如果本次生成 `frontend/src/App.tsx`，不要再次渲染 `BrowserRouter`。
-9. 生成的前端代码必须能通过当前工程的 TypeScript 编译；不要引入基础环境未安装的新依赖，不要使用 `moment`，回调参数与辅助函数签名要避免触发 implicit any 或类型不兼容错误。
-10. 页面中的统计卡片、表格、筛选项、详情摘要必须使用本次输入里提供的业务字段和样例记录来构造真实模拟数据；不要输出空表、`示例1/测试数据/张三李四` 这类泛化占位数据，也不要复用通用后台 demo 数组。
-11. 若需要共享产品名称、模块标题或页面路由，可参考 `src/generated/appProfile.ts` 中的 `APP_PROFILE`；不要机械复制其中的说明文案、字段结构或样例数据来套出统一页面壳子。
-12. 不要依赖 Tailwind utility class、shadcn 风格原子类或其他未配置样式体系来表现页面；除非本次请求明确要求并且你同时输出完整可运行的样式配置，否则默认使用当前已安装依赖、Ant Design 组件、普通 CSS 文件或内联样式完成成品界面。
-13. 如需模拟手机号、车牌号、运单号、订单号、地址、姓名等业务数据，必须使用符合中国大陆真实书写习惯的格式，例如 `138****6721`、`沪A·3278D`、`YD202605020031` 这类看起来真实的样式。
-14. 不要输出 Markdown 代码块，不要输出解释文字。
+3. 产品必须包含大于 10 个真实可访问界面，并且各界面是实际业务页面，不是换标题的重复壳子。
+4. 页面、文案、流程、模块都直接服务最终用户或业务对象，不要出现开发说明、模块说明、调试说明、审核说明、占位解释或面向老板/团队负责人的描述。
+5. UI 与页面结构必须由你独立设计，不要复用通用后台壳、默认仪表盘样式、固定导航模板、统一品牌标题条或任何“软件页面入口/业务入口/系统入口”类提示文案。
+6. 请为当前产品独立设计一套新的品牌标识，在登录页和主界面中以真实产品 logo 形式呈现；不要使用单个汉字、默认圆形头像、首字母占位或通用图标冒充 logo。
+7. 所有页面标题、按钮、表格列、说明文案使用中文；技术名保留英文原名。
+8. 只生成本次 `required_files` 列表中的文件，不要额外输出未请求的文件。
+9. `frontend/src/main.tsx` 已预置并负责挂载路由容器；如果本次生成 `frontend/src/App.tsx`，不要再次渲染 `BrowserRouter`。
+10. 生成的前端代码必须能通过当前工程的 TypeScript 编译；不要引入基础环境未安装的新依赖，不要使用 `moment`，回调参数与辅助函数签名要避免触发 implicit any 或类型不兼容错误。
+11. 页面中的统计卡片、表格、筛选项、详情摘要必须使用本次输入里提供的业务字段和样例记录来构造真实模拟数据；不要输出空表、`示例1/测试数据/张三李四` 这类泛化占位数据，也不要复用通用后台 demo 数组。
+12. 若需要共享产品名称、模块标题或页面路由，可参考 `src/generated/appProfile.ts` 中的 `APP_PROFILE`；不要机械复制其中的说明文案、字段结构或样例数据来套出统一页面壳子。
+13. 不要依赖 Tailwind utility class、shadcn 风格原子类或其他未配置样式体系来表现页面；除非本次请求明确要求并且你同时输出完整可运行的样式配置，否则默认使用当前已安装依赖、Ant Design 组件、普通 CSS 文件或内联样式完成成品界面。
+14. 如需模拟手机号、车牌号、运单号、订单号、地址、姓名等业务数据，必须使用符合中国大陆真实书写习惯的格式，例如 `138****6721`、`沪A·3278D`、`YD202605020031` 这类看起来真实的样式。
+15. 不要输出 Markdown 代码块，不要输出解释文字。
 
 输出 JSON 结构：
 {
@@ -391,7 +401,8 @@ class LLMClient:
         return await self.chat_with_models(
             messages,
             response_format="json_object",
-            primary_model=REASONING_MODEL,
+            primary_model=self.config.code_model,
+            fallback_model=self.config.fallback_model,
             max_tokens_override=max_tokens_override,
             temperature_override=0.75,
         )
@@ -401,20 +412,20 @@ class LLMClient:
         If model is specified, use that model instead of the default."""
         system_prompt = """你是一位企业软件说明书撰写专家，当前正在为企业准备提交给版权局的软件著作权申请材料。
 写作前提：
-1. 必须以企业申报软件著作权的正式口吻撰写，目标是陈述软件产品设计、功能构成、页面用途和处理流程等客观事实。
+1. 必须以企业申报软件著作权的正式口吻撰写，目标是陈述软件产品设计、功能构成、功能模块和处理流程等客观事实。
 2. 页面标题已经出现在对应图片上方，因此不要再使用“该截图展示了”“截图中重点可见”“从截图可以看出”“下图所示”等围绕截图本身的提示语。
 3. 描述应直接围绕当前标题所代表的功能展开，可以自然变化句式，不要反复使用同一套固定开头模板。
 4. 不得写成面向终端用户的口语化教程，不要使用“你可以”“用户只需”“点击这里即可”等提示式措辞。
 5. 不得出现 AI、自动生成、模型、供应商、平台自动采集等表述。
 6. 当前文档属于企业提交给版权局的软件产品说明书/操作手册，不是给研发或测试团队的建议书；不得输出“建议先”“验收时应”“测试建议”“优化建议”等建议式措辞。
-输出 JSON: {"caption": "图注", "description": "80-180字页面说明", "steps": ["步骤1", "步骤2", "步骤3"], "highlights": ["页面重点1", "页面重点2"]}
+输出 JSON: {"caption": "图注", "description": "80-180字功能说明", "steps": ["步骤1", "步骤2", "步骤3"], "highlights": ["功能重点1", "功能重点2"]}
 """
 
         user_prompt = f"""页面名称: {page_title}
 页面路由: {route}
 可见元素: {', '.join(elements[:15])}
 
-请生成该页面的操作说明。"""
+请生成功能说明与操作说明。"""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -423,7 +434,7 @@ class LLMClient:
         return await self.chat_with_models(
             messages,
             response_format="json_object",
-            primary_model=model or TEXT_MODEL,
+            primary_model=model or self.config.doc_model,
             temperature_override=0.6,
         )
 
@@ -448,7 +459,7 @@ class LLMClient:
         return await self.chat_with_models(
             messages,
             response_format="json_object",
-            primary_model=TEXT_MODEL,
+            primary_model=self.config.doc_model,
         )
 
     async def review_manual_content(self, descriptions_json: str) -> LLMResponse:
@@ -468,11 +479,11 @@ class LLMClient:
 要求：
 1. 全部使用中文撰写，技术名保留英文原名。
 2. 仅依据给定 PRD、截图信息以及章节标题清单理解产品，不要引入平台模板、行业套话或额外假设。
-3. 必须以企业介绍自家成品软件的正式口吻陈述功能、页面、流程和技术实现，内容只做事实性说明，不写设计原理、开发过程、提示词策略、文档撰写原理或第三方视角点评。
+3. 必须以企业介绍自家成品软件的正式口吻陈述功能、模块、流程和技术实现，内容只做事实性说明，不写设计原理、开发过程、提示词策略、文档撰写原理或第三方视角点评。
 4. 必选模块只围绕 `required_manual_modules` 中给出的固定标题展开；其余内容只能从 `optional_manual_modules` 中挑选适合当前产品的模块，不要自创章节体系，也不要把前置说明模块放到页面说明之后。
 5. 不得生成“适用领域”“适用对象”“产品特性与设计侧重点”“交互与版式策略”“使用角色”“核心业务对象”“页面构成”等从方案设计、适配分析或说明书写作方法出发的章节或段落。
 6. 如果某个可选模块对当前产品并非必要，可以不选，也不要为了凑页数硬写。
-7. 页面说明必须直接围绕页面功能本身展开，不要写“该截图展示了”“从截图可以看出”等围绕截图本身的套话。
+7. 功能说明必须直接围绕软件功能本身展开，不要写“该截图展示了”“从截图可以看出”等围绕截图本身的套话，也不要使用“页面作用”这类偏研发视角的小标题口吻。
 8. 不要写测试说明、研发建议、验收建议、部署建议、模块说明或面向老板/团队负责人的解释。
 9. 若需要描述软件特点，只能围绕软件已具备的功能、数据组织、操作路径和结果输出做客观陈述。
 10. 不要写“便于某角色/岗位查看、处理、判断”“支持系统管理员/调度员/主管……”这类以岗位身份为主语的表述；应改为直接陈述页面展示了什么、支持处理什么、输出了什么结果。
@@ -531,7 +542,7 @@ class LLMClient:
         return await self.chat_with_models(
             messages,
             response_format="json_object",
-            primary_model=TEXT_MODEL,
+            primary_model=self.config.doc_model,
             max_tokens_override=7600,
             temperature_override=0.7,
         )

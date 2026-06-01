@@ -314,7 +314,7 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     prd_dir = os.path.join(workspace_path(ctx.task_id), "prd")
     os.makedirs(prd_dir, exist_ok=True)
 
-    llm_used = "qwen3.7-max"
+    llm_used = ""
     prd_content = ""
     work_order_content = ""
     prd_summary = {}
@@ -323,6 +323,7 @@ async def run_plan_stage(ctx: StageContext) -> StageResult:
     try:
         from app.services.llm import get_llm_client
         llm = get_llm_client()
+        llm_used = getattr(getattr(llm, "config", None), "prd_model", "llm_generated")
 
         resp = await llm.generate_prd(
             keyword=task.keyword or task.product_name,
@@ -643,7 +644,10 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     return StageResult(
         success=True,
         artifacts=[{"type": "manifests", "name": "all manifests"}],
-        metadata={"validation": {k: v.valid for k, v in validation.items()}, "codegen_model": "qwen3.7-max"},
+        metadata={
+            "validation": {k: v.valid for k, v in validation.items()},
+            "codegen_model": (codegen_report_data or {}).get("model_used", ""),
+        },
     )
 
 

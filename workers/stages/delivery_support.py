@@ -59,10 +59,10 @@ async def generate_manual_delivery(
     merge_manual_llm_content: Callable[[dict, dict, list[dict]], dict],
     db_factory,
 ) -> tuple[str, str, int, str]:
-    manual_llm_used = "qwen3.7-max"
     from app.services.llm import get_llm_client
 
     llm = get_llm_client()
+    manual_llm_used = getattr(getattr(llm, "config", None), "doc_model", "llm_generated")
     manual_resp = await llm.generate_manual_content(
         product_name=task.product_name,
         version=task.version,

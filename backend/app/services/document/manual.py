@@ -22,7 +22,6 @@ REQUIRED_MANUAL_MODULES = [
 OPTIONAL_MANUAL_MODULES = [
     {"key": "business_flows", "title": "业务流程说明", "description": "说明软件中的主要处理流程与页面衔接关系。"},
     {"key": "data_and_output", "title": "数据与结果说明", "description": "围绕页面数据内容、结果信息和导出内容做事实性说明。"},
-    {"key": "security_and_maintenance", "title": "运行维护说明", "description": "说明访问控制、运行检查与维护要点。"},
     {"key": "version_evolution_and_change_management", "title": "版本信息说明", "description": "说明软件版本标识与版本更新信息。"},
     {"key": "appendix", "title": "附录与补充说明", "description": "补充术语与说明。"},
 ]
@@ -141,10 +140,10 @@ class SoftwareManualGenerator(WordTemplateBase):
         description = module.get("description", "")
         if description:
             return self._sanitize_doc_text(
-                f"{description}该模块将信息采集、处理推进、结果复核与留痕沉淀集中在同一页面内，便于形成清晰稳定的业务闭环。"
+                f"{description}该功能围绕{title}对应的业务事项组织信息查看、处理反馈与结果呈现，用于完整反映该项功能在软件中的实际用途。"
             )
         return self._sanitize_doc_text(
-            f"{title}模块用于承接当前任务中的关键业务步骤，能够把分散信息统一到标准页面中展示，并支持过程留痕与结果输出。"
+            f"{title}用于承载该业务主题下的核心处理内容，围绕信息查看、状态更新与结果呈现形成完整的功能闭环。"
         )
 
     def _module_example_record(self, module: dict) -> str:
@@ -406,7 +405,7 @@ class SoftwareManualGenerator(WordTemplateBase):
                 self.add_title("功能要点", level=3)
                 for highlight in module.get("highlights", []):
                     self.add_paragraph(f"- {highlight}")
-                self.add_title("页面作用", level=3)
+                self.add_title("功能价值", level=3)
                 self.add_paragraph(self._module_business_value(module))
         else:
             modules = modules or ["软件首页", "主要业务页面"]
@@ -554,11 +553,11 @@ class SoftwareManualGenerator(WordTemplateBase):
         if description:
             base.append(self._sanitize_doc_text(description))
         elif visible:
-            base.append(self._sanitize_doc_text(f"{title}围绕{visible}等信息元素组织页面内容，用于承载当前业务主题下的关键处理动作与结果反馈。"))
+            base.append(self._sanitize_doc_text(f"{title}围绕{visible}等信息元素组织功能内容，用于承载当前业务主题下的关键处理动作与结果反馈。"))
         else:
             base.append(self._sanitize_doc_text(f"{title}用于承载当前业务主题下的关键处理动作、信息呈现与结果反馈。"))
         if primary_action:
-            base.append(self._sanitize_doc_text(f"该页面的常用主操作为“{primary_action}”，通常位于页面主体区域或列表工具栏位置。"))
+            base.append(self._sanitize_doc_text(f"该功能的常用主操作为“{primary_action}”，通常位于功能主体区域或列表工具栏位置。"))
         return base
 
     def _is_compact_variant_page(self, meta: dict, seen_routes: set[str]) -> bool:
@@ -598,10 +597,10 @@ class SoftwareManualGenerator(WordTemplateBase):
         self.add_paragraph(
             self._profile_text(
                 "usage_overview",
-                "系统围绕“登录 -> 首页查看 -> 进入目标功能模块 -> 完成录入、查询、统计、审核或配置操作”的基本路径组织主要功能。后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作。",
+                "系统围绕“登录 -> 首页查看 -> 进入目标功能模块 -> 完成功能处理”的基本路径组织主要操作。后续章节将按功能模块顺序陈述各项功能的主要内容、信息重点与操作流程。",
             )
         )
-        self.add_title("主要页面操作说明", level=2)
+        self.add_title("主要功能操作说明", level=2)
         if not screenshots_meta:
             self.add_paragraph("（待截图完成后自动生成页面操作说明）")
             return
@@ -635,7 +634,7 @@ class SoftwareManualGenerator(WordTemplateBase):
             business_value = self._sanitize_doc_text(
                 page_profile.get(
                     "business_value",
-                    f"{title}对应当前软件中的重点业务环节，用于衔接信息录入、结果查询、状态跟踪与处理反馈。",
+                    f"{title}对应当前软件中的重点业务环节，用于承载信息录入、结果查询、状态跟踪与处理反馈。",
                 )
             )
             self.add_paragraph(business_value)
@@ -646,12 +645,12 @@ class SoftwareManualGenerator(WordTemplateBase):
                 if str(item).strip()
             ]
             if highlights:
-                self.add_title("页面重点", level=3)
+                self.add_title("功能要点", level=3)
                 for highlight in highlights[:5]:
                     self.add_paragraph(f"- {highlight}")
             elif elements:
-                self.add_title("页面重点", level=3)
-                self.add_paragraph(self._sanitize_doc_text("本页面重点包括：" + "、".join(elements[:12]) + "。"))
+                self.add_title("功能要点", level=3)
+                self.add_paragraph(self._sanitize_doc_text("本功能重点包括：" + "、".join(elements[:12]) + "。"))
 
             steps = [self._sanitize_doc_text(step) for step in self._guess_usage_steps(title, page_profile) if step]
             if steps:
@@ -709,8 +708,6 @@ class SoftwareManualGenerator(WordTemplateBase):
             self.generate_business_flows()
         if "data_and_output" in selected_optional_modules:
             self.generate_data_and_output()
-        if "security_and_maintenance" in selected_optional_modules:
-            self.generate_security_and_maintenance()
         if "version_evolution_and_change_management" in selected_optional_modules:
             self.generate_version_evolution_and_change_management()
         if "appendix" in selected_optional_modules:

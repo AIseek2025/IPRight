@@ -1108,6 +1108,10 @@ export default function WorkflowPage() {
         assert not (app_root / "frontend/src/App.css").exists()
         assert "import './font.css';" not in (app_root / "frontend/src/main.tsx").read_text(encoding="utf-8")
         assert not (app_root / "frontend/public/fonts/IPRightCJK.ttf").exists()
+        assert "智慧园区管理平台" not in (app_root / "frontend/index.html").read_text(encoding="utf-8")
+        assert "<title>测试系统</title>" in (app_root / "frontend/index.html").read_text(encoding="utf-8")
+        assert not (app_root / "frontend/src/hooks").exists()
+        assert not (app_root / "frontend/src/components").exists()
 
     def test_demo_seed_frontend_sources_do_not_use_python_docstrings(self):
         seed_files = [

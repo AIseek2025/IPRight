@@ -95,7 +95,7 @@ def test_manual_normalizes_spacing_and_ui_symbols():
     assert "智慧园区管理平台 采用浏览器访问的软件架构" not in joined
     assert "智慧园区管理平台围绕当前产品对应的业务场景构建" in joined
     assert "智慧园区管理平台采用浏览器访问的软件架构" in joined
-    assert "本页面重点包括：智慧园区管理平台V1.0、用户管理。" in joined
+    assert "本功能重点包括：智慧园区管理平台V1.0、用户管理。" in joined
 
 
 def test_manual_includes_generated_architecture_diagram_when_image_exists():
@@ -201,7 +201,7 @@ def test_manual_profile_can_expand_sections_for_task_specific_content():
     assert "星曜投放协同平台" in joined
     assert profile["modules"][0]["title"] in joined
     assert profile["modules"][-1]["title"] in joined
-    assert "后续章节将按页面顺序陈述各页面的职责、信息重点与典型操作" in joined
+    assert "后续章节将按功能模块顺序陈述各项功能的主要内容、信息重点与操作流程" in joined
     assert "星曜投放协同平台围绕“小红书达人投放”相关业务场景构建" in joined
     assert "系统组成说明" in joined
     assert "开发运行环境 / 软件适配环境" in joined
@@ -220,7 +220,6 @@ def test_manual_renders_only_selected_optional_modules():
     selected = [
         "introduction",
         "data_and_output",
-        "security_and_maintenance",
         "version_evolution_and_change_management",
     ]
     profile = {
@@ -244,8 +243,8 @@ def test_manual_renders_only_selected_optional_modules():
     joined = "\n".join(p.text for p in gen.doc.paragraphs)
     assert "引言" in joined
     assert "数据组织与结果输出说明" in joined
-    assert "安全、审计与运维说明" in joined
     assert "版本演进与变更管理说明" in joined
+    assert "安全、审计与运维说明" not in joined
     assert "核心业务对象详解" not in joined
     assert "实施交付与验收说明" not in joined
     assert "附录与补充说明" not in joined

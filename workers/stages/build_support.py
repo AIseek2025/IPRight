@@ -153,6 +153,121 @@ def _camel_name(value: str) -> str:
     return cleaned
 
 
+def _render_frontend_package_json() -> str:
+    return json.dumps(
+        {
+            "name": "generated-app-frontend",
+            "private": True,
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
+            "dependencies": {
+                "react": "^18.3.0",
+                "react-dom": "^18.3.0",
+                "react-router-dom": "^6.22.0",
+            },
+            "devDependencies": {
+                "@types/react": "^18.3.0",
+                "@types/react-dom": "^18.3.0",
+                "@vitejs/plugin-react": "^4.2.0",
+                "typescript": "^5.4.0",
+                "vite": "^5.4.0",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _render_frontend_index_html(profile: dict) -> str:
+    product_name = str(profile.get("product_name") or "生成软件").strip()
+    version = str(profile.get("version") or "").strip()
+    title = f"{product_name} {version}".strip()
+    return (
+        "<!doctype html>\n"
+        '<html lang="zh-CN">\n'
+        "<head>\n"
+        '  <meta charset="UTF-8" />\n'
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n'
+        f"  <title>{title}</title>\n"
+        "</head>\n"
+        "<body>\n"
+        '  <div id="root"></div>\n'
+        '  <script type="module" src="/src/main.tsx"></script>\n'
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+def _render_frontend_tsconfig() -> str:
+    return """{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["src"]
+}
+"""
+
+
+def _render_frontend_vite_config() -> str:
+    return """import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+});
+"""
+
+
+def _render_frontend_main_tsx() -> str:
+    return """import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import App from './App';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>,
+);
+"""
+
+
+def _render_backend_requirements() -> str:
+    return "fastapi>=0.100\nuvicorn[standard]>=0.20\n"
+
+
+def _bootstrap_task_scaffold(frontend_root: str, backend_root: str, profile: dict) -> None:
+    if os.path.exists(frontend_root):
+        shutil.rmtree(frontend_root)
+    if os.path.exists(backend_root):
+        shutil.rmtree(backend_root)
+
+    _write_text(os.path.join(frontend_root, "package.json"), _render_frontend_package_json())
+    _write_text(os.path.join(frontend_root, "index.html"), _render_frontend_index_html(profile))
+    _write_text(os.path.join(frontend_root, "tsconfig.json"), _render_frontend_tsconfig())
+    _write_text(os.path.join(frontend_root, "vite.config.ts"), _render_frontend_vite_config())
+    _write_text(os.path.join(frontend_root, "src", "main.tsx"), _render_frontend_main_tsx())
+
+    _write_text(os.path.join(backend_root, "requirements.txt"), _render_backend_requirements())
+    _write_text(os.path.join(backend_root, "app", "__init__.py"), "")
+    _write_text(os.path.join(backend_root, "tests", "__init__.py"), "")
+
+
 def _write_task_specific_app(frontend_root: str, backend_root: str, profile: dict) -> None:
     _ensure_frontend_dependencies(frontend_root)
     _ensure_backend_dependencies(backend_root)
@@ -256,23 +371,12 @@ def _build_available_route_shell_module_pages(
 
 def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -> str:
     module_pages = _build_available_route_shell_module_pages(profile, generated_files)
-    route_items = [{"key": "/dashboard", "label": "首页"}]
-    route_items.extend(
-        {
-            "key": str(page.get("route") or "").strip(),
-            "label": str(page.get("title") or page.get("component_name") or "").strip(),
-        }
-        for page in module_pages
-        if str(page.get("route") or "").strip()
-    )
     import_lines = [
         "import type { ReactNode } from 'react';",
-        "import { useEffect, useMemo, useState } from 'react';",
-        "import { Avatar, Layout, Menu, Space, Typography } from 'antd';",
-        "import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';",
+        "import { useEffect, useState } from 'react';",
+        "import { Navigate, Route, Routes, useLocation } from 'react-router-dom';",
         "import Login from './pages/Login';",
         "import Dashboard from './pages/Dashboard';",
-        "import { APP_PROFILE } from './generated/appProfile';",
     ]
     for page in module_pages:
         component_name = page.get("component_name")
@@ -280,7 +384,7 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
             import_lines.append(f"import {component_name} from './pages/{component_name}';")
 
     protected_routes = [
-        '      <Route path="/dashboard" element={loggedIn ? <AppShell><Dashboard /></AppShell> : <Navigate to="/login" replace />} />'
+        '      <Route path="/dashboard" element={<ProtectedView loggedIn={loggedIn}><Dashboard /></ProtectedView>} />'
     ]
     for page in module_pages:
         component_name = page.get("component_name")
@@ -289,19 +393,17 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
             protected_routes.append(
                 '      <Route path="'
                 + route
-                + '" element={loggedIn ? <AppShell><'
+                + '" element={<ProtectedView loggedIn={loggedIn}><'
                 + component_name
-                + ' /></AppShell> : <Navigate to="/login" replace />} />'
+                + ' /></ProtectedView>} />'
             )
 
     fallback_dashboard_route = "/dashboard"
-    route_items_json = json.dumps(route_items, ensure_ascii=False)
     return "\n".join(
         [
             *import_lines,
             "",
             "const AUTH_KEY = 'ipright_demo_auth';",
-            f"const ROUTE_ITEMS = {route_items_json};",
             "",
             "function readLoggedIn(): boolean {",
             "  if (typeof window === 'undefined') {",
@@ -311,67 +413,11 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
             "  return Boolean(storage.getItem(AUTH_KEY) || storage.getItem('token') || storage.getItem('user'));",
             "}",
             "",
-            "function findCurrentRoute(pathname: string): string {",
-            "  const matched = ROUTE_ITEMS.find((item) => item.key !== '/dashboard' && pathname.startsWith(item.key));",
-            "  return matched?.key || '/dashboard';",
-            "}",
-            "",
-            "function findCurrentTitle(pathname: string): string {",
-            "  return ROUTE_ITEMS.find((item) => item.key === findCurrentRoute(pathname))?.label || '系统首页';",
-            "}",
-            "",
-            "function AppShell({ children }: { children: ReactNode }) {",
-            "  const location = useLocation();",
-            "  const navigate = useNavigate();",
-            "  const selectedKey = useMemo(() => findCurrentRoute(location.pathname), [location.pathname]);",
-            "  const pageTitle = useMemo(() => findCurrentTitle(location.pathname), [location.pathname]);",
-            "  return (",
-            "    <Layout style={{ minHeight: '100vh', background: '#f6f8fb' }}>",
-            "      <Layout.Header",
-            "        style={{",
-            "          display: 'flex',",
-            "          alignItems: 'center',",
-            "          paddingInline: 28,",
-            "          background: '#ffffff',",
-            "          borderBottom: '1px solid #e5e7eb',",
-            "          position: 'sticky',",
-            "          top: 0,",
-            "          zIndex: 10,",
-            "        }}",
-            "      >",
-            "        <Space size={14} style={{ marginRight: 24 }}>",
-            "          <Avatar style={{ backgroundColor: '#1d4ed8', color: '#fff' }}>软</Avatar>",
-            "          <div>",
-            "            <Typography.Text style={{ color: '#64748b', fontSize: 12 }}>软件页面入口</Typography.Text>",
-            "            <Typography.Title level={5} style={{ color: '#0f172a', margin: 0 }}>{APP_PROFILE.product_name}</Typography.Title>",
-            "          </div>",
-            "        </Space>",
-            "        <Menu",
-            "          mode=\"horizontal\"",
-            "          selectedKeys={[selectedKey]}",
-            "          onClick={({ key }) => navigate(String(key))}",
-            "          items={ROUTE_ITEMS.map((item) => ({ key: item.key, label: item.label }))}",
-            "          style={{ flex: 1, minWidth: 0, background: 'transparent', borderBottom: 'none' }}",
-            "        />",
-            "      </Layout.Header>",
-            "      <Layout.Content style={{ padding: '28px 32px 40px' }}>",
-            "        <div style={{ maxWidth: 1440, margin: '0 auto' }}>",
-            "          <div",
-            "            style={{",
-            "              background: '#ffffff',",
-            "              borderRadius: 20,",
-            "              padding: 24,",
-            "              boxShadow: '0 18px 45px rgba(15, 23, 42, 0.06)',",
-            "              minHeight: 'calc(100vh - 220px)',",
-            "            }}",
-            "          >",
-            "            <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 20 }}>{pageTitle}</Typography.Title>",
-            "            {children}",
-            "          </div>",
-            "        </div>",
-            "      </Layout.Content>",
-            "    </Layout>",
-            "  );",
+            "function ProtectedView({ loggedIn, children }: { loggedIn: boolean; children: ReactNode }) {",
+            "  if (!loggedIn) {",
+            "    return <Navigate to=\"/login\" replace />;",
+            "  }",
+            "  return <>{children}</>;",
             "}",
             "",
             "export default function App() {",
@@ -454,21 +500,9 @@ def build_seed_copy_ignore(extra_names: set[str] | None = None):
 def prepare_seed_application(app_root: str, profile: dict) -> tuple[str, str]:
     frontend_dst = os.path.join(app_root, "frontend")
     backend_dst = os.path.join(app_root, "backend")
-    repo_root = Path(__file__).resolve().parents[2]
-    frontend_src = repo_root / "examples" / "demo_app" / "frontend"
-    backend_src = repo_root / "examples" / "demo_app" / "backend"
 
     os.makedirs(app_root, exist_ok=True)
-    frontend_ignore = build_seed_copy_ignore()
-
-    def backend_ignore(src: str, names: list[str]) -> set[str]:
-        ignored = build_seed_copy_ignore()(src, names)
-        if Path(src).resolve() == (backend_src / "app").resolve():
-            ignored.update(name for name in names if name in GENERATED_BACKEND_APP_FILES)
-        return ignored
-
-    shutil.copytree(frontend_src, frontend_dst, dirs_exist_ok=True, ignore=frontend_ignore)
-    shutil.copytree(backend_src, backend_dst, dirs_exist_ok=True, ignore=backend_ignore)
+    _bootstrap_task_scaffold(frontend_dst, backend_dst, profile)
     _write_task_specific_app(frontend_dst, backend_dst, profile)
     return frontend_dst, backend_dst
 
@@ -1187,8 +1221,8 @@ async def generate_task_app_code(
     generated_files: dict[str, str] = {}
     batch_reports = []
     batches = build_codegen_batches(codegen_requirements)
-    if batches:
-        llm = get_llm_client()
+    llm = get_llm_client() if batches else None
+    if batches and llm:
         for batch in batches:
             pending_files = [
                 relative_path
@@ -1323,8 +1357,9 @@ async def generate_task_app_code(
                     break
 
     def _build_codegen_report(**extra: object) -> dict:
+        configured_model = getattr(getattr(llm, "config", None), "code_model", "")
         report = {
-            "model_used": "qwen3.7-max" if batches else "template_only",
+            "model_used": configured_model or ("llm_generated" if llm and batches else "template_only"),
             "required_files": codegen_requirements["required_files"],
             "generated_file_count": len(generated_files),
             "applied_required_file_count": len(codegen_requirements["required_files"]),

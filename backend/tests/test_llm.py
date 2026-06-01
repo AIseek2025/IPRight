@@ -9,16 +9,19 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-from app.services.llm import LLMClient, LLMConfig, LLMResponse, TEXT_MODEL, REASONING_MODEL, get_llm_client
+from app.services.llm import LLMClient, LLMConfig, LLMResponse, PRD_MODEL, TEXT_MODEL, REASONING_MODEL, get_llm_client
 
 
 class TestLLMConfig:
     def test_default_config(self):
         config = LLMConfig()
-        assert config.provider == "dashscope"
-        assert config.model == "qwen3.7-max"
-        assert config.fallback_model == "qwen3.7-max"
-        assert config.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert config.provider == "deepseek"
+        assert config.model == "deepseek-v4-pro"
+        assert config.fallback_model == "deepseek-v4-pro"
+        assert config.prd_model == "deepseek-v4-flash"
+        assert config.code_model == "deepseek-v4-pro"
+        assert config.doc_model == "deepseek-v4-pro"
+        assert config.api_base == "https://api.deepseek.com/v1"
 
     def test_custom_config(self):
         config = LLMConfig(
@@ -71,24 +74,25 @@ class TestLLMClient:
         assert isinstance(client, LLMClient)
 
     def test_text_and_reasoning_model_constants(self):
-        assert TEXT_MODEL == "qwen3.7-max"
-        assert REASONING_MODEL == "qwen3.7-max"
+        assert PRD_MODEL == "deepseek-v4-flash"
+        assert TEXT_MODEL == "deepseek-v4-pro"
+        assert REASONING_MODEL == "deepseek-v4-pro"
 
     def test_config_loads_from_env(self):
-        os.environ["DASHSCOPE_API_KEY"] = "sk-test-key"
+        os.environ["DEEPSEEK_API_KEY"] = "sk-test-key"
         try:
             config = LLMClient._load_config(LLMClient(LLMConfig(api_key="")))
             assert config.api_key == "sk-test-key"
         finally:
-            del os.environ["DASHSCOPE_API_KEY"]
+            del os.environ["DEEPSEEK_API_KEY"]
 
-    def test_config_prefers_dashscope_api_base_and_strips_wrapper_chars(self):
-        os.environ["DASHSCOPE_API_BASE"] = " `https://dashscope.aliyuncs.com/compatible-mode/v1` "
+    def test_config_prefers_deepseek_api_base_and_strips_wrapper_chars(self):
+        os.environ["DEEPSEEK_API_BASE"] = " `https://api.deepseek.com/v1` "
         try:
             config = LLMClient._load_config(LLMClient(LLMConfig(api_key="sk-test")))
-            assert config.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            assert config.api_base == "https://api.deepseek.com/v1"
         finally:
-            del os.environ["DASHSCOPE_API_BASE"]
+            del os.environ["DEEPSEEK_API_BASE"]
 
     def test_parse_json_object_content_accepts_fenced_json(self):
         parsed, error = LLMClient._parse_json_object_content("""```json
