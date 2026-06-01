@@ -863,6 +863,7 @@ def _synthesize_module_compile_files(
     repaired_paths: list[str] = []
     icon_replacements = {
         "RouteOutlined": "NodeIndexOutlined",
+        "OutboxOutlined": "ExportOutlined",
     }
 
     for relative_path in required_files:
