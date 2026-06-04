@@ -153,6 +153,89 @@ class TestLLMClient:
         assert "target_interface_count" not in captured["messages"][1]["content"]
         assert "raw_user_request" not in captured["messages"][1]["content"]
 
+    def test_generate_app_code_constrains_app_shell_batch(self, monkeypatch):
+        captured = {}
+
+        async def fake_chat_with_models(
+            messages,
+            response_format="text",
+            *,
+            primary_model,
+            fallback_model="",
+            parse_json_response=False,
+            max_tokens_override=None,
+            temperature_override=None,
+        ):
+            captured["messages"] = messages
+            captured["response_format"] = response_format
+            captured["max_tokens_override"] = max_tokens_override
+            captured["temperature_override"] = temperature_override
+            return LLMResponse(
+                success=True,
+                text='{"files":{"frontend/src/App.tsx":"ok"}}',
+                structured={"files": {"frontend/src/App.tsx": "ok"}},
+            )
+
+        client = LLMClient(LLMConfig(api_key="sk-test"))
+        monkeypatch.setattr(client, "chat_with_models", fake_chat_with_models)
+
+        import asyncio
+
+        async def _run():
+            resp = await client.generate_app_code(
+                "prd",
+                "work",
+                {"required_files": ["frontend/src/App.tsx"]},
+            )
+            assert resp.success
+
+        asyncio.run(_run())
+        assert captured["response_format"] == "json_object"
+        assert captured["max_tokens_override"] == 9000
+        assert captured["temperature_override"] == 0.75
+        assert "轻量路由壳文件" in captured["messages"][1]["content"]
+        assert "不要在 `App.tsx` 内联任何页面实现" in captured["messages"][1]["content"]
+
+    def test_chat_with_models_reports_missing_choices_response(self, monkeypatch):
+        class _Response:
+            status_code = 200
+            text = '{"error":{"message":"upstream missing completion choices"}}'
+
+            @staticmethod
+            def json():
+                return {"error": {"message": "upstream missing completion choices"}}
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return _Response()
+
+        import asyncio
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+        async def _run():
+            client = LLMClient(LLMConfig(api_key="sk-test", api_base="https://api.deepseek.com/v1"))
+            resp = await client.chat_with_models(
+                [{"role": "user", "content": "hi"}],
+                response_format="json_object",
+                primary_model="deepseek-v4-pro",
+            )
+            assert not resp.success
+            assert "missing choices" in resp.error
+            assert "upstream missing completion choices" in resp.error
+
+        asyncio.run(_run())
+
     def test_generate_prd_uses_raw_user_request_as_source_of_truth(self, monkeypatch):
         captured = {}
 

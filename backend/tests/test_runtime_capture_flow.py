@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+
 
 from sqlalchemy import select
 
@@ -95,6 +99,12 @@ def test_execute_capture_flow_only_persists_successful_images(tmp_path, monkeypa
     monkeypatch.setattr("app.services.capture.PlaywrightCapture", _FakeCapture)
 
     async def _run():
+        from app.core.database import Base, _get_engine
+
+        engine = _get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
         session_factory = get_session_factory()
         async with session_factory() as session:
             task = Task(
@@ -115,7 +125,7 @@ def test_execute_capture_flow_only_persists_successful_images(tmp_path, monkeypa
             session.add_all([task, build])
             await session.commit()
 
-        total, success_count = await execute_capture_flow(
+        total, success_count, _capture_warnings = await execute_capture_flow(
             task_id=task_id,
             build_id=build_id,
             workspace_root=str(workspace_root),

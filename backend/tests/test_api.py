@@ -101,7 +101,8 @@ class TestExportAPI:
         assert create_resp.status_code == 201
         task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
 
-        artifact_file = tmp_path / "legacy_exports" / "software_manual.docx"
+        workspace_root = tmp_path / "workspace_root"
+        artifact_file = workspace_root / "tasks" / str(task_id) / "artifacts" / "software_manual.docx"
         artifact_file.parent.mkdir(parents=True, exist_ok=True)
         artifact_file.write_bytes(b"docx-data")
 
@@ -139,6 +140,59 @@ class TestExportAPI:
         resp = await async_client.get(f"/api/v1/exports/{export_id}/download")
         assert resp.status_code == 200
         assert resp.content == b"docx-data"
+
+    async def test_download_export_rejects_symlink_artifact_local_path(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        workspace_root = tmp_path / "workspace_root"
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(workspace_root))
+
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "导出软链测试", "product_name": "导出软链系统"})
+        assert create_resp.status_code == 201
+        task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
+
+        task_dir = workspace_root / "tasks" / str(task_id)
+        real_file = task_dir / "artifacts" / "real_manual.docx"
+        symlink_file = task_dir / "artifacts" / "software_manual.docx"
+        real_file.parent.mkdir(parents=True, exist_ok=True)
+        real_file.write_bytes(b"docx-data")
+        symlink_file.symlink_to(real_file)
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            build = Build(task_id=task.id, build_no=2, status="completed", trigger_type="retry")
+            session.add(build)
+            await session.flush()
+            task.active_build_id = build.id
+
+            artifact = Artifact(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_type="software_manual_docx",
+                artifact_name="software_manual.docx",
+                local_path=str(symlink_file),
+            )
+            session.add(artifact)
+            await session.flush()
+
+            export = Export(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_id=artifact.id,
+                export_type="manual_docx",
+                file_name="software_manual.docx",
+                status="ready",
+                download_url=f"/api/v1/exports/{uuid.uuid4()}/download",
+            )
+            session.add(export)
+            await session.commit()
+            export_id = export.id
+
+        resp = await async_client.get(f"/api/v1/exports/{export_id}/download")
+        assert resp.status_code == 404
+        detail = resp.json()["detail"] if "detail" in resp.json() else resp.json()
+        assert detail["code"] == "EXPORT_FILE_MISSING"
 
 
 @pytest.mark.asyncio
@@ -220,7 +274,7 @@ class TestTaskBundleAPI:
         assert create_resp.status_code == 201
         task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
 
-        recovered_file = tmp_path / "legacy_task_files" / "software_manual.docx"
+        recovered_file = workspace_root / "tasks" / str(task_id) / "artifacts" / "software_manual.docx"
         recovered_file.parent.mkdir(parents=True, exist_ok=True)
         recovered_file.write_bytes(b"legacy-docx")
 
@@ -250,7 +304,51 @@ class TestTaskBundleAPI:
         bundle_path.write_bytes(resp.content)
         with zipfile.ZipFile(bundle_path, "r") as zf:
             names = zf.namelist()
-            assert any(name.endswith("/recovered/software_manual_docx/software_manual.docx") for name in names)
+            assert any(name.endswith("software_manual.docx") for name in names)
+
+    async def test_task_bundle_rejects_symlink_artifact_local_path(self, async_client, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        workspace_root = tmp_path / "workspace_root"
+        monkeypatch.setattr(settings, "WORKSPACE_ROOT", str(workspace_root))
+
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "bundle软链测试", "product_name": "bundle软链系统"})
+        assert create_resp.status_code == 201
+        task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
+
+        task_dir = workspace_root / "tasks" / str(task_id)
+        real_file = task_dir / "artifacts" / "real_manual.docx"
+        symlink_file = task_dir / "artifacts" / "software_manual.docx"
+        real_file.parent.mkdir(parents=True, exist_ok=True)
+        real_file.write_bytes(b"legacy-docx")
+        symlink_file.symlink_to(real_file)
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, task_id)
+            assert task is not None
+            build = Build(task_id=task.id, build_no=2, status="completed", trigger_type="retry")
+            session.add(build)
+            await session.flush()
+            task.active_build_id = build.id
+
+            artifact = Artifact(
+                task_id=task.id,
+                build_id=build.id,
+                artifact_type="software_manual_docx",
+                artifact_name="software_manual.docx",
+                local_path=str(symlink_file),
+            )
+            session.add(artifact)
+            await session.commit()
+
+        resp = await async_client.get(f"/api/v1/tasks/{task_id}/bundle/download")
+        assert resp.status_code == 200
+
+        bundle_path = tmp_path / "symlink_filtered_bundle.zip"
+        bundle_path.write_bytes(resp.content)
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            names = zf.namelist()
+            assert not any(name.endswith("software_manual.docx") for name in names)
 
 
 @pytest.mark.asyncio
@@ -265,7 +363,7 @@ class TestTaskScreenshotAPI:
         assert create_resp.status_code == 201
         task_id = uuid.UUID(create_resp.json()["data"]["task_id"])
 
-        screenshot_file = tmp_path / "legacy_screens" / "dashboard.png"
+        screenshot_file = workspace_root / "tasks" / str(task_id) / "artifacts" / "screenshots" / "dashboard.png"
         screenshot_file.parent.mkdir(parents=True, exist_ok=True)
         screenshot_file.write_bytes(b"png-data")
 

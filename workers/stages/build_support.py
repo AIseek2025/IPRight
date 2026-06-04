@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 from app.services.project_profile import build_frontend_profile_source
@@ -144,10 +145,26 @@ def _ensure_backend_dependencies(backend_root: str) -> None:
 
 
 def _camel_name(value: str) -> str:
-    parts = re.split(r"[^0-9A-Za-z\u4e00-\u9fff]+", value)
-    cleaned = "".join(part[:1].upper() + part[1:] for part in parts if part)
+    segments: list[str] = []
+    ascii_buffer: list[str] = []
+    for char in str(value or ""):
+        if char.isascii() and char.isalnum():
+            ascii_buffer.append(char)
+            continue
+        if ascii_buffer:
+            segments.append("".join(ascii_buffer))
+            ascii_buffer = []
+        if unicodedata.category(char)[:1] in {"L", "N"}:
+            segments.append(f"U{ord(char):X}")
+    if ascii_buffer:
+        segments.append("".join(ascii_buffer))
+    cleaned = "".join(
+        segment if segment.startswith("U") else segment[:1].upper() + segment[1:]
+        for segment in segments
+        if segment
+    )
     if not cleaned:
-        return "ModulePage"
+        return "Module"
     if cleaned[0].isdigit():
         return f"Module{cleaned}"
     return cleaned
@@ -459,6 +476,346 @@ def _render_structured_app_tsx(profile: dict, generated_files: dict[str, str]) -
     )
 
 
+def _render_structured_login_tsx(profile: dict) -> str:
+    product_name = json.dumps(str(profile.get("product_name") or "业务平台"), ensure_ascii=False)
+    return "\n".join(
+        [
+            "const AUTH_KEY = 'ipright_demo_auth';",
+            "",
+            "function persistDemoLogin(): void {",
+            "  if (typeof window === 'undefined') return;",
+            "  try {",
+            "    window.localStorage.setItem(AUTH_KEY, 'true');",
+            "    window.localStorage.setItem('token', 'demo-token');",
+            "    window.localStorage.setItem('user', '管理员');",
+            "  } catch {",
+            "  }",
+            "}",
+            "",
+            "function redirectToDashboard(): void {",
+            "  if (typeof window === 'undefined') return;",
+            "  window.location.href = '/dashboard';",
+            "}",
+            "",
+            "export default function Login() {",
+            "  const handleLogin = () => {",
+            "    persistDemoLogin();",
+            "    redirectToDashboard();",
+            "  };",
+            "",
+            "  return (",
+            "    <div>",
+            f"      <h1>{product_name}</h1>",
+            "      <p>已切换为结构化登录页，可直接进入系统继续验收应用功能。</p>",
+            "      <button type=\"button\" onClick={handleLogin}>",
+            "        进入系统",
+            "      </button>",
+            "    </div>",
+            "  );",
+            "}",
+            "",
+        ]
+    )
+
+
+def _render_structured_dashboard_tsx(profile: dict) -> str:
+    product_name = json.dumps(str(profile.get("product_name") or "业务平台"), ensure_ascii=False)
+    module_pages = _build_route_shell_module_pages(build_codegen_requirements(profile).get("module_pages", []))
+    link_lines = []
+    for page in module_pages:
+        route = json.dumps(str(page.get("route") or "/dashboard"), ensure_ascii=False)
+        title = json.dumps(str(page.get("title") or page.get("component_name") or "业务页面"), ensure_ascii=False)
+        link_lines.append(f"        <li><a href={route}>{title}</a></li>")
+    if not link_lines:
+        link_lines.append("        <li>当前暂无业务模块，已保留安全首页。</li>")
+    return "\n".join(
+        [
+            "export default function Dashboard() {",
+            "  return (",
+            "    <div>",
+            f"      <h1>{product_name}</h1>",
+            "      <p>已切换为结构化首页，可继续访问各个业务模块。</p>",
+            "      <ul>",
+            *link_lines,
+            "      </ul>",
+            "    </div>",
+            "  );",
+            "}",
+            "",
+        ]
+    )
+
+
+def _render_terminal_safe_app_tsx(profile: dict) -> str:
+    module_pages = _build_route_shell_module_pages(build_codegen_requirements(profile).get("module_pages", []))
+    import_lines = [
+        "import Login from './pages/Login';",
+        "import Dashboard from './pages/Dashboard';",
+    ]
+    route_lines = [
+        "    if (path === '/dashboard') return <Dashboard />;",
+    ]
+    for page in module_pages:
+        component_name = str(page.get("component_name") or "").strip()
+        route = str(page.get("route") or "").strip()
+        if not component_name or not route:
+            continue
+        import_lines.append(f"import {component_name} from './pages/{component_name}';")
+        route_lines.append(f"    if (path === {json.dumps(route, ensure_ascii=False)}) return <{component_name} />;")
+    return "\n".join(
+        [
+            *import_lines,
+            "",
+            "const AUTH_KEY = 'ipright_demo_auth';",
+            "",
+            "function bootstrapTokenFromUrl(): void {",
+            "  if (typeof window === 'undefined') return;",
+            "  try {",
+            "    const url = new URL(window.location.href);",
+            "    const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;",
+            "    const hashParams = new URLSearchParams(hash);",
+            "    const token = url.searchParams.get('token') || url.searchParams.get('api_token') || hashParams.get('token') || hashParams.get('api_token');",
+            "    if (!token) return;",
+            "    window.localStorage.setItem('token', token);",
+            "    window.localStorage.setItem(AUTH_KEY, 'true');",
+            "    url.searchParams.delete('token');",
+            "    url.searchParams.delete('api_token');",
+            "    const cleanHash = new URLSearchParams(hash);",
+            "    cleanHash.delete('token');",
+            "    cleanHash.delete('api_token');",
+            "    const nextHash = cleanHash.toString();",
+            "    const cleanUrl = `${url.pathname}${url.search}${nextHash ? `#${nextHash}` : ''}`;",
+            "    window.history.replaceState({}, '', cleanUrl);",
+            "  } catch {",
+            "  }",
+            "}",
+            "",
+            "function getCurrentPath(): string {",
+            "  if (typeof window === 'undefined') return '/';",
+            "  const path = window.location.pathname || '/';",
+            "  if (!path) return '/';",
+            "  if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);",
+            "  return path;",
+            "}",
+            "",
+            "function renderCurrentPage(path: string) {",
+            "  if (path === '/' || path === '/login') return <Login />;",
+            "  if (path === '/index.html') return <Dashboard />;",
+            *route_lines,
+            "  return <Dashboard />;",
+            "}",
+            "",
+            "export default function App() {",
+            "  bootstrapTokenFromUrl();",
+            "  const path = getCurrentPath();",
+            "  return renderCurrentPage(path);",
+            "}",
+            "",
+        ]
+    )
+
+
+def _render_terminal_safe_request_runtime() -> str:
+    return "\n".join(
+        [
+            "export const TOKEN_STORAGE_KEY = 'ipright_api_token';",
+            "export const BASE_URL = '/api/v1';",
+            "",
+            "export type QueryValue = string | number | boolean | null | undefined;",
+            "export type QueryParams = Record<string, QueryValue>;",
+            "export type RequestOptions = {",
+            "  method?: string;",
+            "  params?: QueryParams;",
+            "  data?: unknown;",
+            "  body?: unknown;",
+            "  headers?: Record<string, string>;",
+            "};",
+            "",
+            "export type ApiResponse = {",
+            "  success: boolean;",
+            "  data?: unknown;",
+            "  message?: string;",
+            "  code?: string;",
+            "  [key: string]: unknown;",
+            "};",
+            "",
+            "function buildUrl(url: string, params?: QueryParams): string {",
+            "  const search = new URLSearchParams();",
+            "  const entries = Object.entries(params || {});",
+            "  for (const [key, value] of entries) {",
+            "    if (value === undefined || value === null || value === '') continue;",
+            "    search.append(key, String(value));",
+            "  }",
+            "  const query = search.toString();",
+            "  return query ? `${BASE_URL}${url}?${query}` : `${BASE_URL}${url}`;",
+            "}",
+            "",
+            "function normalizeBody(value: unknown): string | undefined {",
+            "  if (value === undefined || value === null) return undefined;",
+            "  if (typeof value === 'string') return value;",
+            "  return JSON.stringify(value);",
+            "}",
+            "",
+            "export function getApiToken(): string {",
+            "  if (typeof window === 'undefined') return '';",
+            "  try {",
+            "    return window.localStorage.getItem(TOKEN_STORAGE_KEY) || window.localStorage.getItem('token') || '';",
+            "  } catch {",
+            "    return '';",
+            "  }",
+            "}",
+            "",
+            "export function setApiToken(token: string): void {",
+            "  if (typeof window === 'undefined') return;",
+            "  try {",
+            "    if (token) {",
+            "      window.localStorage.setItem(TOKEN_STORAGE_KEY, token);",
+            "      window.localStorage.setItem('token', token);",
+            "    } else {",
+            "      window.localStorage.removeItem(TOKEN_STORAGE_KEY);",
+            "      window.localStorage.removeItem('token');",
+            "    }",
+            "  } catch {",
+            "  }",
+            "}",
+            "",
+            "export function withTokenQuery(url: string): string {",
+            "  const token = getApiToken();",
+            "  if (!token) return url;",
+            "  const separator = url.includes('?') ? '&' : '?';",
+            "  return `${url}${separator}token=${encodeURIComponent(token)}`;",
+            "}",
+            "",
+            "export function withAuthorizedUrl(url: string): string {",
+            "  return withTokenQuery(url);",
+            "}",
+            "",
+            "async function requestCore(url: string, options: RequestOptions = {}): Promise<ApiResponse> {",
+            "  try {",
+            "    const token = getApiToken();",
+            "    const response = await fetch(buildUrl(url, options.params), {",
+            "      method: options.method || 'GET',",
+            "      headers: {",
+            "        'Content-Type': 'application/json',",
+            "        ...(token ? { Authorization: `Bearer ${token}` } : {}),",
+            "        ...(options.headers || {}),",
+            "      },",
+            "      ...(options.body !== undefined ? { body: normalizeBody(options.body) } : {}),",
+            "      ...(options.body === undefined && options.data !== undefined ? { body: normalizeBody(options.data) } : {}),",
+            "    });",
+            "    const text = await response.text();",
+            "    let parsed: unknown = undefined;",
+            "    try {",
+            "      parsed = text ? JSON.parse(text) : undefined;",
+            "    } catch {",
+            "      parsed = text || undefined;",
+            "    }",
+            "    if (!response.ok) {",
+            "      return {",
+            "        success: false,",
+            "        data: parsed,",
+            "        message: typeof parsed === 'string' ? parsed : `请求失败: ${response.status}`,",
+            "        code: String(response.status),",
+            "      };",
+            "    }",
+            "    return { success: true, data: parsed };",
+            "  } catch (error) {",
+            "    return { success: false, message: String(error) };",
+            "  }",
+            "}",
+            "",
+            "export const request: any = function(url: string, options?: RequestOptions) {",
+            "  return requestCore(url, options || {});",
+            "};",
+            "request.get = function(url: string, params?: QueryParams, options?: RequestOptions) {",
+            "  return requestCore(url, { ...(options || {}), method: 'GET', params });",
+            "};",
+            "request.post = function(url: string, data?: unknown, options?: RequestOptions) {",
+            "  return requestCore(url, { ...(options || {}), method: 'POST', data });",
+            "};",
+            "request.put = function(url: string, data?: unknown, options?: RequestOptions) {",
+            "  return requestCore(url, { ...(options || {}), method: 'PUT', data });",
+            "};",
+            "request.delete = function(url: string, params?: QueryParams, options?: RequestOptions) {",
+            "  return requestCore(url, { ...(options || {}), method: 'DELETE', params });",
+            "};",
+            "request.remove = request.delete;",
+            "",
+            "export const get = request.get;",
+            "export const post = request.post;",
+            "export const put = request.put;",
+            "export const del = request.delete;",
+            "export const remove = request.remove;",
+            "",
+            "export const client = {",
+            "  get,",
+            "  post,",
+            "  put,",
+            "  delete: del,",
+            "  request,",
+            "  interceptors: {",
+            "    request: { use: () => undefined },",
+            "    response: { use: () => undefined },",
+            "  },",
+            "};",
+            "",
+            "export function login(payload?: Record<string, unknown>) {",
+            "  return post('/auth/login', payload);",
+            "}",
+            "",
+            "export function getTaskBundleDownload(taskId: string): string {",
+            "  return `/api/v1/tasks/${taskId}/bundle/download`;",
+            "}",
+            "",
+            "export function getTaskStreamUrl(taskId: string): string {",
+            "  return withTokenQuery(`/api/v1/tasks/${taskId}/stream`);",
+            "}",
+            "",
+            "export const api = { get, post, put, delete: del, request, client, login };",
+            "export default api;",
+            "",
+        ]
+    )
+
+
+def _terminal_safe_frontend_paths(profile: dict) -> set[str]:
+    paths = {
+        "frontend/src/App.tsx",
+        "frontend/src/pages/Login.tsx",
+        "frontend/src/pages/Dashboard.tsx",
+        "frontend/src/services/api.ts",
+        "frontend/src/types/constants.ts",
+        "frontend/src/types/models.ts",
+    }
+    codegen_requirements = build_codegen_requirements(profile)
+    for module_page in codegen_requirements.get("module_pages", []):
+        relative_path = str(module_page.get("file_path") or "").strip()
+        if relative_path:
+            paths.add(relative_path)
+    return paths
+
+
+def _render_terminal_safe_api_file() -> str:
+    return _render_terminal_safe_request_runtime()
+
+
+def _build_terminal_safe_frontend_bundle(profile: dict) -> dict[str, str]:
+    codegen_requirements = build_codegen_requirements(profile)
+    terminal_bundle = {
+        "frontend/src/App.tsx": _render_terminal_safe_app_tsx(profile),
+        "frontend/src/pages/Login.tsx": _render_structured_login_tsx(profile),
+        "frontend/src/pages/Dashboard.tsx": _render_structured_dashboard_tsx(profile),
+        "frontend/src/services/api.ts": _render_terminal_safe_api_file(),
+        "frontend/src/types/constants.ts": _render_terminal_safe_constants_file(profile),
+        "frontend/src/types/models.ts": _render_terminal_safe_models_file(),
+    }
+    for module_page in codegen_requirements.get("module_pages", []):
+        relative_path = str(module_page.get("file_path") or "").strip()
+        if relative_path:
+            terminal_bundle[relative_path] = _render_terminal_safe_module_page(relative_path, profile)
+    return terminal_bundle
+
+
 def _synthesize_structured_core_files(
     generated_files: dict[str, str],
     profile: dict,
@@ -471,9 +828,32 @@ def _synthesize_structured_core_files(
 
     for relative_path in required_files:
         content = str(synthesized.get(relative_path, "") or "")
-        if relative_path == "frontend/src/App.tsx" and (overwrite_existing or not content.strip()):
+        if not (overwrite_existing or not content.strip()):
+            continue
+        if relative_path == "frontend/src/App.tsx":
             synthesized[relative_path] = _render_structured_app_tsx(profile, synthesized)
             repaired_paths.append(relative_path)
+            continue
+        if relative_path == "frontend/src/pages/Login.tsx":
+            synthesized[relative_path] = _render_structured_login_tsx(profile)
+            repaired_paths.append(relative_path)
+            continue
+        if relative_path == "frontend/src/pages/Dashboard.tsx":
+            if overwrite_existing:
+                synthesized[relative_path] = _render_structured_dashboard_tsx(profile)
+                repaired_paths.append(relative_path)
+                continue
+            normalized = content
+            changed = False
+            for invalid_icon, safe_icon in {
+                "SnowflakeOutlined": "CloudServerOutlined",
+            }.items():
+                if invalid_icon in normalized:
+                    normalized = re.sub(rf"\b{invalid_icon}\b", safe_icon, normalized)
+                    changed = True
+            if changed:
+                synthesized[relative_path] = _dedupe_ant_icon_imports(normalized)
+                repaired_paths.append(relative_path)
 
     return synthesized, repaired_paths
 
@@ -655,8 +1035,108 @@ def normalize_prd_summary_with_plan_seed(prd_summary: dict, plan_seed: dict) -> 
     return normalized
 
 
-def normalize_generated_frontend_files(generated_files: dict[str, str]) -> dict[str, str]:
-    return {relative_path: str(content) for relative_path, content in generated_files.items()}
+def _normalize_overescaped_jsx_attributes(relative_path: str, content: str) -> str:
+    if not relative_path.endswith((".tsx", ".jsx")):
+        return content
+    if '\\"' not in content:
+        return content
+
+    overescaped_attr_hits = len(re.findall(r'=\\"[^"\n]*\\"', content))
+    if overescaped_attr_hits < 2:
+        return content
+    return content.replace('\\"', '"')
+
+
+def _normalize_svg_component_props(content: str) -> str:
+    if "React.FC = () => (" not in content or "<svg " not in content:
+        return content
+    updated = re.sub(
+        r"const\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*React\.FC\s*=\s*\(\)\s*=>\s*\(",
+        r"const \1: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (",
+        content,
+    )
+    if updated == content:
+        return content
+    return updated.replace("<svg ", "<svg {...props} ", 1)
+
+
+def _escape_jsx_text_symbols(relative_path: str, content: str) -> str:
+    if not relative_path.endswith((".tsx", ".jsx")):
+        return content
+
+    pattern = re.compile(
+        r"(?P<open><(?P<tag>[A-Za-z][A-Za-z0-9._-]*)(?:\s[^>{}]*)?>)"
+        r"(?P<text>(?:(?!</?[A-Za-z]).)*?[<>](?:(?!</?[A-Za-z]).)*?)"
+        r"(?P<close></(?P=tag)>)"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        text = match.group("text")
+        if "{" in text or "}" in text:
+            return match.group(0)
+        if "<" not in text and ">" not in text:
+            return match.group(0)
+        escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f"{match.group('open')}{escaped}{match.group('close')}"
+
+    return pattern.sub(_replace, content)
+
+
+def _normalize_encoded_jsx_tag_close(relative_path: str, content: str) -> str:
+    if not relative_path.endswith((".tsx", ".jsx")):
+        return content
+    return content.replace("}&gt;", "}>")
+
+
+def _normalize_encoded_jsx_expression_entities(relative_path: str, content: str) -> str:
+    if not relative_path.endswith((".tsx", ".jsx")):
+        return content
+    return (
+        content.replace("=&gt;", "=>")
+        .replace("&gt;=", ">=")
+        .replace("&lt;=", "<=")
+        .replace("&amp;&amp;", "&&")
+    )
+
+
+def _normalize_style_shorthand_literals(relative_path: str, content: str) -> str:
+    if not relative_path.endswith((".tsx", ".jsx")):
+        return content
+
+    def _replace_flex(match: re.Match[str]) -> str:
+        grow = match.group("grow")
+        shrink = match.group("shrink")
+        basis = match.group("basis")
+        return f"{match.group('prefix')}flex: '{grow} {shrink} {basis}px',"
+
+    content = re.sub(
+        r"(?P<prefix>^|\s)flex:\s*(?P<grow>\d+(?:\.\d+)?)\s+(?P<shrink>\d+(?:\.\d+)?)\s+(?P<basis>\d+(?:\.\d+)?)\s*,",
+        _replace_flex,
+        content,
+        flags=re.MULTILINE,
+    )
+    return content
+
+
+def normalize_generated_frontend_files(
+    generated_files: dict[str, str],
+    preserve_paths: set[str] | None = None,
+) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    preserved = preserve_paths or set()
+    for relative_path, content in generated_files.items():
+        text = str(content)
+        if relative_path in preserved:
+            normalized[relative_path] = text
+            continue
+        text = _normalize_overescaped_jsx_attributes(relative_path, text)
+        text = _normalize_encoded_jsx_tag_close(relative_path, text)
+        text = _normalize_encoded_jsx_expression_entities(relative_path, text)
+        text = _escape_jsx_text_symbols(relative_path, text)
+        text = _normalize_style_shorthand_literals(relative_path, text)
+        text = _normalize_svg_component_props(text)
+        normalized[relative_path] = text
+    return normalized
 
 
 def _extract_frontend_compile_error_paths(log_output: str) -> list[str]:
@@ -710,13 +1190,16 @@ def apply_generated_code_bundle(
     app_root: str,
     generated_files: dict,
     required_files: list[str],
+    preserve_paths: set[str] | None = None,
 ) -> tuple[bool, str | None]:
     missing = [path for path in required_files if not generated_files.get(path)]
     if missing:
         return False, f"Missing generated files: {', '.join(missing[:8])}"
 
+    preserved = preserve_paths or set()
     for relative_path in required_files:
-        content = _strip_code_fence(str(generated_files.get(relative_path, "")))
+        raw_content = str(generated_files.get(relative_path, ""))
+        content = raw_content if relative_path in preserved else _strip_code_fence(raw_content)
         if not content:
             return False, f"Generated file is empty: {relative_path}"
         absolute_path = os.path.join(app_root, relative_path)
@@ -724,6 +1207,22 @@ def apply_generated_code_bundle(
         _write_text(absolute_path, content)
 
     return True, None
+
+
+def _apply_normalized_generated_code_bundle(
+    app_root: str,
+    generated_files: dict[str, str],
+    required_files: list[str],
+    preserve_paths: set[str] | None = None,
+) -> tuple[dict[str, str], bool, str | None]:
+    normalized_files = normalize_generated_frontend_files(generated_files, preserve_paths=preserve_paths)
+    applied, apply_error = apply_generated_code_bundle(
+        app_root,
+        normalized_files,
+        required_files,
+        preserve_paths=preserve_paths,
+    )
+    return normalized_files, applied, apply_error
 
 
 def hydrate_missing_files_from_template(
@@ -828,21 +1327,470 @@ def _uses_unsupported_utility_classes(content: str) -> bool:
     return False
 
 
+def _render_safe_constants_file(profile: dict, *, extended_colors: bool) -> str:
+    product_name = json.dumps(str(profile.get("product_name") or "业务分析平台"), ensure_ascii=False)
+    version = json.dumps(str(profile.get("version") or "V1.0"), ensure_ascii=False)
+    color_lines = [
+        "export const COLORS = {",
+        "  primary: '#1677ff',",
+        "  success: '#52c41a',",
+        "  warning: '#faad14',",
+        "  error: '#ff4d4f',",
+    ]
+    if extended_colors:
+        color_lines.extend(
+            [
+                "  info: '#1890ff',",
+                "  text: '#334155',",
+                "  muted: '#64748b',",
+                "  background: '#f8fafc',",
+                "  panel: '#ffffff',",
+            ]
+        )
+    color_lines.append("} as const;")
+
+    return "\n".join(
+        [
+            f"export const APP_NAME = {product_name};",
+            f"export const APP_VERSION = {version};",
+            "export const SYSTEM_NAME = APP_NAME;",
+            "export const DEMO_USERNAME = 'admin';",
+            "export const DEMO_PASSWORD = 'admin123';",
+            "",
+            *color_lines,
+            "export const THEME_COLORS = COLORS;",
+            "",
+            "export const DataSourceType = { DATABASE: 'database', API: 'api', FILE: 'file', EXCEL: 'excel', CSV: 'csv' } as const;",
+            "export type DataSourceType = (typeof DataSourceType)[keyof typeof DataSourceType];",
+            "export const CleanRuleType = { DEDUPLICATE: 'deduplicate', FILL_MISSING: 'fill_missing', FORMAT: 'format', FILTER: 'filter' } as const;",
+            "export type CleanRuleType = (typeof CleanRuleType)[keyof typeof CleanRuleType];",
+            "export const StatsModelType = { SUM: 'sum', AVERAGE: 'average', TREND: 'trend', COMPARISON: 'comparison' } as const;",
+            "export type StatsModelType = (typeof StatsModelType)[keyof typeof StatsModelType];",
+            "export const ChartType = { LINE: 'line', BAR: 'bar', PIE: 'pie', AREA: 'area', TABLE: 'table' } as const;",
+            "export type ChartType = (typeof ChartType)[keyof typeof ChartType];",
+            "export const UserRole = { ADMIN: 'admin', ANALYST: 'analyst', OPERATOR: 'operator', VIEWER: 'viewer' } as const;",
+            "export type UserRole = (typeof UserRole)[keyof typeof UserRole];",
+            "export const ReportStatus = { DRAFT: 'draft', GENERATED: 'generated', FAILED: 'failed' } as const;",
+            "export type ReportStatus = (typeof ReportStatus)[keyof typeof ReportStatus];",
+            "export const AnalysisStatus = { PENDING: 'pending', RUNNING: 'running', COMPLETED: 'completed', FAILED: 'failed' } as const;",
+            "export type AnalysisStatus = (typeof AnalysisStatus)[keyof typeof AnalysisStatus];",
+            "export const ExportFormat = { PDF: 'PDF', EXCEL: 'Excel', IMAGE: '图片' } as const;",
+            "export type ExportFormat = (typeof ExportFormat)[keyof typeof ExportFormat];",
+            "",
+            "export const DATA_SOURCE_TYPE_OPTIONS: DataSourceType[] = ['database', 'api', 'file', 'excel', 'csv'];",
+            "export const CLEAN_RULE_TYPE_OPTIONS: CleanRuleType[] = ['deduplicate', 'fill_missing', 'format', 'filter'];",
+            "export const STATS_MODEL_TYPE_OPTIONS: StatsModelType[] = ['sum', 'average', 'trend', 'comparison'];",
+            "export const CHART_TYPE_OPTIONS: ChartType[] = ['line', 'bar', 'pie', 'area', 'table'];",
+            "export const USER_ROLE_OPTIONS: UserRole[] = ['admin', 'analyst', 'operator', 'viewer'];",
+            "export const REPORT_STATUS_OPTIONS: ReportStatus[] = ['draft', 'generated', 'failed'];",
+            "export const ANALYSIS_STATUS_OPTIONS: AnalysisStatus[] = ['pending', 'running', 'completed', 'failed'];",
+            "export const EXPORT_FORMAT_OPTIONS: ExportFormat[] = ['PDF', 'Excel', '图片'];",
+            "",
+            "const constants = {",
+            "  APP_NAME,",
+            "  APP_VERSION,",
+            "  SYSTEM_NAME,",
+            "  DEMO_USERNAME,",
+            "  DEMO_PASSWORD,",
+            "  COLORS,",
+            "  THEME_COLORS,",
+            "  DataSourceType,",
+            "  CleanRuleType,",
+            "  StatsModelType,",
+            "  ChartType,",
+            "  UserRole,",
+            "  ReportStatus,",
+            "  AnalysisStatus,",
+            "  ExportFormat,",
+            "  DATA_SOURCE_TYPE_OPTIONS,",
+            "  CLEAN_RULE_TYPE_OPTIONS,",
+            "  STATS_MODEL_TYPE_OPTIONS,",
+            "  CHART_TYPE_OPTIONS,",
+            "  USER_ROLE_OPTIONS,",
+            "  REPORT_STATUS_OPTIONS,",
+            "  ANALYSIS_STATUS_OPTIONS,",
+            "  EXPORT_FORMAT_OPTIONS,",
+            "};",
+            "",
+            "export default constants;",
+            "",
+        ]
+    )
+
+
+def _render_compile_safe_constants_file(profile: dict) -> str:
+    return _render_safe_constants_file(profile, extended_colors=True)
+
+
+def _render_terminal_safe_models_file() -> str:
+    return "\n".join(
+        [
+            "export interface ApiResponse<T = unknown> {",
+            "  success: boolean;",
+            "  data?: T;",
+            "  message?: string;",
+            "  code?: string;",
+            "  [key: string]: unknown;",
+            "}",
+            "",
+            "export interface PageResult<T = unknown> {",
+            "  items: T[];",
+            "  total: number;",
+            "  page?: number;",
+            "  pageSize?: number;",
+            "}",
+            "",
+            "export interface BaseEntity {",
+            "  id: string;",
+            "  name?: string;",
+            "  status?: string;",
+            "  createdAt?: string;",
+            "  updatedAt?: string;",
+            "  [key: string]: unknown;",
+            "}",
+            "",
+            "export interface User extends BaseEntity {",
+            "  username?: string;",
+            "  role?: string;",
+            "  email?: string;",
+            "}",
+            "",
+            "export type PageParams = Record<string, unknown>;",
+            "",
+        ]
+    )
+
+
+def _render_compile_safe_models_file() -> str:
+    return "\n".join(
+        [
+            "export interface BaseEntity {",
+            "  id: string;",
+            "  name?: string;",
+            "  status?: string;",
+            "  createdAt?: string;",
+            "  updatedAt?: string;",
+            "  [key: string]: unknown;",
+            "}",
+            "",
+            "export interface User extends BaseEntity {",
+            "  username?: string;",
+            "  role?: string;",
+            "  email?: string;",
+            "}",
+            "",
+            "export interface Supplier extends BaseEntity {",
+            "  contact?: string;",
+            "  phone?: string;",
+            "}",
+            "",
+            "export interface DataSource extends BaseEntity {",
+            "  type?: string;",
+            "  description?: string;",
+            "}",
+            "",
+            "export interface Report extends BaseEntity {",
+            "  status?: string;",
+            "  exportFormats?: string[];",
+            "}",
+            "",
+            "export interface AnalysisTask extends BaseEntity {",
+            "  status?: string;",
+            "  result?: string;",
+            "}",
+            "",
+            "export interface ReportTemplate extends BaseEntity {",
+            "  exportFormats?: string[];",
+            "}",
+            "",
+            "export interface DashboardStats extends BaseEntity {",
+            "  total?: number;",
+            "  success?: number;",
+            "  pending?: number;",
+            "}",
+            "",
+            "export type PageParams = Record<string, unknown>;",
+            "",
+        ]
+    )
+
+
+def _render_terminal_safe_constants_file(profile: dict) -> str:
+    return _render_safe_constants_file(profile, extended_colors=True)
+
+
+def _render_terminal_safe_api_file() -> str:
+    return _render_terminal_safe_request_runtime()
+
+
+def _render_terminal_safe_module_page(relative_path: str, profile: dict) -> str:
+    page_meta = _find_module_page_metadata(profile, relative_path)
+    component_name = _camel_name(Path(relative_path).stem)
+    title = json.dumps(str(page_meta.get("title") or Path(relative_path).stem.replace("Page", "")).strip() or "业务页面", ensure_ascii=False)
+    description = json.dumps(
+        str(page_meta.get("description") or "当前页面已切换为终端编译安全模式，仅保留基础信息展示。").strip(),
+        ensure_ascii=False,
+    )
+    route = json.dumps(str(page_meta.get("route") or "/dashboard").strip() or "/dashboard", ensure_ascii=False)
+    return "\n".join(
+        [
+            "import React from 'react';",
+            "",
+            f"export default function {component_name}() {{",
+            "  return (",
+            "    <div>",
+            f"      <h2>{title}</h2>",
+            f"      <p>{description}</p>",
+            "      <p>当前页面已切换为终端编译安全模式</p>",
+            f"      <p>{route}</p>",
+            "    </div>",
+            "  );",
+            "}",
+            "",
+        ]
+    )
+
+
+def _apply_terminal_compile_fallback(
+    generated_files: dict[str, str],
+    profile: dict,
+    invalid_paths: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    synthesized = dict(generated_files)
+    if not invalid_paths:
+        return synthesized, []
+
+    terminal_bundle = _build_terminal_safe_frontend_bundle(profile)
+    for relative_path, content in terminal_bundle.items():
+        synthesized[relative_path] = content
+
+    return synthesized, sorted(terminal_bundle)
+
+
 def _synthesize_support_runtime_files(
     generated_files: dict[str, str],
     profile: dict,
     required_files: list[str],
     *,
     overwrite_existing: bool = False,
+    force_runtime_fallback: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
+    del overwrite_existing
     synthesized = dict(generated_files)
     repaired_paths: list[str] = []
 
+    request_runtime = """export const TOKEN_STORAGE_KEY = 'ipright_api_token';
+type RuntimeGlobals = typeof globalThis & {
+  __IPRIGHT_API_BASE_URL__?: string;
+  __IPRIGHT_API_TOKEN__?: string;
+};
+const runtimeGlobals = globalThis as RuntimeGlobals;
+export const BASE_URL = runtimeGlobals.__IPRIGHT_API_BASE_URL__ || '/api/v1';
+
+type QueryValue = string | number | boolean | null | undefined;
+export type QueryParams = Record<string, QueryValue>;
+export type RequestOptions = {
+  method?: string;
+  params?: QueryParams;
+  data?: unknown;
+  body?: unknown;
+  headers?: Record<string, string>;
+};
+
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+function buildQueryString(params?: QueryParams): string {
+  const entries = Object.entries(params ?? {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
+  if (!entries.length) return '';
+  return '?' + entries.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join('&');
+}
+
+export function getApiToken(): string {
+  if (runtimeGlobals.__IPRIGHT_API_TOKEN__) return runtimeGlobals.__IPRIGHT_API_TOKEN__;
+  if (typeof window !== 'undefined') {
+    try {
+      const fromStorage = window.localStorage?.getItem(TOKEN_STORAGE_KEY) || window.localStorage?.getItem('token');
+      if (fromStorage) return fromStorage;
+    } catch {
+    }
+  }
+  return '';
+}
+
+export function setApiToken(token: string): void {
+  runtimeGlobals.__IPRIGHT_API_TOKEN__ = token || undefined;
+  if (typeof window === 'undefined') return;
+  try {
+    if (token) {
+      window.localStorage?.setItem(TOKEN_STORAGE_KEY, token);
+    } else {
+      window.localStorage?.removeItem(TOKEN_STORAGE_KEY);
+    }
+  } catch {
+  }
+}
+
+export function withTokenQuery(url: string): string {
+  const token = getApiToken();
+  if (!token) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
+export function withAuthorizedUrl(url: string): string {
+  return withTokenQuery(url);
+}
+
+function normalizeBody(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+async function requestCore<T = unknown>(url: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
+  const { params, data, headers, body, method } = options;
+  const token = getApiToken();
+  const requestBody = body ?? normalizeBody(data);
+  const response = await fetch(`${BASE_URL}${url}${buildQueryString(params)}`, {
+    method: method || 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(headers ?? {}),
+    },
+    ...(requestBody === undefined ? {} : { body: requestBody as string }),
+  });
+
+  const text = await response.text();
+  let parsed: unknown = undefined;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = text || undefined;
+  }
+
+  if (parsed && typeof parsed === 'object' && ('success' in (parsed as Record<string, unknown>) || 'data' in (parsed as Record<string, unknown>) || 'code' in (parsed as Record<string, unknown>))) {
+    return parsed as ApiResponse<T>;
+  }
+  if (!response.ok) {
+    return {
+      success: false,
+      message: typeof parsed === 'string' ? parsed : `请求失败: ${response.status}`,
+      code: String(response.status),
+      data: parsed as T,
+    };
+  }
+  return { success: true, data: parsed as T };
+}
+
+export const get = <T = unknown>(url: string, params?: QueryParams, options?: RequestOptions) => requestCore<T>(url, { ...(options ?? {}), method: 'GET', params });
+export const post = <T = unknown>(url: string, data?: unknown, options?: RequestOptions) => requestCore<T>(url, { ...(options ?? {}), method: 'POST', data });
+export const put = <T = unknown>(url: string, data?: unknown, options?: RequestOptions) => requestCore<T>(url, { ...(options ?? {}), method: 'PUT', data });
+export const del = <T = unknown>(url: string, params?: QueryParams, options?: RequestOptions) => requestCore<T>(url, { ...(options ?? {}), method: 'DELETE', params });
+export const remove = del;
+
+export const request = Object.assign(requestCore, { get, post, put, delete: del, remove });
+
+export const client = {
+  get,
+  post,
+  put,
+  delete: del,
+  request,
+  interceptors: {
+    request: { use: () => undefined },
+    response: { use: () => undefined },
+  },
+};
+
+export async function login<T = unknown>(payload?: Record<string, unknown>) {
+  return post<T>('/auth/login', payload);
+}
+
+export function getTaskBundleDownload(taskId: string): string {
+  return `/api/v1/tasks/${taskId}/bundle/download`;
+}
+
+export function getTaskStreamUrl(taskId: string): string {
+  return withTokenQuery(`/api/v1/tasks/${taskId}/stream`);
+}
+
+export const api = {
+  get,
+  post,
+  put,
+  delete: del,
+  request,
+  client,
+  login,
+};
+
+export default api;
+"""
+    constants_runtime = _render_compile_safe_constants_file(profile)
+    models_runtime = _render_compile_safe_models_file()
+
+    def _ensure_constants_import(text: str, names: list[str]) -> str:
+        match = re.search(r"import\s*\{(?P<body>[\s\S]*?)\}\s*from\s*['\"]\.\./types/constants['\"];", text)
+        if not match:
+            return text
+        current = [part.strip() for part in match.group("body").replace("\n", " ").split(",") if part.strip()]
+        for name in names:
+            if name not in current:
+                current.append(name)
+        replacement = "import { " + ", ".join(current) + " } from '../types/constants';"
+        return text[: match.start()] + replacement + text[match.end() :]
+
     for relative_path in required_files:
         content = str(synthesized.get(relative_path, "") or "")
-        if relative_path != "frontend/src/services/api.ts" or not content.strip():
+        if relative_path == "frontend/src/types/constants.ts":
+            if force_runtime_fallback:
+                if content.strip() != constants_runtime.strip():
+                    synthesized[relative_path] = constants_runtime
+                    repaired_paths.append(relative_path)
+                continue
+            if not content.strip():
+                continue
+            normalized = content
+            changed = False
+            if "import.meta.env" in normalized or "process.env" in normalized:
+                normalized = constants_runtime
+                changed = True
+            if changed:
+                synthesized[relative_path] = normalized
+                repaired_paths.append(relative_path)
+            continue
+        if relative_path == "frontend/src/types/models.ts":
+            if force_runtime_fallback:
+                if content.strip() != models_runtime.strip():
+                    synthesized[relative_path] = models_runtime
+                    repaired_paths.append(relative_path)
+                continue
+            if not content.strip():
+                continue
+            if not _has_balanced_delimiters(content):
+                synthesized[relative_path] = models_runtime
+                repaired_paths.append(relative_path)
+            continue
+        if relative_path != "frontend/src/services/api.ts":
+            continue
+        if force_runtime_fallback:
+            if content.strip() != request_runtime.strip():
+                synthesized[relative_path] = request_runtime
+                repaired_paths.append(relative_path)
+            continue
+        if not content.strip():
             continue
 
+        changed = False
         normalized = content.replace(
             "PageParams & Record<string, unknown>",
             "PageParams | Record<string, unknown>",
@@ -859,50 +1807,83 @@ def _synthesize_support_runtime_files(
             "  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');",
             "  const entries = Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '');",
         )
-        request_runtime = """const BASE_URL = '/api/v1';
-
-type RequestOptions = RequestInit & {
-  params?: Record<string, unknown>;
-};
-
-const buildQueryString = (params?: Record<string, unknown>) => {
-  const entries = Object.entries(params ?? {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
-  if (!entries.length) return '';
-  return '?' + entries.map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join('&');
-};
-
-async function doRequest<T>(url: string, options: RequestOptions = {}): Promise<T> {
-  const token = localStorage.getItem('token');
-  const { params, headers, ...rest } = options;
-  const response = await fetch(`${BASE_URL}${url}${buildQueryString(params)}`, {
-    ...rest,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`请求失败: ${response.status}`);
-  }
-  return (await response.json()) as T;
-}
-
-const request = {
-  get: <T>(url: string, options?: RequestOptions) => doRequest<T>(url, { ...(options ?? {}), method: 'GET' }),
-  post: <T>(url: string, data?: unknown, options?: RequestOptions) =>
-    doRequest<T>(url, { ...(options ?? {}), method: 'POST', body: data === undefined ? undefined : JSON.stringify(data) }),
-  put: <T>(url: string, data?: unknown, options?: RequestOptions) =>
-    doRequest<T>(url, { ...(options ?? {}), method: 'PUT', body: data === undefined ? undefined : JSON.stringify(data) }),
-  delete: <T>(url: string, options?: RequestOptions) => doRequest<T>(url, { ...(options ?? {}), method: 'DELETE' }),
-};
-"""
+        if normalized != content:
+            changed = True
+        normalized = re.sub(
+            r"const\s+BASE_URL\s*=\s*import\.meta\.env\.[A-Z0-9_]+\s*\|\|\s*(['\"][^'\"]+['\"]);",
+            r"const BASE_URL = ((globalThis as { __IPRIGHT_API_BASE_URL__?: string }).__IPRIGHT_API_BASE_URL__) || \1;",
+            normalized,
+        )
+        normalized = re.sub(
+            r"const\s+(?:baseUrl|baseURL|apiBaseUrl|apiBaseURL|API_BASE_URL)\s*=\s*import\.meta\.env\.[A-Z0-9_]+\s*;",
+            "const BASE_URL = ((globalThis as { __IPRIGHT_API_BASE_URL__?: string }).__IPRIGHT_API_BASE_URL__) || '/api/v1';",
+            normalized,
+        )
+        normalized = re.sub(
+            r"\$\{(?:baseUrl|baseURL|apiBaseUrl|apiBaseURL)\}",
+            "${BASE_URL}",
+            normalized,
+        )
+        normalized = re.sub(
+            r"const\s+(?:baseUrl|baseURL|apiBaseUrl|apiBaseURL|API_BASE_URL)\s*=\s*import\.meta\.env\.[A-Z0-9_]+\s*\|\|\s*(['\"][^'\"]+['\"]);",
+            r"const BASE_URL = ((globalThis as { __IPRIGHT_API_BASE_URL__?: string }).__IPRIGHT_API_BASE_URL__) || \1;",
+            normalized,
+        )
+        normalized = re.sub(
+            r"import\.meta\.env\.[A-Z0-9_]+",
+            "((globalThis as { __IPRIGHT_API_BASE_URL__?: string }).__IPRIGHT_API_BASE_URL__) || '/api/v1'",
+            normalized,
+        )
+        normalized = normalized.replace(
+            "get: <T>(url: string, params?: Record<string, string | number | boolean | undefined>) => {",
+            "get: <T>(url: string, params?: Record<string, unknown>) => {",
+        )
         request_import_pattern = re.compile(
             r"import\s+(?:\{[^}]*\}\s+from\s+|[A-Za-z_$][\w$]*\s+from\s+)?['\"][^'\"]*request(?:\.[a-z]+)?['\"];\s*",
         )
         if request_import_pattern.search(normalized):
             normalized = request_import_pattern.sub(request_runtime, normalized, count=1)
+            changed = True
+        if any(token in normalized for token in ("status: 'generated'", 'status: "generated"', "status: 'draft'", 'status: "draft"', "status: 'failed'", 'status: "failed"')):
+            normalized = _ensure_constants_import(normalized, ["ReportStatus"])
+        if "status: 'generated'" in normalized or 'status: "generated"' in normalized:
+            normalized = normalized.replace("status: 'generated'", "status: ReportStatus.GENERATED")
+            normalized = normalized.replace('status: "generated"', "status: ReportStatus.GENERATED")
+        if "status: 'draft'" in normalized or 'status: "draft"' in normalized:
+            normalized = normalized.replace("status: 'draft'", "status: ReportStatus.DRAFT")
+            normalized = normalized.replace('status: "draft"', "status: ReportStatus.DRAFT")
+        if "status: 'failed'" in normalized or 'status: "failed"' in normalized:
+            normalized = normalized.replace("status: 'failed'", "status: ReportStatus.FAILED")
+            normalized = normalized.replace('status: "failed"', "status: ReportStatus.FAILED")
+        if any(token in normalized for token in ("status: 'pending'", 'status: "pending"', "status: 'running'", 'status: "running"', "status: 'completed'", 'status: "completed"')):
+            normalized = _ensure_constants_import(normalized, ["AnalysisStatus"])
+            normalized = normalized.replace("status: 'pending'", "status: AnalysisStatus.PENDING")
+            normalized = normalized.replace('status: "pending"', "status: AnalysisStatus.PENDING")
+            normalized = normalized.replace("status: 'running'", "status: AnalysisStatus.RUNNING")
+            normalized = normalized.replace('status: "running"', "status: AnalysisStatus.RUNNING")
+            normalized = normalized.replace("status: 'completed'", "status: AnalysisStatus.COMPLETED")
+            normalized = normalized.replace('status: "completed"', "status: AnalysisStatus.COMPLETED")
+        if any(token in normalized for token in ("= 'pending'", '= "pending"', "= 'running'", '= "running"', "= 'completed'", '= "completed"', "= 'failed'", '= "failed"')):
+            normalized = _ensure_constants_import(normalized, ["AnalysisStatus"])
+            normalized = normalized.replace("= 'pending'", "= AnalysisStatus.PENDING")
+            normalized = normalized.replace('= "pending"', "= AnalysisStatus.PENDING")
+            normalized = normalized.replace("= 'running'", "= AnalysisStatus.RUNNING")
+            normalized = normalized.replace('= "running"', "= AnalysisStatus.RUNNING")
+            normalized = normalized.replace("= 'completed'", "= AnalysisStatus.COMPLETED")
+            normalized = normalized.replace('= "completed"', "= AnalysisStatus.COMPLETED")
+            normalized = normalized.replace("= 'failed'", "= AnalysisStatus.FAILED")
+            normalized = normalized.replace('= "failed"', "= AnalysisStatus.FAILED")
+        if "exportFormats:" in normalized and any(token in normalized for token in ("'PDF'", '"PDF"', "'Excel'", '"Excel"', "'图片'", '"图片"')):
+            normalized = _ensure_constants_import(normalized, ["ExportFormat"])
+            normalized = normalized.replace("'PDF'", "ExportFormat.PDF")
+            normalized = normalized.replace('"PDF"', "ExportFormat.PDF")
+            normalized = normalized.replace("'Excel'", "ExportFormat.EXCEL")
+            normalized = normalized.replace('"Excel"', "ExportFormat.EXCEL")
+            normalized = normalized.replace("'图片'", "ExportFormat.IMAGE")
+            normalized = normalized.replace('"图片"', "ExportFormat.IMAGE")
         if normalized != content:
+            changed = True
+        if changed:
             synthesized[relative_path] = normalized
             repaired_paths.append(relative_path)
 
@@ -929,19 +1910,258 @@ def _dedupe_ant_icon_imports(content: str) -> str:
     return pattern.sub(_replace, content, count=1)
 
 
+def _inject_string_number_index_signatures(content: str) -> str:
+    if "[key: string]:" in content:
+        return content
+    if not re.search(r"\b[A-Za-z_][A-Za-z0-9_]*\[[A-Za-z_][A-Za-z0-9_]*\]", content):
+        return content
+    if "interface " not in content:
+        return content
+
+    lines = content.splitlines()
+    rewritten: list[str] = []
+    index = 0
+    changed = False
+    while index < len(lines):
+        line = lines[index]
+        rewritten.append(line)
+        match = re.match(r"^(\s*)interface\s+[A-Za-z_][A-Za-z0-9_]*\s*\{\s*$", line)
+        if not match:
+            index += 1
+            continue
+
+        indent = match.group(1) + "  "
+        block_index = index + 1
+        block_lines: list[str] = []
+        while block_index < len(lines):
+            block_line = lines[block_index]
+            if re.match(rf"^{re.escape(match.group(1))}\}};?\s*$", block_line):
+                break
+            block_lines.append(block_line)
+            block_index += 1
+        if block_lines and not any("[key: string]:" in block_line for block_line in block_lines):
+            rewritten.append(f"{indent}[key: string]: unknown;")
+            changed = True
+        index += 1
+    return "\n".join(rewritten) if changed else content
+
+
+def _normalize_nullable_numeric_comparisons(content: str) -> str:
+    pattern = re.compile(r"(?P<expr>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*>\s*0")
+
+    def _replace(match: re.Match[str]) -> str:
+        expr = match.group("expr")
+        if "??" in expr or "?." in expr:
+            return match.group(0)
+        return f"({expr} ?? 0) > 0"
+
+    return pattern.sub(_replace, content)
+
+
+def _normalize_stats_trend_literals(content: str) -> str:
+    pattern = re.compile(
+        r"trend:\s*(?P<expr>[^,\n]+?\?\s*'up'\s*:\s*[^,\n]+?\?\s*'down'\s*:\s*'stable')"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        expr = match.group("expr").strip()
+        if "StatResultTrend['trend']" in expr:
+            return match.group(0)
+        return f"trend: ({expr}) as StatResultTrend['trend']"
+
+    return pattern.sub(_replace, content)
+
+
+def _normalize_svg_setattribute_calls(content: str) -> str:
+    numeric_attrs = {
+        "x",
+        "y",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "cx",
+        "cy",
+        "r",
+        "rx",
+        "ry",
+        "width",
+        "height",
+    }
+    pattern = re.compile(r"(?P<prefix>\.setAttribute\(\s*['\"](?P<attr>[^'\"]+)['\"]\s*,\s*)(?P<expr>[^;\n]+?)(?P<suffix>\s*\);)")
+
+    def _replace(match: re.Match[str]) -> str:
+        attr = match.group("attr")
+        expr = match.group("expr").strip()
+        if attr == "fill" and "=>" in expr:
+            return f"{match.group('prefix')}'#333'{match.group('suffix')}"
+        if attr not in numeric_attrs:
+            return match.group(0)
+        if expr.startswith(("'", '"', "`")) or expr.startswith("String(") or expr.endswith(".toString()"):
+            return match.group(0)
+        return f"{match.group('prefix')}String({expr}){match.group('suffix')}"
+
+    return pattern.sub(_replace, content)
+
+
+def _find_module_page_metadata(profile: dict, relative_path: str) -> dict[str, object]:
+    for page in build_codegen_requirements(profile).get("module_pages", []):
+        if page.get("file_path") == relative_path:
+            return dict(page)
+    component_name = Path(relative_path).stem
+    return {
+        "title": component_name.replace("Page", "") or component_name,
+        "route": f"/{component_name.replace('Page', '').lower()}",
+        "description": "",
+        "primary_action": "查看详情",
+        "filter_placeholder": "请输入关键词筛选",
+        "table_headers": ["项目名称", "当前状态", "更新时间"],
+        "rows": [],
+        "highlights": [],
+    }
+
+
+def _coerce_compile_safe_rows(page_meta: dict[str, object]) -> list[dict[str, str]]:
+    rows = list(page_meta.get("rows") or [])
+    if rows:
+        safe_rows: list[dict[str, str]] = []
+        for index, row in enumerate(rows[:6], start=1):
+            if isinstance(row, dict):
+                safe_row = {str(key): str(value) for key, value in row.items()}
+            else:
+                safe_row = {"项目名称": str(row)}
+            safe_row.setdefault("id", str(index))
+            safe_rows.append(safe_row)
+        return safe_rows
+
+    highlights = [str(item).strip() for item in list(page_meta.get("highlights") or []) if str(item).strip()]
+    table_headers = [str(item).strip() for item in list(page_meta.get("table_headers") or []) if str(item).strip()]
+    primary_header = table_headers[0] if table_headers else "项目名称"
+    status_header = table_headers[1] if len(table_headers) > 1 else "当前状态"
+    time_header = table_headers[2] if len(table_headers) > 2 else "更新时间"
+    source_items = highlights[:4] or [str(page_meta.get("title") or "业务对象"), "关键指标", "分析任务", "处理记录"]
+    return [
+        {
+            "id": str(index),
+            primary_header: item,
+            status_header: "正常" if index % 2 else "关注中",
+            time_header: f"2026-06-{index + 1:02d} 09:{index * 7:02d}",
+        }
+        for index, item in enumerate(source_items, start=1)
+    ]
+
+
+def _render_compile_safe_module_page(relative_path: str, profile: dict) -> str:
+    page_meta = _find_module_page_metadata(profile, relative_path)
+    title = str(page_meta.get("title") or Path(relative_path).stem.replace("Page", "")).strip() or "业务页面"
+    description = str(page_meta.get("description") or f"{title}帮助业务团队查看关键指标、处理状态和近期变化。").strip()
+    route = str(page_meta.get("route") or "").strip()
+    primary_action = str(page_meta.get("primary_action") or "查看详情").strip() or "查看详情"
+    filter_placeholder = str(page_meta.get("filter_placeholder") or "请输入关键词筛选").strip() or "请输入关键词筛选"
+    highlights = [str(item).strip() for item in list(page_meta.get("highlights") or []) if str(item).strip()][:4]
+    if not highlights:
+        highlights = ["关键指标总览", "任务状态追踪", "异常问题定位", "结果导出复核"]
+    rows = _coerce_compile_safe_rows(page_meta)
+    header_candidates = [str(item).strip() for item in list(page_meta.get("table_headers") or []) if str(item).strip()]
+    all_headers = list(dict.fromkeys(["id", *header_candidates, *[key for row in rows for key in row.keys() if key != "id"]]))
+    column_headers = [header for header in all_headers if header != "id"]
+    summary_cards = [
+        {"label": "记录数", "value": len(rows)},
+        {"label": "重点事项", "value": len(highlights)},
+        {"label": "当前路由", "value": route or "/dashboard"},
+    ]
+    component_name = _camel_name(Path(relative_path).stem)
+    route_label = route or "/dashboard"
+
+    return "\n".join(
+        [
+            "import React from 'react';",
+            "",
+            f"const summaryCards: Array<{{ label: string; value: string | number }}> = {json.dumps(summary_cards, ensure_ascii=False, indent=2)};",
+            f"const highlightItems: string[] = {json.dumps(highlights, ensure_ascii=False, indent=2)};",
+            f"const tableData: Array<Record<string, string>> = {json.dumps(rows, ensure_ascii=False, indent=2)};",
+            f"const tableHeaders: string[] = {json.dumps(column_headers, ensure_ascii=False, indent=2)};",
+            "",
+            f"export default function {component_name}() {{",
+            "  return (",
+            "    <div>",
+            "      <section>",
+            f"        <h2>{json.dumps(title, ensure_ascii=False)}</h2>",
+            f"        <p>{json.dumps(description, ensure_ascii=False)}</p>",
+            f"        <p>{json.dumps(f'当前页面已启用编译安全渲染，保留 {title} 的核心信息展示与检视能力。', ensure_ascii=False)}</p>",
+            "      </section>",
+            "      <section>",
+            "        <ul>",
+            "        {summaryCards.map((item) => (",
+            "          <li key={item.label}>",
+            "            <strong>{item.label}</strong>: {String(item.value)}",
+            "          </li>",
+            "        ))}",
+            "        </ul>",
+            "      </section>",
+            "      <section>",
+            "        <ul>",
+            "          {highlightItems.map((item) => (",
+            "            <li key={item}>{item}</li>",
+            "          ))}",
+            "        </ul>",
+            "      </section>",
+            "      <section>",
+            f"        <input aria-label=\"compile-safe-filter\" placeholder={json.dumps(filter_placeholder, ensure_ascii=False)} />",
+            f"        <button type=\"button\">{json.dumps(primary_action, ensure_ascii=False)}</button>",
+            "      </section>",
+            "      <section>",
+            f"        <p>{json.dumps(f'页面路由：{route_label}', ensure_ascii=False)}</p>",
+            "          <table>",
+            "            <thead>",
+            "              <tr>",
+            "                {tableHeaders.map((header) => (",
+            "                  <th key={header}>{header}</th>",
+            "                ))}",
+            "              </tr>",
+            "            </thead>",
+            "            <tbody>",
+            "              {tableData.map((row) => (",
+            "                <tr key={String(row.id)}>",
+            "                  {tableHeaders.map((header) => (",
+            "                    <td key={`${row.id}-${header}`}>{String(row[header] ?? '')}</td>",
+            "                  ))}",
+            "                </tr>",
+            "              ))}",
+            "            </tbody>",
+            "          </table>",
+            "      </section>",
+            "    </div>",
+            "  );",
+            "}",
+            "",
+        ]
+    )
+
+
 def _synthesize_module_compile_files(
     generated_files: dict[str, str],
-    required_files: list[str],
+    profile_or_required_files: dict | list[str] | None,
+    required_files: list[str] | None = None,
     *,
     overwrite_existing: bool = False,
+    force_safe_fallback: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
     del overwrite_existing
+    if required_files is None:
+        profile = {}
+        required_files = list(profile_or_required_files or [])
+    else:
+        profile = dict(profile_or_required_files or {})
     synthesized = dict(generated_files)
     repaired_paths: list[str] = []
     icon_replacements = {
+        "DataSourceOutlined": "DatabaseOutlined",
         "RouteOutlined": "NodeIndexOutlined",
         "OutboxOutlined": "ExportOutlined",
         "SnowflakeOutlined": "CloudServerOutlined",
+        "CleaningServicesOutlined": "ToolOutlined",
+        "CleaningOutlined": "ClearOutlined",
     }
     for relative_path in required_files:
         if not relative_path.startswith("frontend/src/pages/") or (
@@ -949,7 +2169,11 @@ def _synthesize_module_compile_files(
         ):
             continue
         content = str(synthesized.get(relative_path, "") or "")
+        fallback_page = _render_compile_safe_module_page(relative_path, profile)
         if not content.strip():
+            if force_safe_fallback:
+                synthesized[relative_path] = fallback_page
+                repaired_paths.append(relative_path)
             continue
 
         normalized = content
@@ -972,6 +2196,18 @@ def _synthesize_module_compile_files(
             if source in normalized:
                 normalized = normalized.replace(source, target)
                 changed = True
+        if "Checkbox" in normalized and "from 'antd'" in normalized:
+            antd_import_match = re.search(r"import\s*\{(?P<body>[\s\S]*?)\}\s*from\s*'antd';", normalized)
+            if antd_import_match and "Checkbox" not in antd_import_match.group("body"):
+                body_parts = [part.strip() for part in antd_import_match.group("body").replace("\n", " ").split(",") if part.strip()]
+                body_parts.append("Checkbox")
+                replacement = "import {\n  " + ", ".join(dict.fromkeys(body_parts)) + "\n} from 'antd';"
+                normalized = normalized[: antd_import_match.start()] + replacement + normalized[antd_import_match.end() :]
+                changed = True
+        normalized_checkbox_event = re.sub(r"onChange=\{\((e)\)\s*=>", r"onChange={(\1: { target: { checked: boolean } }) =>", normalized)
+        if normalized_checkbox_event != normalized and "Checkbox" in normalized:
+            normalized = normalized_checkbox_event
+            changed = True
         if 'align="right"' in normalized:
             normalized = normalized.replace('align="right"', 'align="end"')
             changed = True
@@ -990,9 +2226,58 @@ def _synthesize_module_compile_files(
             else:
                 normalized = styles_block + "\n" + normalized
             changed = True
+        normalized_indexed = _inject_string_number_index_signatures(normalized)
+        if normalized_indexed != normalized:
+            normalized = normalized_indexed
+            changed = True
+        normalized_trend = _normalize_stats_trend_literals(normalized)
+        if normalized_trend != normalized:
+            normalized = normalized_trend
+            changed = True
+        normalized_nullable_numbers = _normalize_nullable_numeric_comparisons(normalized)
+        if normalized_nullable_numbers != normalized:
+            normalized = normalized_nullable_numbers
+            changed = True
+        normalized_safe_rule = normalized.replace("detailModal.rule.dataSourceId", "detailModal.rule?.dataSourceId ?? ''")
+        if normalized_safe_rule != normalized:
+            normalized = normalized_safe_rule
+            changed = True
+        if "Transfer" in normalized and "setSelectedFields(" in normalized:
+            normalized_transfer_keys = re.sub(
+                r"setSelectedFields\((?P<keys>[A-Za-z_][A-Za-z0-9_]*)\)",
+                r"setSelectedFields(\g<keys> as string[])",
+                normalized,
+            )
+            if normalized_transfer_keys != normalized:
+                normalized = normalized_transfer_keys
+                changed = True
+        normalized_onfilter = re.sub(r"onFilter:\s*\((value):\s*string,\s*(record)\s*:", r"onFilter: (\1: string | number | boolean, \2:", normalized)
+        if normalized_onfilter != normalized:
+            normalized = normalized_onfilter
+            changed = True
+        if "render:" in normalized:
+            normalized_columns = re.sub(
+                r"const\s+([A-Za-z_][A-Za-z0-9_]*Columns)\s*=\s*\[",
+                r"const \1: any[] = [",
+                normalized,
+            )
+            if normalized_columns != normalized:
+                normalized = normalized_columns
+                changed = True
+        normalized_svg_component = _normalize_svg_component_props(normalized)
+        if normalized_svg_component != normalized:
+            normalized = normalized_svg_component
+            changed = True
+        normalized_svg = _normalize_svg_setattribute_calls(normalized)
+        if normalized_svg != normalized:
+            normalized = normalized_svg
+            changed = True
         if changed:
             normalized = _dedupe_ant_icon_imports(normalized)
-        if normalized != content:
+        if force_safe_fallback and not changed:
+            normalized = fallback_page
+            changed = True
+        if changed:
             synthesized[relative_path] = normalized
             repaired_paths.append(relative_path)
 
@@ -1385,11 +2670,16 @@ async def generate_task_app_code(
         codegen_requirements["required_files"],
     )
     if invalid_support_paths:
+        has_partial_support = any(
+            str(generated_files.get(relative_path, "") or "").strip()
+            for relative_path in invalid_support_paths
+        )
         generated_files, repaired_invalid_support_paths = _synthesize_support_runtime_files(
             generated_files,
             profile,
             invalid_support_paths,
             overwrite_existing=True,
+            force_runtime_fallback=has_partial_support,
         )
         if repaired_invalid_support_paths:
             repaired_support_paths = sorted(set([*repaired_support_paths, *repaired_invalid_support_paths]))
@@ -1693,6 +2983,31 @@ async def generate_task_app_code(
                 break
     repaired_module_paths: list[str] = []
     if invalid_module_paths:
+        generated_files, repaired_invalid_module_paths = _synthesize_module_compile_files(
+            generated_files,
+            profile,
+            invalid_module_paths,
+            overwrite_existing=True,
+            force_safe_fallback=True,
+        )
+        if repaired_invalid_module_paths:
+            repaired_module_paths = sorted(set([*repaired_module_paths, *repaired_invalid_module_paths]))
+            generated_files, invalid_module_paths = repair_invalid_module_pages(generated_files, profile)
+            batch_reports.append(
+                {
+                    "batch": "module_structural_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_invalid_module_paths),
+                    "generated_paths": sorted(repaired_invalid_module_paths),
+                    "fallback_to_template": bool(invalid_module_paths),
+                    "error": (
+                        "still invalid after structural fallback: " + ", ".join(invalid_module_paths)
+                        if invalid_module_paths
+                        else None
+                    ),
+                }
+            )
+    if invalid_module_paths:
         invalid_module_previews = {
             relative_path: _preview_generated_content(generated_files.get(relative_path, ""))
             for relative_path in invalid_module_paths
@@ -1707,8 +3022,11 @@ async def generate_task_app_code(
             "App code generation failed: missing or invalid LLM-generated module frontend files: "
             + ", ".join(invalid_module_paths)
         )
-    generated_files = normalize_generated_frontend_files(generated_files)
-    applied, apply_error = apply_generated_code_bundle(app_root, generated_files, codegen_requirements["required_files"])
+    generated_files, applied, apply_error = _apply_normalized_generated_code_bundle(
+        app_root,
+        generated_files,
+        codegen_requirements["required_files"],
+    )
     if not applied:
         return _build_codegen_report(
             repaired_core_paths=sorted(repaired_core_paths),
@@ -1719,16 +3037,25 @@ async def generate_task_app_code(
 
     sync_frontend_dependencies(os.path.join(app_root, "frontend"))
     invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
-    if "frontend/src/App.tsx" in invalid_compile_paths:
+    compile_invalid_core_paths = [
+        path
+        for path in invalid_compile_paths
+        if path in {
+            "frontend/src/App.tsx",
+            "frontend/src/pages/Login.tsx",
+            "frontend/src/pages/Dashboard.tsx",
+        }
+    ]
+    if compile_invalid_core_paths:
         generated_files, repaired_compile_core_paths = _synthesize_structured_core_files(
             generated_files,
             profile,
-            ["frontend/src/App.tsx"],
+            compile_invalid_core_paths,
             overwrite_existing=True,
         )
         if repaired_compile_core_paths:
             repaired_core_paths = sorted(set([*repaired_core_paths, *repaired_compile_core_paths]))
-            applied, apply_error = apply_generated_code_bundle(
+            generated_files, applied, apply_error = _apply_normalized_generated_code_bundle(
                 app_root,
                 generated_files,
                 codegen_requirements["required_files"],
@@ -1746,7 +3073,7 @@ async def generate_task_app_code(
                 {
                     "batch": "core_compile_fallback",
                     "attempt": 1,
-                    "required_files": ["frontend/src/App.tsx"],
+                    "required_files": list(repaired_compile_core_paths),
                     "generated_paths": sorted(repaired_compile_core_paths),
                     "fallback_to_template": bool(invalid_compile_paths),
                     "error": (
@@ -1774,7 +3101,7 @@ async def generate_task_app_code(
         )
         if repaired_compile_support_paths:
             repaired_support_paths = sorted(set([*repaired_support_paths, *repaired_compile_support_paths]))
-            applied, apply_error = apply_generated_code_bundle(
+            generated_files, applied, apply_error = _apply_normalized_generated_code_bundle(
                 app_root,
                 generated_files,
                 codegen_requirements["required_files"],
@@ -1806,17 +3133,22 @@ async def generate_task_app_code(
         path
         for path in invalid_compile_paths
         if path.startswith("frontend/src/pages/")
-        and path != "frontend/src/pages/Login.tsx"
+        and path not in {
+            "frontend/src/pages/Login.tsx",
+            "frontend/src/pages/Dashboard.tsx",
+        }
     ]
     if compile_invalid_module_paths:
         generated_files, repaired_compile_module_paths = _synthesize_module_compile_files(
             generated_files,
+            profile,
             compile_invalid_module_paths,
             overwrite_existing=True,
+            force_safe_fallback=True,
         )
         if repaired_compile_module_paths:
             repaired_module_paths = sorted(set([*repaired_module_paths, *repaired_compile_module_paths]))
-            applied, apply_error = apply_generated_code_bundle(
+            generated_files, applied, apply_error = _apply_normalized_generated_code_bundle(
                 app_root,
                 generated_files,
                 codegen_requirements["required_files"],
@@ -1839,6 +3171,75 @@ async def generate_task_app_code(
                     "fallback_to_template": bool(invalid_compile_paths),
                     "error": (
                         "still invalid after compile fallback: " + ", ".join(invalid_compile_paths)
+                        if invalid_compile_paths
+                        else None
+                    ),
+                }
+            )
+    if invalid_compile_paths:
+        generated_files, repaired_terminal_paths = _apply_terminal_compile_fallback(
+            generated_files,
+            profile,
+            invalid_compile_paths,
+        )
+        if repaired_terminal_paths:
+            terminal_core_paths = [
+                path
+                for path in repaired_terminal_paths
+                if path in {
+                    "frontend/src/App.tsx",
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                }
+            ]
+            terminal_module_paths = [
+                path
+                for path in repaired_terminal_paths
+                if path.startswith("frontend/src/pages/")
+                and path not in {
+                    "frontend/src/pages/Login.tsx",
+                    "frontend/src/pages/Dashboard.tsx",
+                }
+            ]
+            terminal_support_paths = [
+                path
+                for path in repaired_terminal_paths
+                if path in {
+                    "frontend/src/services/api.ts",
+                    "frontend/src/types/constants.ts",
+                    "frontend/src/types/models.ts",
+                }
+            ]
+            if terminal_core_paths:
+                repaired_core_paths = sorted(set([*repaired_core_paths, *terminal_core_paths]))
+            if terminal_module_paths:
+                repaired_module_paths = sorted(set([*repaired_module_paths, *terminal_module_paths]))
+            if terminal_support_paths:
+                repaired_support_paths = sorted(set([*repaired_support_paths, *terminal_support_paths]))
+            generated_files, applied, apply_error = _apply_normalized_generated_code_bundle(
+                app_root,
+                generated_files,
+                codegen_requirements["required_files"],
+                preserve_paths=_terminal_safe_frontend_paths(profile),
+            )
+            if not applied:
+                return _build_codegen_report(
+                    repaired_core_paths=sorted(repaired_core_paths),
+                    repaired_module_paths=sorted(repaired_module_paths),
+                    repaired_support_paths=sorted(repaired_support_paths),
+                    apply_error=apply_error,
+                ), f"App code generation failed: {apply_error}"
+            sync_frontend_dependencies(os.path.join(app_root, "frontend"))
+            invalid_compile_paths, compile_error = validate_generated_frontend_build(app_root)
+            batch_reports.append(
+                {
+                    "batch": "terminal_compile_fallback",
+                    "attempt": 1,
+                    "required_files": list(repaired_terminal_paths),
+                    "generated_paths": sorted(repaired_terminal_paths),
+                    "fallback_to_template": bool(invalid_compile_paths),
+                    "error": (
+                        "still invalid after terminal fallback: " + ", ".join(invalid_compile_paths)
                         if invalid_compile_paths
                         else None
                     ),

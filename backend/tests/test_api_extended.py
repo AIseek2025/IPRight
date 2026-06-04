@@ -82,11 +82,41 @@ class TestTaskLifecycle:
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "取消测试"})
         task_id = resp.json()["data"]["task_id"]
 
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert build is not None
+            build.status = "running"
+            build.current_stage = "building"
+            await session.commit()
+
         resp2 = await async_client.post(f"/api/v1/tasks/{task_id}/cancel")
         assert resp2.status_code == 200
 
         resp3 = await async_client.get(f"/api/v1/tasks/{task_id}")
-        assert resp3.json()["data"]["status"] == "cancelled"
+        payload = resp3.json()["data"]
+        assert payload["status"] == "cancelled"
+        assert payload["active_build_id"] is None
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert build is not None
+            assert build.status == "cancelled"
+            assert build.failure_reason == "task cancelled by user"
+            assert build.finished_at is not None
 
     async def test_create_and_retry(self, async_client):
         resp = await async_client.post("/api/v1/tasks", json={"keyword": "重试测试"})
@@ -207,6 +237,157 @@ class TestTaskLifecycle:
             assert builds[0].status == "running"
             assert builds[0].current_stage == "compose_code_book"
             assert str(builds[0].id) == str(task.active_build_id)
+
+    async def test_retry_ignores_latest_queued_build_once_task_has_no_active_build(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "幽灵构建重试测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            latest_build = Build(
+                task_id=task.id,
+                build_no=2,
+                status="queued",
+                trigger_type="retry",
+                current_stage="plan",
+            )
+            session.add(latest_build)
+            task.status = "failed"
+            task.current_stage = "planning"
+            task.active_build_id = None
+            await session.commit()
+
+        retry_resp = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={})
+        assert retry_resp.status_code == 200
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+            assert len(builds) == 3
+            assert builds[1].status == "aborted"
+            assert builds[1].failure_reason == "Superseded by a newer build retry"
+            assert builds[2].build_no == 3
+            assert builds[2].status == "queued"
+            assert str(builds[2].id) == str(task.active_build_id)
+
+    async def test_retry_dispatch_failure_marks_build_failed_and_clears_active_build(self, async_client, monkeypatch):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "派发失败回收测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        import sys
+        import types
+
+        from app.core.config import settings
+        from app.core.database import get_session_factory
+
+        class _FailingTask:
+            @staticmethod
+            def delay(*args, **kwargs):
+                raise RuntimeError("redis write blocked")
+
+        fake_celery_app = types.ModuleType("workers.celery_app")
+        fake_celery_app.orchestrate_task = _FailingTask()
+        monkeypatch.setitem(sys.modules, "workers.celery_app", fake_celery_app)
+        monkeypatch.setattr(settings, "AUTO_DISPATCH_TASKS", True)
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            first_build = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().first()
+            assert first_build is not None
+            first_build.status = "completed"
+            first_build.current_stage = "completed"
+            task.active_build_id = None
+            await session.commit()
+
+        retry_resp = await async_client.post(f"/api/v1/tasks/{task_id}/retry", json={})
+        assert retry_resp.status_code == 200
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            assert task.status == "failed"
+            assert task.current_stage == "planning"
+            assert task.active_build_id is None
+
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+            assert len(builds) == 2
+            assert builds[1].status == "failed"
+            assert builds[1].current_stage == "failed"
+            assert builds[1].failure_reason == "redis write blocked"
+
+            events = (
+                await session.execute(
+                    select(TaskEvent)
+                    .where(
+                        TaskEvent.task_id == task.id,
+                        TaskEvent.event_type == "task_retry_dispatch_failed",
+                    )
+                    .order_by(TaskEvent.created_at.desc())
+                )
+            ).scalars().all()
+            assert events
+            assert "redis write blocked" in (events[0].detail or "")
+
+    async def test_cancel_clears_all_queued_or_running_builds_for_task(self, async_client):
+        create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "取消清理幽灵构建测试"})
+        assert create_resp.status_code == 201
+        task_id = create_resp.json()["data"]["task_id"]
+
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            second_build = Build(
+                task_id=task.id,
+                build_no=2,
+                status="queued",
+                trigger_type="retry",
+                current_stage="plan",
+            )
+            session.add(second_build)
+            await session.flush()
+            task.active_build_id = second_build.id
+            task.status = "failed"
+            task.current_stage = "planning"
+            await session.commit()
+
+        cancel_resp = await async_client.post(f"/api/v1/tasks/{task_id}/cancel")
+        assert cancel_resp.status_code == 200
+
+        async with get_session_factory()() as session:
+            task = await session.get(Task, uuid.UUID(task_id))
+            assert task is not None
+            assert task.status == "cancelled"
+            assert task.active_build_id is None
+
+            builds = (
+                await session.execute(
+                    select(Build).where(Build.task_id == task.id).order_by(Build.build_no.asc())
+                )
+            ).scalars().all()
+            assert len(builds) == 2
+            assert builds[0].status == "cancelled"
+            assert builds[1].status == "cancelled"
 
     async def test_recover_interrupted_running_builds_marks_task_and_build_failed(self, async_client):
         create_resp = await async_client.post("/api/v1/tasks", json={"keyword": "中断恢复测试"})

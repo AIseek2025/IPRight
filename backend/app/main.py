@@ -114,4 +114,7 @@ app.include_router(exports_router)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": settings.APP_VERSION}
+    return {
+        "status": "ok",
+        "version": settings.APP_VERSION,
+    }

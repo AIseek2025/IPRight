@@ -26,6 +26,8 @@
 #   IPRIGHT_RELEASE_BRANCH   if set, refuse to release any branch but this
 #   IPRIGHT_SKIP_RESTART     set to 1 to skip systemctl restart steps
 #   IPRIGHT_RELEASE_NOTE     optional free-form note appended to history
+#   IPRIGHT_RELEASE_EXPECT_HEALTH_SUBSTRING
+#                           if set, require remote /health to contain the substring
 #
 set -euo pipefail
 
@@ -85,6 +87,7 @@ LOCAL_ARCHIVE="/tmp/${ARCHIVE_NAME}"
 REMOTE_RELEASES_DIR="${REMOTE_APP_ROOT}/releases"
 REMOTE_RELEASE_DIR="${REMOTE_RELEASES_DIR}/${RELEASE_ID}"
 REMOTE_CURRENT_LINK="${REMOTE_APP_ROOT}/current"
+REMOTE_DEPLOY_SCRIPT="${REMOTE_CURRENT_LINK}/scripts/ipright-ecs-full-deploy.sh"
 
 echo "== building archive of commit ${SHORT_COMMIT} =="
 git archive --format=tar.gz --prefix="ipright-${RELEASE_ID}/" \
@@ -112,7 +115,12 @@ sudo mv -Tf "${REMOTE_CURRENT_LINK}.new" "${REMOTE_CURRENT_LINK}"
 echo "Previous: \${PREVIOUS_TARGET:-<none>}"
 echo "Current:  \$(readlink -f ${REMOTE_CURRENT_LINK})"
 
-if [ "\${IPRIGHT_SKIP_RESTART:-${IPRIGHT_SKIP_RESTART:-0}}" != "1" ]; then
+if [ -f "${REMOTE_DEPLOY_SCRIPT}" ]; then
+  echo "== running full deploy script =="
+  APP_ROOT="${REMOTE_APP_ROOT}" CURRENT_ROOT="${REMOTE_CURRENT_LINK}" \
+    bash "${REMOTE_DEPLOY_SCRIPT}"
+elif [ "\${IPRIGHT_SKIP_RESTART:-${IPRIGHT_SKIP_RESTART:-0}}" != "1" ]; then
+  echo "warning: full deploy script missing; falling back to restart-only mode" >&2
   sudo systemctl restart ipright-api || true
   sudo systemctl restart ipright-worker || true
   sleep 3
@@ -126,6 +134,13 @@ if systemctl cat ipright-api 2>/dev/null | grep -q "${REMOTE_APP_ROOT}/current" 
 else
   echo "ERROR: systemd services are not pointing to ${REMOTE_APP_ROOT}/current" >&2
   exit 8
+fi
+
+if [ -n "${IPRIGHT_RELEASE_EXPECT_HEALTH_SUBSTRING:-}" ]; then
+  if ! curl -fsSL http://127.0.0.1:18000/health | grep -Fq "${IPRIGHT_RELEASE_EXPECT_HEALTH_SUBSTRING}"; then
+    echo "ERROR: remote /health does not contain expected probe '${IPRIGHT_RELEASE_EXPECT_HEALTH_SUBSTRING}'" >&2
+    exit 9
+  fi
 fi
 
 rm -f "/tmp/${ARCHIVE_NAME}"

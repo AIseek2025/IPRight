@@ -95,8 +95,27 @@ async def _resolve_export_artifact_path(db: AsyncSession, export: Export) -> Pat
     if not artifact or not artifact.local_path:
         return None
 
-    candidate = Path(artifact.local_path).expanduser().resolve(strict=False)
+    storage_root = Path(settings.WORKSPACE_ROOT).resolve()
+    task_root = (storage_root / "tasks" / str(export.task_id)).resolve()
+    raw_candidate = Path(artifact.local_path).expanduser()
+    if raw_candidate.is_symlink():
+        logger.warning(
+            "Rejecting export symlink artifact path: export=%s path=%s",
+            export.id,
+            raw_candidate,
+        )
+        return None
+    candidate = raw_candidate.resolve(strict=False)
     if not candidate.is_file():
+        return None
+    try:
+        candidate.relative_to(task_root)
+    except ValueError:
+        logger.warning(
+            "Rejecting export artifact path outside task workspace: export=%s path=%s",
+            export.id,
+            candidate,
+        )
         return None
     return candidate
 

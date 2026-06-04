@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Table, Tag, Typography, Input, Select, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { listTasks } from '@/api/client';
+import { listTasks, getApiErrorMessage } from '@/api/client';
 import { STATUS_LABELS, STATUS_COLORS } from '@/types';
 import type { TaskItem } from '@/types';
 import dayjs from 'dayjs';
@@ -42,9 +42,9 @@ export default function TaskList() {
       setTasks(data.items);
       setTotal(data.total);
       setError(null);
-    } catch {
+    } catch (err) {
       if (seq !== requestSeq.current) return;
-      setError('任务列表加载失败，请检查服务状态后重试');
+      setError(getApiErrorMessage(err, '任务列表加载失败，请检查服务状态后重试'));
     } finally {
       if (seq === requestSeq.current) {
         setLoading(false);

@@ -77,6 +77,31 @@ function unwrap<T>(res: { data: ApiResponse<T> }): T {
   return res.data.data;
 }
 
+type ApiErrorPayload = {
+  code?: string;
+  message?: string;
+};
+
+export function getApiErrorMessage(error: unknown, fallback = '请求失败，请稍后重试'): string {
+  if (axios.isAxiosError<ApiErrorPayload>(error)) {
+    const status = error.response?.status;
+    const payload = error.response?.data;
+    if (status === 401) {
+      return '鉴权失败，请使用带 token 的访问链接重新打开页面';
+    }
+    if (typeof payload?.message === 'string' && payload.message.trim()) {
+      return payload.message.trim();
+    }
+    if (typeof error.message === 'string' && error.message.trim()) {
+      return error.message.trim();
+    }
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
+
 function withTokenQuery(url: string): string {
   const token = getApiToken();
   if (!token) return url;

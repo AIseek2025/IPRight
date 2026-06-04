@@ -13,6 +13,7 @@ ENV_FILE="${ENV_FILE:-$APP_ROOT/backend/.env.production}"
 VENV_DIR="${VENV_DIR:-$APP_ROOT/backend/.venv}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3.11}"
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$APP_ROOT/shared/ms-playwright}"
+TMP_ROOT="${TMP_ROOT:-$APP_ROOT/shared/tmp}"
 RELEASE_TS="$(date +%Y%m%d-%H%M%S)"
 STATIC_RELEASE="$STATIC_ROOT/releases/$RELEASE_TS"
 
@@ -24,15 +25,19 @@ echo "FRONTEND_DIR=$FRONTEND_DIR"
 echo "VENV_DIR=$VENV_DIR"
 echo "STATIC_RELEASE=$STATIC_RELEASE"
 echo "PYTHON_BIN=$PYTHON_BIN"
+echo "TMP_ROOT=$TMP_ROOT"
 
 mkdir -p "$APP_ROOT/shared/workspace"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+mkdir -p "$TMP_ROOT"
+chmod 1777 "$TMP_ROOT"
 mkdir -p "$STATIC_ROOT/releases"
 
 echo "-- backend venv --"
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 . "$VENV_DIR/bin/activate"
 export PLAYWRIGHT_BROWSERS_PATH
+export TMPDIR="$TMP_ROOT"
 pip install --upgrade pip
 pip install -e "$BACKEND_DIR"
 pip install playwright

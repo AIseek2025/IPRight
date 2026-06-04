@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import uuid
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.state_machine import StageStatus
 from app.core.database import get_db
-from app.models.db import Artifact, Build, Export, Screenshot, Task, TaskEvent
+from app.models.db import Artifact, Build, Export, Screenshot, StageRun, Task, TaskEvent
 from app.services import TaskService, normalize_retry_stage
 from app.schemas.api import (
     ArtifactItem,
@@ -87,6 +87,24 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _safe_task_artifact_path(task_id: uuid.UUID, local_path: str) -> Path | None:
+    """Resolve an artifact file path and ensure it stays inside the task workspace."""
+    if not local_path:
+        return None
+    task_root = _task_root(task_id).resolve()
+    raw_candidate = Path(local_path).expanduser()
+    if raw_candidate.is_symlink():
+        logger.warning("Rejecting symlink artifact path: %s", raw_candidate)
+        return None
+    candidate = raw_candidate.resolve(strict=False)
+    if not candidate.is_file():
+        return None
+    if not _is_within(candidate, task_root):
+        logger.warning("Rejecting artifact path outside task workspace: %s", candidate)
+        return None
+    return candidate
+
+
 def _bundle_target(task: Task) -> tuple[Path, str, Path]:
     task_root = _task_root(task.id)
     downloads_dir = task_root / "downloads"
@@ -116,7 +134,7 @@ def _should_skip_bundle_path(task_root: Path, file_path: Path) -> bool:
     return file_path.suffix in _BUNDLE_EXCLUDED_SUFFIXES
 
 
-def _build_bundle(task: Task) -> tuple[Path, str]:
+def _build_bundle(task: Task) -> tuple[Path, str, Path, int]:
     task_root = _task_root(task.id)
     task_root_resolved = task_root.resolve()
     bundle_path, bundle_name, root_prefix = _bundle_target(task)
@@ -183,8 +201,8 @@ async def _hydrate_bundle_from_artifacts(
         for artifact in artifacts:
             if not artifact.local_path:
                 continue
-            file_path = Path(artifact.local_path).expanduser().resolve(strict=False)
-            if not file_path.is_file() or file_path.is_symlink() or file_path in seen_paths:
+            file_path = _safe_task_artifact_path(task.id, artifact.local_path)
+            if file_path is None or file_path in seen_paths:
                 continue
             seen_paths.add(file_path)
             safe_name = artifact.artifact_name or f"{artifact.artifact_type}.bin"
@@ -319,6 +337,9 @@ async def get_task_dashboard(task_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 @router.get("/tasks/{task_id}/timeline")
 async def get_task_timeline(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
     events_q = await db.execute(
         select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.created_at.asc())
     )
@@ -369,11 +390,16 @@ async def download_task_bundle(task_id: uuid.UUID, db: AsyncSession = Depends(ge
     effective_build_id = await _resolve_effective_build_id(db, task)
     bundle_path, bundle_name, root_prefix = _bundle_target(task)
     if bundle_path.is_file() and bundle_path.stat().st_size > 0:
-        return FileResponse(
-            path=bundle_path,
-            filename=bundle_name,
-            media_type="application/zip",
-        )
+        try:
+            with zipfile.ZipFile(bundle_path, "r") as zf:
+                if zf.namelist():
+                    return FileResponse(
+                        path=bundle_path,
+                        filename=bundle_name,
+                        media_type="application/zip",
+                    )
+        except zipfile.BadZipFile:
+            logger.warning("Ignoring corrupt cached bundle for task %s: %s", task.id, bundle_path)
 
     bundle_path, bundle_name, root_prefix, added_files = _build_bundle(task)
     if added_files == 0:
@@ -443,8 +469,8 @@ async def download_task_screenshot_image(
     if not artifact or not artifact.local_path:
         raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_IMAGE_MISSING", "message": "screenshot image does not exist"})
 
-    file_path = Path(artifact.local_path).expanduser().resolve(strict=False)
-    if not file_path.is_file():
+    file_path = _safe_task_artifact_path(task_id, artifact.local_path)
+    if file_path is None:
         raise HTTPException(status_code=404, detail={"code": "SCREENSHOT_IMAGE_MISSING", "message": "screenshot image file not found"})
 
     return FileResponse(path=file_path, filename=artifact.artifact_name or file_path.name, media_type=artifact.mime_type or "image/png")
@@ -466,7 +492,7 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
             },
         )
 
-    active_build = await _resolve_effective_build_id(db, task, task.active_build_id)
+    active_build = task.active_build_id
     if active_build:
         active_build_obj = await db.get(Build, active_build)
         if active_build_obj and active_build_obj.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
@@ -499,16 +525,26 @@ async def retry_task(task_id: uuid.UUID, body: TaskRetryRequest, db: AsyncSessio
         except Exception as exc:
             logger.exception("Failed to redispatch task %s build %s", task.id, build.id)
             async with db.begin():
+                now = datetime.now(timezone.utc)
                 fresh_task = await db.get(Task, task.id)
+                fresh_build = await db.get(Build, build.id)
+                if fresh_build:
+                    fresh_build.status = StageStatus.FAILED.value
+                    fresh_build.current_stage = StageStatus.FAILED.value
+                    fresh_build.failure_reason = str(exc)
+                    fresh_build.finished_at = now
                 if fresh_task:
                     fresh_task.status = "failed"
                     fresh_task.current_stage = retry_stage.value if retry_stage else "planning"
+                    fresh_task.updated_at = now
+                    if fresh_task.active_build_id == build.id:
+                        fresh_task.active_build_id = None
                 db.add(TaskEvent(
                     task_id=task.id,
                     build_id=build.id,
                     event_type="task_retry_dispatch_failed",
                     title="任务重试派发失败",
-                    detail=str(exc),
+                    detail=f"{type(exc).__name__}: {exc}",
                 ))
 
     return {"code": "OK", "message": "重试已触发", "data": {"task_id": str(task_id)}}
@@ -520,9 +556,40 @@ async def cancel_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task does not exist"})
 
+    active_build_id = task.active_build_id
+    now = datetime.now(timezone.utc)
+    builds = (
+        await db.execute(
+            select(Build).where(
+                Build.task_id == task.id,
+                Build.status.in_([StageStatus.QUEUED.value, StageStatus.RUNNING.value]),
+            )
+        )
+    ).scalars().all()
+    for active_build in builds:
+        active_build.status = "cancelled"
+        active_build.failure_reason = "task cancelled by user"
+        active_build.finished_at = now
+
+        stage_runs = (
+            await db.execute(
+                select(StageRun).where(StageRun.build_id == active_build.id)
+            )
+        ).scalars().all()
+        for stage_run in stage_runs:
+            if stage_run.status in {StageStatus.QUEUED.value, StageStatus.RUNNING.value}:
+                stage_run.status = "cancelled"
+                stage_run.failure_reason = "task cancelled by user"
+                stage_run.finished_at = now
+
     task.status = "cancelled"
+    task.active_build_id = None
+    task.updated_at = now
     event = TaskEvent(
-        task_id=task.id, event_type="task_cancelled", title="任务已取消"
+        task_id=task.id,
+        build_id=active_build_id,
+        event_type="task_cancelled",
+        title="任务已取消",
     )
     db.add(event)
     await db.commit()

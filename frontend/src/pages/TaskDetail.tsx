@@ -34,6 +34,7 @@ import {
   retryTask,
   cancelTask,
   withAuthorizedUrl,
+  getApiErrorMessage,
 } from '@/api/client';
 import {
   STATUS_LABELS,
@@ -70,6 +71,7 @@ export default function TaskDetail() {
   const [artifactsError, setArtifactsError] = useState<string | null>(null);
   const [screenshotsError, setScreenshotsError] = useState<string | null>(null);
   const dashboardRequestSeq = useRef(0);
+  const dashboardForegroundSeq = useRef(0);
   const supportingRequestSeq = useRef(0);
   const realtimeRefreshTimer = useRef<number | null>(null);
 
@@ -90,14 +92,14 @@ export default function TaskDetail() {
         setArtifacts(artifactsResult.value.items);
         setArtifactsError(null);
       } else {
-        setArtifactsError('工件列表加载失败，已保留上一次结果');
+        setArtifactsError(getApiErrorMessage(artifactsResult.reason, '工件列表加载失败，已保留上一次结果'));
       }
 
       if (screenshotsResult.status === 'fulfilled') {
         setScreenshots(screenshotsResult.value.items);
         setScreenshotsError(null);
       } else {
-        setScreenshotsError('页面截图加载失败，已保留上一次结果');
+        setScreenshotsError(getApiErrorMessage(screenshotsResult.reason, '页面截图加载失败，已保留上一次结果'));
       }
     } finally {
       if (seq === supportingRequestSeq.current) {
@@ -111,19 +113,27 @@ export default function TaskDetail() {
     if (!taskId) return;
     const seq = ++dashboardRequestSeq.current;
     if (!background) {
+      dashboardForegroundSeq.current = seq;
       setLoading(true);
     }
 
     try {
       const data = await getTaskDashboard(taskId);
-      if (seq !== dashboardRequestSeq.current) return;
+      const staleForeground = !background && seq < dashboardForegroundSeq.current;
+      const staleBackground = background && (seq !== dashboardRequestSeq.current || seq < dashboardForegroundSeq.current);
+      if (staleForeground || staleBackground) return;
       setDashboard(data);
       setError(null);
-    } catch {
-      if (seq !== dashboardRequestSeq.current) return;
-      setError('加载任务详情失败，请检查后端服务是否运行');
+    } catch (err) {
+      const staleForeground = !background && seq < dashboardForegroundSeq.current;
+      const staleBackground = background && (seq !== dashboardRequestSeq.current || seq < dashboardForegroundSeq.current);
+      if (staleForeground || staleBackground) return;
+      if (!background) {
+        setError(getApiErrorMessage(err, '加载任务详情失败，请检查后端服务是否运行'));
+      }
     } finally {
-      if (!background && seq === dashboardRequestSeq.current) {
+      // Background refreshes should not keep the initial page-level skeleton locked on screen.
+      if (!background && seq === dashboardForegroundSeq.current) {
         setLoading(false);
       }
     }
@@ -152,7 +162,7 @@ export default function TaskDetail() {
   }, [refreshAll]);
 
   useEffect(() => {
-    if (!taskId) return;
+    if (!taskId || loading || !dashboard) return;
 
     const source = new EventSource(getTaskStreamUrl(taskId));
     const onStatus = () => {
@@ -185,9 +195,12 @@ export default function TaskDetail() {
       source.removeEventListener('task_event', onTaskEvent);
       source.close();
     };
-  }, [taskId, scheduleRealtimeRefresh]);
+  }, [taskId, loading, dashboard, scheduleRealtimeRefresh]);
 
   useEffect(() => {
+    if (!dashboard) {
+      return;
+    }
     const status = dashboard?.task.status;
     const isTerminalStatus = status === 'completed' || status === 'failed' || status === 'cancelled';
     if (isTerminalStatus) {
@@ -197,7 +210,7 @@ export default function TaskDetail() {
       void fetchDashboardData(true);
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchDashboardData, dashboard?.task.status]);
+  }, [fetchDashboardData, dashboard]);
 
   const handleRetry = async (fromStage?: string) => {
     if (!taskId) return;
@@ -206,8 +219,8 @@ export default function TaskDetail() {
       await retryTask(taskId, fromStage);
       message.success('重试已触发');
       void refreshAll();
-    } catch {
-      message.error('重试失败');
+    } catch (err) {
+      message.error(getApiErrorMessage(err, '重试失败'));
     } finally {
       setActionLoading(false);
     }
@@ -220,8 +233,8 @@ export default function TaskDetail() {
       await cancelTask(taskId);
       message.success('任务已取消');
       void refreshAll();
-    } catch {
-      message.error('取消失败');
+    } catch (err) {
+      message.error(getApiErrorMessage(err, '取消失败'));
     } finally {
       setActionLoading(false);
     }

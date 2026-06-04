@@ -20,6 +20,8 @@ from workers.orchestrator.runner import (
     STAGE_HANDLERS,
 )
 from workers.stages.build_support import (
+    _apply_terminal_compile_fallback,
+    _apply_normalized_generated_code_bundle,
     _ensure_backend_dependencies,
     _ensure_frontend_dependencies,
     _extract_frontend_compile_error_paths,
@@ -503,6 +505,29 @@ class TestStageHandlers:
         assert "target_interface_count" not in requirements
         assert "raw_user_request" not in requirements
         assert "topic_label" not in batches[0]["requirements"]
+
+    def test_build_codegen_requirements_uses_ascii_component_names_for_unicode_routes(self):
+        profile = {
+            "modules": [
+                {
+                    "title": "数据清洗",
+                    "key": "data-clean",
+                    "route": "/数据清洗",
+                },
+                {
+                    "title": "图表编辑",
+                    "key": "chart-editor",
+                    "route": "/图表编辑",
+                },
+            ],
+        }
+
+        requirements = build_codegen_requirements(profile)
+
+        assert requirements["module_pages"][0]["component_name"] == "U6570U636EU6E05U6D17Page"
+        assert requirements["module_pages"][0]["file_path"] == "frontend/src/pages/U6570U636EU6E05U6D17Page.tsx"
+        assert requirements["module_pages"][1]["component_name"] == "U56FEU8868U7F16U8F91Page"
+        assert requirements["module_pages"][1]["file_path"] == "frontend/src/pages/U56FEU8868U7F16U8F91Page.tsx"
 
     def test_plan_seed_normalization_preserves_llm_modules_and_routes(self):
         plan_seed = {
@@ -1971,9 +1996,11 @@ export default function WorkflowPage() {
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error == "App code generation failed: missing or invalid LLM-generated module frontend files: frontend/src/pages/StatisticsPage.tsx"
-        assert report["repaired_module_paths"] == []
-        assert not any(batch["batch"] == "module_structural_fallback" for batch in report["batches"])
+        assert error is None
+        assert "frontend/src/pages/StatisticsPage.tsx" in report["repaired_module_paths"]
+        assert any(batch["batch"] == "module_structural_fallback" for batch in report["batches"])
+        page_text = (app_root / "frontend/src/pages/StatisticsPage.tsx").read_text(encoding="utf-8")
+        assert "模块开发中" not in page_text
 
     def test_generate_task_app_code_falls_back_during_module_retry_parse_failure(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -2083,12 +2110,14 @@ export default function WorkflowPage() {
             return await generate_task_app_code(str(app_root), str(prd_root), profile)
 
         report, error = asyncio.run(_run())
-        assert error == "App code generation failed: missing or invalid LLM-generated module frontend files: frontend/src/pages/StatisticsPage.tsx"
+        assert error is None
         assert llm.retry_calls == 2
         retry_batch = next(batch for batch in report["batches"] if batch["batch"] == "module_invalid_retry")
         assert "LLM JSON parse error" in retry_batch["error"]
-        assert report["repaired_module_paths"] == []
-        assert not any(batch["batch"] == "module_retry_structural_fallback" for batch in report["batches"])
+        assert "frontend/src/pages/StatisticsPage.tsx" in report["repaired_module_paths"]
+        assert any(batch["batch"] == "module_structural_fallback" for batch in report["batches"])
+        page_text = (app_root / "frontend/src/pages/StatisticsPage.tsx").read_text(encoding="utf-8")
+        assert "模块开发中" not in page_text
 
     def test_generate_task_app_code_shards_invalid_module_page_retries(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -2380,6 +2409,82 @@ const css = `
         assert "PingFang SC" in page_code
         assert "font-family: monospace;" in page_code
         assert normalized["backend/app/main.py"] == "print('ok')\n"
+
+    def test_normalize_generated_frontend_files_deescapes_overescaped_jsx_attributes(self):
+        generated = {
+            "frontend/src/pages/AnalysisPage.tsx": """
+export default function AnalysisPage() {
+  return (
+    <Card>
+      <Form layout=\\"inline\\">
+        <Form.Item label=\\"分析类型\\">
+          <Tabs defaultActiveKey=\\"result\\">
+            <TabPane tab=\\"分析结果\\" key=\\"result\\">
+              <Statistic suffix=\\"元\\" />
+            </TabPane>
+          </Tabs>
+        </Form.Item>
+      </Form>
+    </Card>
+  );
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated)
+
+        page_code = normalized["frontend/src/pages/AnalysisPage.tsx"]
+        assert '\\"' not in page_code
+        assert 'layout="inline"' in page_code
+        assert 'tab="分析结果"' in page_code
+
+    def test_apply_normalized_generated_code_bundle_re_normalizes_compile_fallback_outputs(self, tmp_path):
+        app_root = tmp_path / "app"
+        generated_files = {
+            "frontend/src/pages/Dashboard.tsx": """
+export default function Dashboard() {
+  return <Button type="link" onClick={() => navigate('/clean')}&gt;查看全部</Button>;
+}
+""",
+        }
+
+        normalized_files, applied, apply_error = _apply_normalized_generated_code_bundle(
+            str(app_root),
+            generated_files,
+            ["frontend/src/pages/Dashboard.tsx"],
+        )
+
+        assert applied is True
+        assert apply_error is None
+        assert "}&gt;" not in normalized_files["frontend/src/pages/Dashboard.tsx"]
+        written = (app_root / "frontend/src/pages/Dashboard.tsx").read_text(encoding="utf-8")
+        assert "onClick={() => navigate('/clean')}>查看全部</Button>" in written
+
+    def test_apply_normalized_generated_code_bundle_preserves_terminal_safe_paths_when_requested(self, tmp_path):
+        app_root = tmp_path / "app"
+        generated_files = {
+            "frontend/src/services/api.ts": """
+export const request: any = function(url: string) {
+  return Promise.resolve({ url });
+};
+request.get = function(url: string) {
+  return Promise.resolve({ url });
+};
+""",
+        }
+
+        normalized_files, applied, apply_error = _apply_normalized_generated_code_bundle(
+            str(app_root),
+            generated_files,
+            ["frontend/src/services/api.ts"],
+            preserve_paths={"frontend/src/services/api.ts"},
+        )
+
+        assert applied is True
+        assert apply_error is None
+        assert normalized_files["frontend/src/services/api.ts"] == generated_files["frontend/src/services/api.ts"]
+        written = (app_root / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+        assert written == generated_files["frontend/src/services/api.ts"]
 
     def test_runtime_backend_health_requires_2xx(self, monkeypatch, tmp_path):
         workspace = tmp_path / "workspace"
@@ -3803,8 +3908,10 @@ export function getList(params: Record<string, unknown>) {
 
         assert repaired_paths == ["frontend/src/services/api.ts"]
         api_text = synthesized["frontend/src/services/api.ts"]
-        assert "const BASE_URL = '/api/v1';" in api_text
-        assert "const request = {" in api_text
+        assert "export const BASE_URL =" in api_text
+        assert "|| '/api/v1'" in api_text
+        assert "async function requestCore" in api_text
+        assert "export const request = Object.assign" in api_text
         assert "from './request'" not in api_text
 
     def test_synthesize_support_runtime_files_inlines_request_client_for_nested_request_import(self):
@@ -3830,7 +3937,8 @@ export function getDetail(id: string) {
         assert repaired_paths == ["frontend/src/services/api.ts"]
         api_text = synthesized["frontend/src/services/api.ts"]
         assert 'from "../utils/request"' not in api_text
-        assert "const request = {" in api_text
+        assert "async function requestCore" in api_text
+        assert "export const request = Object.assign" in api_text
 
     def test_generate_task_app_code_repairs_support_compile_invalid_paths(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -4182,7 +4290,7 @@ export default function StorageColdStoragePage() {
 
         report, error = asyncio.run(_run())
         assert error is None
-        assert "frontend/src/pages/Dashboard.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/Dashboard.tsx" in report["repaired_core_paths"]
         assert "frontend/src/pages/ProductionWorkshopPage.tsx" in report["repaired_module_paths"]
         assert "frontend/src/pages/ProductionQuickFreezePage.tsx" in report["repaired_module_paths"]
         assert "frontend/src/pages/StorageColdStoragePage.tsx" in report["repaired_module_paths"]
@@ -4191,7 +4299,6 @@ export default function StorageColdStoragePage() {
         storage_text = (app_root / "frontend/src/pages/StorageColdStoragePage.tsx").read_text(encoding="utf-8")
         api_text = (app_root / "frontend/src/services/api.ts").read_text(encoding="utf-8")
         assert "SnowflakeOutlined" not in dashboard_text
-        assert "CloudServerOutlined" in dashboard_text
         assert "const styles =" in storage_text
         assert "from './request'" not in api_text
 
@@ -4222,6 +4329,1030 @@ export default function StorageColdStoragePage() {
         assert "header: {} as React.CSSProperties" in page_text
         assert "timeline: {} as React.CSSProperties" in page_text
         assert "badge: {} as React.CSSProperties" in page_text
+
+    def test_synthesize_module_compile_files_adds_index_signatures_for_dynamic_union_access(self):
+        generated_files = {
+            "frontend/src/pages/StatsPage.tsx": """
+interface SalesRecord {
+  orderNo: string;
+  sales: number;
+  region: string;
+}
+
+interface VisitRecord {
+  date: string;
+  uv: number;
+  channel: string;
+}
+
+export default function StatsPage() {
+  const currentData: Array<SalesRecord | VisitRecord> = [];
+  const groupField = 'region';
+  return (
+    <div>
+      {currentData.map((item) => String(item[groupField]))}
+    </div>
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/StatsPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/StatsPage.tsx"]
+        page_text = synthesized["frontend/src/pages/StatsPage.tsx"]
+        assert "[key: string]: unknown;" in page_text
+        assert page_text.count("[key: string]: unknown;") == 2
+
+    def test_synthesize_module_compile_files_normalizes_trend_literals_and_nullable_numbers(self):
+        generated_files = {
+            "frontend/src/pages/CleanPage.tsx": """
+interface StatResultTrend {
+  date: string;
+  value: number;
+  trend: 'up' | 'down' | 'stable';
+}
+
+export default function CleanPage() {
+  const selectedRule = { status: 'success', affectedRows: undefined as number | undefined };
+  const change = 10;
+  return (
+    <div>
+      {selectedRule.status === 'success' && selectedRule.affectedRows > 0 && <span>ok</span>}
+      <span>{({ trend: change > 2000 ? 'up' : change < -2000 ? 'down' : 'stable' } as StatResultTrend).trend}</span>
+    </div>
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/CleanPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/CleanPage.tsx"]
+        page_text = synthesized["frontend/src/pages/CleanPage.tsx"]
+        assert "(selectedRule.affectedRows ?? 0) > 0" in page_text
+        assert "as StatResultTrend['trend']" in page_text
+
+    def test_synthesize_module_compile_files_adds_checkbox_import_and_safe_rule_access(self):
+        generated_files = {
+            "frontend/src/pages/CleanPage.tsx": """
+import React from 'react';
+import { Table, Button } from 'antd';
+
+export default function CleanPage() {
+  const detailModal = { rule: null as null | { dataSourceId: string } };
+  const dataSources = [{ id: '1', type: 'db' }];
+  return (
+    <div>
+      <Checkbox onChange={(e) => e.target.checked} />
+      {dataSources.find(d => d.id === detailModal.rule.dataSourceId)?.type}
+    </div>
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/CleanPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/CleanPage.tsx"]
+        page_text = synthesized["frontend/src/pages/CleanPage.tsx"]
+        assert "Checkbox" in page_text
+        assert "from 'antd';" in page_text
+        assert "onChange={(e: { target: { checked: boolean } }) =>" in page_text
+        assert "detailModal.rule?.dataSourceId ?? ''" in page_text
+
+    def test_normalize_generated_frontend_files_normalizes_svg_component_props(self):
+        generated_files = {
+            "frontend/src/pages/Login.tsx": """
+import React from 'react';
+
+const LogoSVG: React.FC = () => (
+  <svg width="64" height="64" viewBox="0 0 64 64">
+    <circle cx="32" cy="32" r="16" />
+  </svg>
+);
+
+export default function Login() {
+  return <LogoSVG style={{ marginBottom: 24 }} />;
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/Login.tsx"]
+        assert "React.FC<React.SVGProps<SVGSVGElement>> = (props) => (" in page_text
+        assert "<svg {...props} width=\"64\" height=\"64\"" in page_text
+
+    def test_normalize_generated_frontend_files_escapes_jsx_text_symbols(self):
+        generated_files = {
+            "frontend/src/pages/AnalysisPage.tsx": """
+export default function AnalysisPage() {
+  return (
+    <div>
+      <span>浏览>10商品 -> 加入购物车</span>
+      <span>订单量环比增长 <20%</span>
+    </div>
+  );
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/AnalysisPage.tsx"]
+        assert "浏览&gt;10商品" in page_text
+        assert "订单量环比增长 &lt;20%" in page_text
+
+    def test_normalize_generated_frontend_files_normalizes_encoded_jsx_tag_close(self):
+        generated_files = {
+            "frontend/src/pages/Dashboard.tsx": """
+export default function Dashboard() {
+  return (
+    <div>
+      <Button type="link" onClick={() => navigate('/clean')}&gt;查看全部</Button>
+      <Button icon={<DownloadOutlined />} onClick={handleExport}&gt;导出图表</Button>
+    </div>
+  );
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/Dashboard.tsx"]
+        assert "&gt;查看全部</Button>" not in page_text
+        assert "&gt;导出图表</Button>" not in page_text
+        assert "onClick={() => navigate('/clean')}>查看全部</Button>" in page_text
+        assert "onClick={handleExport}>导出图表</Button>" in page_text
+
+    def test_normalize_generated_frontend_files_normalizes_encoded_jsx_expression_entities(self):
+        generated_files = {
+            "frontend/src/pages/StatsPage.tsx": """
+export default function StatsPage() {
+  const rows = [{ name: '销售额', label: '销售额' }];
+  return (
+    <div>
+      <span>{rows.find(item =&gt; item.name === '销售额')?.label || ''}</span>
+    </div>
+  );
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/StatsPage.tsx"]
+        assert "=&gt;" not in page_text
+        assert "rows.find(item => item.name === '销售额')" in page_text
+
+    def test_normalize_generated_frontend_files_normalizes_encoded_jsx_expression_operators(self):
+        generated_files = {
+            "frontend/src/pages/CleanPage.tsx": """
+export default function CleanPage() {
+  return (
+    <div>
+      <span>{score &gt;= 90 &amp;&amp; ratio &lt;= 1 ? '达标' : '待处理'}</span>
+    </div>
+  );
+}
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/CleanPage.tsx"]
+        assert "&gt;=" not in page_text
+        assert "&lt;=" not in page_text
+        assert "&amp;&amp;" not in page_text
+        assert "score >= 90 && ratio <= 1" in page_text
+
+    def test_normalize_generated_frontend_files_normalizes_style_shorthand_literals(self):
+        generated_files = {
+            "frontend/src/pages/Login.tsx": """
+import React from 'react';
+
+const styles: { [key: string]: React.CSSProperties } = {
+  rightPanel: {
+    flex: 0 0 450,
+  },
+};
+""",
+        }
+
+        normalized = normalize_generated_frontend_files(generated_files)
+
+        page_text = normalized["frontend/src/pages/Login.tsx"]
+        assert "flex: '0 0 450px'," in page_text
+
+    def test_synthesize_module_compile_files_normalizes_svg_setattribute_types(self):
+        generated_files = {
+            "frontend/src/pages/VisualizePage.tsx": """
+export default function VisualizePage() {
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  const margin = { left: 40 };
+  const chartWidth = 200;
+  const y = 16;
+  line.setAttribute('x1', margin.left + chartWidth);
+  line.setAttribute('y1', y);
+  text.setAttribute('fill', t => t > 0.8 ? '#fff' : '#333');
+  return <div />;
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/VisualizePage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/VisualizePage.tsx"]
+        page_text = synthesized["frontend/src/pages/VisualizePage.tsx"]
+        assert "line.setAttribute('x1', String(margin.left + chartWidth));" in page_text
+        assert "line.setAttribute('y1', String(y));" in page_text
+        assert "text.setAttribute('fill', '#333');" in page_text
+
+    def test_synthesize_support_runtime_files_normalizes_report_status_enum_usage(self):
+        generated_files = {
+            "frontend/src/services/api.ts": """
+import { DataSource, Report } from '../types/models';
+import { DataSourceType, CleanRuleType, ChartType, UserRole } from '../types/constants';
+
+let mockReports: Report[] = [
+  { id: 'rp-001', status: 'generated' },
+];
+
+export async function createReport(): Promise<Report> {
+  return {
+    id: 'rp-002',
+    status: 'draft',
+  } as Report;
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "ReportStatus" in api_text
+        assert "status: ReportStatus.GENERATED" in api_text
+        assert "status: ReportStatus.DRAFT" in api_text
+
+    def test_synthesize_support_runtime_files_normalizes_analysis_and_export_enums(self):
+        generated_files = {
+            "frontend/src/services/api.ts": """
+import type { AnalysisTask, ReportTemplate } from '../types/models';
+import { DataSourceType, CleanRuleType, StatsModelType, ChartType, UserRole } from '../types/constants';
+
+let analysisTasks: AnalysisTask[] = [
+  { id: 'a1', status: 'completed' },
+];
+
+let reportTemplates: ReportTemplate[] = [
+  { id: 'r1', exportFormats: ['PDF', 'Excel', '图片'] },
+];
+
+export function createTask(): AnalysisTask {
+  return { id: 'a2', status: 'pending' } as AnalysisTask;
+}
+
+export function executeTask(task: AnalysisTask) {
+  task.status = 'running';
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "AnalysisStatus" in api_text
+        assert "ExportFormat" in api_text
+        assert "status: AnalysisStatus.COMPLETED" in api_text
+        assert "status: AnalysisStatus.PENDING" in api_text
+        assert "task.status = AnalysisStatus.RUNNING" in api_text
+        assert "exportFormats: [ExportFormat.PDF, ExportFormat.EXCEL, ExportFormat.IMAGE]" in api_text
+
+    def test_synthesize_support_runtime_files_normalizes_import_meta_env_and_get_params(self):
+        generated_files = {
+            "frontend/src/services/api.ts": """
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
+export const api = {
+  get: <T>(url: string, params?: Record<string, string | number | boolean | undefined>) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined) {
+          searchParams.append(key, String(value));
+        }
+      });
+    }
+    const query = searchParams.toString();
+    return fetch(`${BASE_URL}${url}${query ? `?${query}` : ''}`) as unknown as T;
+  },
+};
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "__IPRIGHT_API_BASE_URL__" in api_text
+        assert "get: <T>(url: string, params?: Record<string, unknown>) => {" in api_text
+
+    def test_synthesize_support_runtime_files_normalizes_lowercase_import_meta_env_baseurl(self):
+        generated_files = {
+            "frontend/src/services/api.ts": """
+const baseUrl = import.meta.env.VITE_API_URL;
+
+export const api = {
+  getData: async () => fetch(`${baseUrl}/stats`).then((res) => res.json()),
+};
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            generated_files,
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "const BASE_URL = ((globalThis as { __IPRIGHT_API_BASE_URL__?: string }).__IPRIGHT_API_BASE_URL__) || '/api/v1';" in api_text
+        assert "import.meta.env" not in api_text
+        assert "fetch(`${BASE_URL}/stats`)" in api_text
+
+    def test_synthesize_support_runtime_files_force_runtime_fallback_for_empty_api_module(self):
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            {"frontend/src/services/api.ts": ""},
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+            force_runtime_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "const TOKEN_STORAGE_KEY = 'ipright_api_token';" in api_text
+        assert "export const request =" in api_text
+        assert "export const api =" in api_text
+        assert "export default api;" in api_text
+
+    def test_synthesize_support_runtime_files_force_runtime_fallback_replaces_balanced_api_module(self):
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            {
+                "frontend/src/services/api.ts": """
+export const api = {
+  get: async <T>(url: string): Promise<T> => {
+    throw new Error(url);
+  },
+};
+""",
+            },
+            {},
+            ["frontend/src/services/api.ts"],
+            overwrite_existing=True,
+            force_runtime_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/services/api.ts"]
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "const TOKEN_STORAGE_KEY = 'ipright_api_token';" in api_text
+        assert "throw new Error(url);" not in api_text
+        assert "export default api;" in api_text
+        assert "export function getApiToken(): string {" in api_text
+        assert "export function setApiToken(token: string): void {" in api_text
+        assert "export function withTokenQuery(url: string): string {" in api_text
+        assert "export const client = {" in api_text
+        assert "interceptors:" in api_text
+        assert "export function getTaskBundleDownload(taskId: string): string {" in api_text
+
+    def test_synthesize_support_runtime_files_force_runtime_fallback_replaces_constants_module(self):
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            {
+                "frontend/src/types/constants.ts": """
+export const APP_NAME = '测试平台';
+export const BROKEN = (() => {
+  return import.meta.env.VITE_BROKEN_FLAG;
+})();
+""",
+            },
+            {"product_name": "测试平台", "version": "V2.0"},
+            ["frontend/src/types/constants.ts"],
+            overwrite_existing=True,
+            force_runtime_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/types/constants.ts"]
+        constants_text = synthesized["frontend/src/types/constants.ts"]
+        assert "export const APP_NAME = \"测试平台\";" in constants_text
+        assert "export const APP_VERSION = \"V2.0\";" in constants_text
+        assert "export const DataSourceType = {" in constants_text
+        assert "export type DataSourceType = (typeof DataSourceType)[keyof typeof DataSourceType];" in constants_text
+        assert "export const REPORT_STATUS_OPTIONS: ReportStatus[] = ['draft', 'generated', 'failed'];" in constants_text
+        assert "export default constants;" in constants_text
+        assert "import.meta.env" not in constants_text
+
+    def test_synthesize_support_runtime_files_replaces_process_env_constants_module(self):
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            {
+                "frontend/src/types/constants.ts": """
+export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+export const APP_NAME = '测试平台';
+""",
+            },
+            {"product_name": "测试平台", "version": "V3.0"},
+            ["frontend/src/types/constants.ts"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/types/constants.ts"]
+        constants_text = synthesized["frontend/src/types/constants.ts"]
+        assert "process.env" not in constants_text
+        assert "export const APP_NAME = \"测试平台\";" in constants_text
+        assert "export const APP_VERSION = \"V3.0\";" in constants_text
+
+    def test_synthesize_support_runtime_files_force_runtime_fallback_replaces_models_module(self):
+        synthesized, repaired_paths = _synthesize_support_runtime_files(
+            {
+                "frontend/src/types/models.ts": """
+export interface Supplier {
+  id: string;
+}
+}
+""",
+            },
+            {},
+            ["frontend/src/types/models.ts"],
+            overwrite_existing=True,
+            force_runtime_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/types/models.ts"]
+        models_text = synthesized["frontend/src/types/models.ts"]
+        assert "export interface Supplier extends BaseEntity" in models_text
+        assert "export interface DataSource extends BaseEntity" in models_text
+        assert "export type PageParams = Record<string, unknown>;" in models_text
+
+    def test_synthesize_module_compile_files_replaces_dashboard_icon_and_onfilter_types(self):
+        generated_files = {
+            "frontend/src/pages/Dashboard.tsx": """
+import { CleaningServicesOutlined } from '@ant-design/icons';
+import { Table } from 'antd';
+
+type User = { role: string };
+const columns = [
+  {
+    title: '角色',
+    onFilter: (value: string, record: User) => record.role === value,
+  },
+];
+
+export default function Dashboard() {
+  return <Table columns={columns} />;
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/Dashboard.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/Dashboard.tsx"]
+        page_text = synthesized["frontend/src/pages/Dashboard.tsx"]
+        assert "ToolOutlined" in page_text
+        assert "CleaningServicesOutlined" not in page_text
+        assert "onFilter: (value: string | number | boolean, record: User)" in page_text
+
+    def test_synthesize_module_compile_files_replaces_datasource_outlined_and_casts_transfer_keys(self):
+        generated_files = {
+            "frontend/src/pages/IntegrationPage.tsx": """
+import React, { useState } from 'react';
+import { Transfer } from 'antd';
+import { DataSourceOutlined } from '@ant-design/icons';
+
+export default function IntegrationPage() {
+  const [selectedFields, setSelectedFields] = useState<string[]>([]);
+  return (
+    <Transfer
+      targetKeys={selectedFields}
+      onChange={(nextTargetKeys) => setSelectedFields(nextTargetKeys)}
+      render={(item) => String(item.title)}
+    />
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/IntegrationPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/IntegrationPage.tsx"]
+        page_text = synthesized["frontend/src/pages/IntegrationPage.tsx"]
+        assert "DatabaseOutlined" in page_text
+        assert "DataSourceOutlined" not in page_text
+        assert "setSelectedFields(nextTargetKeys as string[])" in page_text
+
+    def test_synthesize_module_compile_files_replaces_cleaning_outlined_and_annotates_columns(self):
+        generated_files = {
+            "frontend/src/pages/StatsPage.tsx": """
+import { CleaningOutlined } from '@ant-design/icons';
+
+const detailColumns = [
+  { title: '名称', dataIndex: 'name', key: 'name' },
+  { title: '值', dataIndex: 'value', key: 'value', render: (value: number) => `${value}` },
+];
+
+export default function StatsPage() {
+  return <div />;
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/StatsPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/StatsPage.tsx"]
+        page_text = synthesized["frontend/src/pages/StatsPage.tsx"]
+        assert "ClearOutlined" in page_text
+        assert "CleaningOutlined" not in page_text
+        assert "const detailColumns: any[] = [" in page_text
+
+    def test_synthesize_module_compile_files_force_safe_fallback_renders_compile_safe_page(self):
+        generated_files = {
+            "frontend/src/pages/ChartsPage.tsx": """
+import { ResponsiveContainer, PieChart } from 'recharts';
+
+export default function ChartsPage() {
+  return <div><ResponsiveContainer><PieChart /></ResponsiveContainer>&gt;</div>;
+}
+""",
+        }
+        profile = {
+            "modules": [
+                {
+                    "key": "charts",
+                    "route": "/charts",
+                    "title": "图表分析中心",
+                    "description": "用于查看主题图表、核心指标和导出前复核结果。",
+                    "primary_action": "导出分析结果",
+                    "filter_placeholder": "请输入图表名称",
+                    "table_headers": ["图表名称", "分析状态", "更新时间"],
+                    "rows": [
+                        {"图表名称": "转化漏斗", "分析状态": "已完成", "更新时间": "2026-06-02 13:10"},
+                        {"图表名称": "渠道分布", "分析状态": "待复核", "更新时间": "2026-06-02 13:12"},
+                    ],
+                    "highlights": ["趋势对比", "来源分析", "转化路径"],
+                }
+            ]
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            profile,
+            ["frontend/src/pages/ChartsPage.tsx"],
+            overwrite_existing=True,
+            force_safe_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/ChartsPage.tsx"]
+        page_text = synthesized["frontend/src/pages/ChartsPage.tsx"]
+        assert "recharts" not in page_text
+        assert "&gt;" not in page_text
+        assert "图表分析中心" in page_text
+        assert "导出分析结果" in page_text
+        assert "const tableData: Array<Record<string, string>> =" in page_text
+        assert "const tableHeaders: string[] =" in page_text
+        assert "import { Alert, Button, Card, Col, Input, Row, Space, Statistic, Table, Tag, Typography } from 'antd';" not in page_text
+        assert "<table>" in page_text
+        assert "style={{" not in page_text
+
+    def test_synthesize_module_compile_files_force_safe_fallback_renders_page_when_source_missing(self):
+        generated_files = {
+            "frontend/src/pages/DataPreviewPage.tsx": "",
+        }
+        profile = {
+            "modules": [
+                {
+                    "key": "data-preview",
+                    "route": "/data-preview",
+                    "title": "数据预览中心",
+                    "description": "用于查看导入结果、字段样本和关键记录。",
+                    "primary_action": "查看预览详情",
+                    "filter_placeholder": "请输入数据集名称",
+                    "table_headers": ["数据集", "当前状态", "更新时间"],
+                    "rows": [
+                        {"数据集": "销售日报", "当前状态": "已同步", "更新时间": "2026-06-02 14:10"},
+                    ],
+                    "highlights": ["样本抽检", "字段映射", "更新时间"],
+                }
+            ]
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            profile,
+            ["frontend/src/pages/DataPreviewPage.tsx"],
+            overwrite_existing=True,
+            force_safe_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/DataPreviewPage.tsx"]
+        page_text = synthesized["frontend/src/pages/DataPreviewPage.tsx"]
+        assert "数据预览中心" in page_text
+        assert "查看预览详情" in page_text
+        assert "const tableData: Array<Record<string, string>> =" in page_text
+        assert "const tableHeaders: string[] =" in page_text
+        assert "<table>" in page_text
+        assert "style={{" not in page_text
+
+    def test_synthesize_module_compile_files_force_safe_fallback_uses_ascii_identifier_for_unicode_page_path(self):
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            {"frontend/src/pages/图表编辑Page.tsx": ""},
+            {
+                "modules": [
+                    {
+                        "key": "chart-editor",
+                        "route": "/图表编辑",
+                        "title": "图表编辑",
+                    }
+                ]
+            },
+            ["frontend/src/pages/图表编辑Page.tsx"],
+            overwrite_existing=True,
+            force_safe_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/图表编辑Page.tsx"]
+        page_text = synthesized["frontend/src/pages/图表编辑Page.tsx"]
+        assert "export default function U56FEU8868U7F16U8F91Page()" in page_text
+        assert "图表编辑" in page_text
+
+    def test_apply_terminal_compile_fallback_replaces_constants_with_plain_objects(self):
+        synthesized, repaired_paths = _apply_terminal_compile_fallback(
+            {"frontend/src/types/constants.ts": "export enum Broken { A = 'a' }"},
+            {"product_name": "测试平台", "version": "V3.0"},
+            ["frontend/src/types/constants.ts"],
+        )
+
+        assert "frontend/src/types/constants.ts" in repaired_paths
+        assert "frontend/src/App.tsx" in repaired_paths
+        assert "frontend/src/pages/Login.tsx" in repaired_paths
+        constants_text = synthesized["frontend/src/types/constants.ts"]
+        assert "export const APP_NAME = \"测试平台\";" in constants_text
+        assert "export const APP_VERSION = \"V3.0\";" in constants_text
+        assert "export const DataSourceType = {" in constants_text
+        assert "export type DataSourceType = (typeof DataSourceType)[keyof typeof DataSourceType];" in constants_text
+        assert "Object.values" not in constants_text
+        assert "export enum " not in constants_text
+        assert "export const DATA_SOURCE_TYPE_OPTIONS: DataSourceType[] = ['database', 'api', 'file', 'excel', 'csv'];" in constants_text
+        assert "export default constants;" in constants_text
+
+    def test_apply_terminal_compile_fallback_replaces_api_with_compatible_request_exports(self):
+        synthesized, repaired_paths = _apply_terminal_compile_fallback(
+            {"frontend/src/services/api.ts": "export const broken = true;"},
+            {"product_name": "测试平台"},
+            ["frontend/src/services/api.ts"],
+        )
+
+        assert "frontend/src/services/api.ts" in repaired_paths
+        assert "frontend/src/pages/Dashboard.tsx" in repaired_paths
+        api_text = synthesized["frontend/src/services/api.ts"]
+        assert "export const get =" in api_text
+        assert "export const post =" in api_text
+        assert "async function requestCore" in api_text
+        assert "export const request: any = function" in api_text
+        assert "request.get = function" in api_text
+        assert "request.delete = function" in api_text
+        assert "Object.assign" not in api_text
+        assert "export const client = {" in api_text
+        assert "export default api;" in api_text
+
+    def test_apply_terminal_compile_fallback_replaces_models_with_compile_safe_types(self):
+        synthesized, repaired_paths = _apply_terminal_compile_fallback(
+            {"frontend/src/types/models.ts": "export interface Broken<T extends Unknown> { value: T }"},
+            {"product_name": "测试平台"},
+            ["frontend/src/types/models.ts"],
+        )
+
+        assert "frontend/src/types/models.ts" in repaired_paths
+        models_text = synthesized["frontend/src/types/models.ts"]
+        assert "export interface ApiResponse" in models_text
+        assert "export interface PageResult" in models_text
+        assert "Unknown" not in models_text
+
+    def test_apply_terminal_compile_fallback_rebuilds_full_terminal_safe_bundle(self):
+        synthesized, repaired_paths = _apply_terminal_compile_fallback(
+            {"frontend/src/pages/DatasourcesNewPage.tsx": "broken"},
+            {
+                "product_name": "测试平台",
+                "modules": [
+                    {
+                        "key": "datasource-new",
+                        "route": "/datasources/new",
+                        "title": "新增数据源",
+                        "description": "用于录入新数据源的基础信息。",
+                    }
+                ]
+            },
+            ["frontend/src/pages/DatasourcesNewPage.tsx"],
+        )
+
+        assert "frontend/src/App.tsx" in repaired_paths
+        assert "frontend/src/pages/Login.tsx" in repaired_paths
+        assert "frontend/src/pages/Dashboard.tsx" in repaired_paths
+        assert "frontend/src/pages/DatasourcesNewPage.tsx" in repaired_paths
+        assert "frontend/src/services/api.ts" in repaired_paths
+        page_text = synthesized["frontend/src/pages/DatasourcesNewPage.tsx"]
+        assert "export default function DatasourcesNewPage()" in page_text
+        assert "新增数据源" in page_text
+        assert "用于录入新数据源的基础信息。" in page_text
+        assert "<table>" not in page_text
+        assert "style={{" not in page_text
+        app_text = synthesized["frontend/src/App.tsx"]
+        login_text = synthesized["frontend/src/pages/Login.tsx"]
+        dashboard_text = synthesized["frontend/src/pages/Dashboard.tsx"]
+        assert "export default function App()" in app_text
+        assert "bootstrapTokenFromUrl();" in app_text
+        assert "useLocation" not in app_text
+        assert "export default function Login()" in login_text
+        assert "window.localStorage.setItem('token', 'demo-token')" in login_text
+        assert "export default function Dashboard()" in dashboard_text
+        assert "新增数据源" in dashboard_text
+        assert "<a href=" in dashboard_text
+
+    def test_generate_task_app_code_applies_terminal_compile_fallback_for_core_support_and_module(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "猎云智能数据统计分析平台",
+            "scene": "数据统计分析",
+            "industry_scope": "企业服务",
+            "user_roles": ["分析师"],
+            "modules": [
+                {"key": "reports", "route": "/reports", "title": "报表中心", "description": "用于查看统计分析报表。", "table_headers": [], "rows": [], "highlights": []},
+                {"key": "chart-designer", "route": "/chart-designer", "title": "图表设计器", "description": "用于配置图表模板和分析视图。", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import ReportsPage from './pages/ReportsPage'; import ChartDesignerPage from './pages/ChartDesignerPage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/reports' element={<ReportsPage />} /><Route path='/chart-designer' element={<ChartDesignerPage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": """
+export type BrokenParams = Record<string, unknown>;
+export async function request(url: string) {
+  return { url };
+}
+""",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '猎云智能数据统计分析平台';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/ReportsPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/ReportsPage.tsx": """
+import React from 'react';
+import { Table } from 'antd';
+export default function ReportsPage() {
+  return <Table columns={[]} dataSource={[]} />;
+}
+""",
+                    })
+                if required == ("frontend/src/pages/ChartDesignerPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/ChartDesignerPage.tsx": """
+import React from 'react';
+import { BarChartOutlined } from '@ant-design/icons';
+export default function ChartDesignerPage() {
+  return <div><BarChartOutlined />图表设计</div>;
+}
+""",
+                    })
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(current_app_root: str):
+            app_text = (Path(current_app_root) / "frontend/src/App.tsx").read_text(encoding="utf-8")
+            login_text = (Path(current_app_root) / "frontend/src/pages/Login.tsx").read_text(encoding="utf-8")
+            api_text = (Path(current_app_root) / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+            reports_text = (Path(current_app_root) / "frontend/src/pages/ReportsPage.tsx").read_text(encoding="utf-8")
+            chart_text = (Path(current_app_root) / "frontend/src/pages/ChartDesignerPage.tsx").read_text(encoding="utf-8")
+            invalid_paths = []
+            messages = []
+            if "bootstrapTokenFromUrl();" not in app_text:
+                invalid_paths.append("frontend/src/App.tsx")
+                messages.append("src/App.tsx(1,1): error TS2345: bad app shell")
+            if "window.localStorage.setItem('token', 'demo-token')" not in login_text:
+                invalid_paths.append("frontend/src/pages/Login.tsx")
+                messages.append("src/pages/Login.tsx(1,1): error TS2345: bad login shell")
+            if "export const request: any = function" not in api_text:
+                invalid_paths.append("frontend/src/services/api.ts")
+                messages.append("src/services/api.ts(1,1): error TS2345: bad request surface")
+            if "当前页面已切换为终端编译安全模式" not in reports_text:
+                invalid_paths.append("frontend/src/pages/ReportsPage.tsx")
+                messages.append("src/pages/ReportsPage.tsx(1,1): error TS2724: bad reports page surface")
+            if "当前页面已切换为终端编译安全模式" not in chart_text:
+                invalid_paths.append("frontend/src/pages/ChartDesignerPage.tsx")
+                messages.append("src/pages/ChartDesignerPage.tsx(1,1): error TS2724: bad chart page surface")
+            return invalid_paths, "\n".join(messages) if messages else None
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert error is None
+        assert "frontend/src/App.tsx" in report["repaired_core_paths"]
+        assert "frontend/src/pages/Login.tsx" in report["repaired_core_paths"]
+        assert "frontend/src/pages/Dashboard.tsx" in report["repaired_core_paths"]
+        assert "frontend/src/services/api.ts" in report["repaired_support_paths"]
+        assert "frontend/src/pages/ReportsPage.tsx" in report["repaired_module_paths"]
+        assert "frontend/src/pages/ChartDesignerPage.tsx" in report["repaired_module_paths"]
+        assert any(batch["batch"] == "terminal_compile_fallback" for batch in report["batches"])
+        app_text = (app_root / "frontend/src/App.tsx").read_text(encoding="utf-8")
+        login_text = (app_root / "frontend/src/pages/Login.tsx").read_text(encoding="utf-8")
+        api_text = (app_root / "frontend/src/services/api.ts").read_text(encoding="utf-8")
+        reports_text = (app_root / "frontend/src/pages/ReportsPage.tsx").read_text(encoding="utf-8")
+        chart_text = (app_root / "frontend/src/pages/ChartDesignerPage.tsx").read_text(encoding="utf-8")
+        assert "bootstrapTokenFromUrl();" in app_text
+        assert "useLocation" not in app_text
+        assert "window.localStorage.setItem('token', 'demo-token')" in login_text
+        assert "function buildUrl(" in api_text
+        assert "export const request: any = function" in api_text
+        assert "当前页面已切换为终端编译安全模式" in reports_text
+        assert "当前页面已切换为终端编译安全模式" in chart_text
+
+    def test_generate_task_app_code_reports_invalid_artifacts_when_terminal_fallback_still_fails(self, tmp_path, monkeypatch):
+        import workers.stages.build_support as build_support
+
+        app_root = tmp_path / "app"
+        prd_root = tmp_path / "prd"
+        prd_root.mkdir(parents=True, exist_ok=True)
+        (prd_root / "product_prd.md").write_text("# PRD\n", encoding="utf-8")
+        (prd_root / "development_work_order.md").write_text("# Work Order\n", encoding="utf-8")
+
+        profile = {
+            "product_name": "仓储调度管理系统",
+            "scene": "仓储调度",
+            "industry_scope": "物流",
+            "user_roles": ["调度员"],
+            "modules": [
+                {"key": "dispatch-board", "route": "/dispatch/board", "title": "调度看板", "description": "展示当前仓储调度任务概览。", "table_headers": [], "rows": [], "highlights": []},
+            ],
+            "focus_terms": [],
+            "core_entities": [],
+            "experience_blueprint": {},
+            "dashboard_metrics": [],
+            "version": "V1.0",
+        }
+        prepare_seed_application(str(app_root), profile)
+
+        class _Resp:
+            def __init__(self, files):
+                self.success = True
+                self.structured = {"files": files}
+                self.error = None
+
+        class _LLM:
+            async def generate_app_code(self, _prd, _wo, requirements):
+                required = tuple(requirements["required_files"])
+                if required == ("frontend/src/App.tsx",):
+                    return _Resp({"frontend/src/App.tsx": "import { Routes, Route } from 'react-router-dom'; import Login from './pages/Login'; import Dashboard from './pages/Dashboard'; import DispatchBoardPage from './pages/DispatchBoardPage'; export default function App(){ return <Routes><Route path='/login' element={<Login />} /><Route path='/dashboard' element={<Dashboard />} /><Route path='/dispatch/board' element={<DispatchBoardPage />} /></Routes>; }"})
+                if required == ("frontend/src/pages/Login.tsx",):
+                    return _Resp({"frontend/src/pages/Login.tsx": "export default function Login(){ return <button>登录</button>; }"})
+                if required == ("frontend/src/pages/Dashboard.tsx",):
+                    return _Resp({"frontend/src/pages/Dashboard.tsx": "export default function Dashboard(){ return <div>看板</div>; }"})
+                if required == ("frontend/src/services/api.ts", "frontend/src/types/constants.ts", "frontend/src/types/models.ts"):
+                    return _Resp({
+                        "frontend/src/services/api.ts": "export async function request(){ return { success: true }; }",
+                        "frontend/src/types/constants.ts": "export const APP_NAME = '仓储调度管理系统';",
+                        "frontend/src/types/models.ts": "export interface DemoUser { name: string; }",
+                    })
+                if required == ("frontend/src/pages/DispatchBoardPage.tsx",):
+                    return _Resp({
+                        "frontend/src/pages/DispatchBoardPage.tsx": """
+import React from 'react';
+import { Table } from 'antd';
+export default function DispatchBoardPage() {
+  return <Table columns={[]} dataSource={[]} />;
+}
+""",
+                    })
+                return _Resp({})
+
+        llm = _LLM()
+        monkeypatch.setattr(build_support, "get_llm_client", lambda: llm, raising=False)
+        monkeypatch.setattr("app.services.llm.get_llm_client", lambda: llm)
+
+        def _fake_validate_generated_frontend_build(_current_app_root: str):
+            return [
+                "frontend/src/services/api.ts",
+                "frontend/src/pages/DispatchBoardPage.tsx",
+            ], "\n".join(
+                [
+                    "src/services/api.ts(1,1): error TS9999: forced api failure",
+                    "src/pages/DispatchBoardPage.tsx(1,1): error TS9999: forced page failure",
+                ]
+            )
+
+        monkeypatch.setattr(build_support, "validate_generated_frontend_build", _fake_validate_generated_frontend_build)
+
+        async def _run():
+            return await generate_task_app_code(str(app_root), str(prd_root), profile)
+
+        report, error = asyncio.run(_run())
+        assert report is not None
+        assert error == (
+            "App code generation failed: invalid frontend build artifacts: "
+            "frontend/src/services/api.ts, frontend/src/pages/DispatchBoardPage.tsx"
+        )
+        assert report["invalid_compile_paths"] == [
+            "frontend/src/services/api.ts",
+            "frontend/src/pages/DispatchBoardPage.tsx",
+        ]
+        assert report["compile_error"] == "\n".join(
+            [
+                "src/services/api.ts(1,1): error TS9999: forced api failure",
+                "src/pages/DispatchBoardPage.tsx(1,1): error TS9999: forced page failure",
+            ]
+        )
+        assert "BASE_URL = '/api/v1'" in report["invalid_compile_previews"]["frontend/src/services/api.ts"]
+        assert "当前页面已切换为终端编译安全模式" in report["invalid_compile_previews"]["frontend/src/pages/DispatchBoardPage.tsx"]
+        terminal_batches = [batch for batch in report["batches"] if batch["batch"] == "terminal_compile_fallback"]
+        assert len(terminal_batches) == 1
+        assert terminal_batches[0]["fallback_to_template"] is True
+        assert "still invalid after terminal fallback" in terminal_batches[0]["error"]
 
     def test_generate_task_app_code_repairs_module_compile_patterns_for_status_and_align(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
@@ -4936,7 +6067,9 @@ def test_run_build_stage_run_manifest_requires_typescript_build(tmp_path, monkey
     assert result.success is True
     run_manifest_path = tmp_path / "tasks" / task_id / "workspace" / "manifests" / "run_manifest.json"
     run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    assert "if [ ! -d node_modules ]; then npm install --no-audit --no-fund; fi" in run_manifest["install_commands"][0]
     assert "node node_modules/typescript/bin/tsc -b" in run_manifest["install_commands"][0]
+    assert "python -c \"import fastapi, uvicorn\"" in run_manifest["install_commands"][1]
 
 
 def test_generate_task_app_code_reports_batch_progress(tmp_path, monkeypatch):

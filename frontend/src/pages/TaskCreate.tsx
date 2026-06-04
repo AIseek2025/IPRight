@@ -12,7 +12,7 @@ import {
   Divider,
 } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
-import { createTask } from '@/api/client';
+import { createTask, getApiErrorMessage } from '@/api/client';
 
 const { Title, Paragraph } = Typography;
 
@@ -34,7 +34,7 @@ export default function TaskCreate() {
       message.success(`任务创建成功: ${result.task_id}`);
       navigate(`/tasks/${result.task_id}`);
     } catch (err) {
-      message.error('创建任务失败，请检查后端服务');
+      message.error(getApiErrorMessage(err, '创建任务失败，请检查后端服务'));
     } finally {
       setLoading(false);
     }

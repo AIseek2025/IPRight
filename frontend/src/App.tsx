@@ -1,8 +1,9 @@
 import { Routes, Route } from 'react-router-dom';
 import { Layout } from 'antd';
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Spin } from 'antd';
 import AppHeader from './components/AppHeader';
+import { setApiToken } from './api/client';
 
 const TaskCreate = lazy(() => import('./pages/TaskCreate'));
 const TaskList = lazy(() => import('./pages/TaskList'));
@@ -19,6 +20,26 @@ function PageLoading() {
 }
 
 export default function App() {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const url = new URL(window.location.href);
+    const searchToken = url.searchParams.get('token') || url.searchParams.get('api_token');
+    const hashParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+    const hashToken = hashParams.get('token') || hashParams.get('api_token');
+    const token = (searchToken || hashToken || '').trim();
+
+    if (!token) return;
+
+    setApiToken(token);
+    url.searchParams.delete('token');
+    url.searchParams.delete('api_token');
+    hashParams.delete('token');
+    hashParams.delete('api_token');
+    const nextHash = hashParams.toString();
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${nextHash ? `#${nextHash}` : ''}`);
+  }, []);
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <AppHeader />

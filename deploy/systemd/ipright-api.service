@@ -9,6 +9,7 @@ WorkingDirectory=/opt/ipright/current/backend
 EnvironmentFile=/opt/ipright/backend/.env.production
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ipright/shared/ms-playwright
 Environment=PYTHONPATH=/opt/ipright/current/backend:/opt/ipright/current
+Environment=TMPDIR=/opt/ipright/shared/tmp
 ExecStart=/opt/ipright/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18000
 Restart=always
 RestartSec=5

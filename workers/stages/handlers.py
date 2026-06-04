@@ -527,8 +527,8 @@ async def run_build_stage(ctx: StageContext) -> StageResult:
     run_ports = _derive_run_ports(ctx.task_id, ctx.build_id)
     run_manifest = {
         "install_commands": [
-            "cd app/frontend && rm -f package-lock.json && npm install && node node_modules/typescript/bin/tsc -b && node node_modules/vite/bin/vite.js build",
-            "/opt/ipright/backend/.venv/bin/python -m pip install -r app/backend/requirements.txt",
+            "cd app/frontend && if [ ! -d node_modules ]; then npm install --no-audit --no-fund; fi && node node_modules/typescript/bin/tsc -b && node node_modules/vite/bin/vite.js build",
+            "/opt/ipright/backend/.venv/bin/python -c \"import fastapi, uvicorn\" >/dev/null 2>&1 || /opt/ipright/backend/.venv/bin/python -m pip install -r app/backend/requirements.txt",
         ],
         "start_commands": [
             f"cd app/frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port {run_ports['frontend']} --strictPort",

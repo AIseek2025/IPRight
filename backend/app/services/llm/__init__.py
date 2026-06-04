@@ -243,7 +243,41 @@ class LLMClient:
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        choice = data["choices"][0]
+                        raw_head = resp.text[:800]
+                        if not isinstance(data, dict):
+                            last_error = (
+                                f"LLM malformed response ({model}): expected JSON object but got "
+                                f"{type(data).__name__}; raw_head={raw_head}"
+                            )
+                            logger.warning(
+                                "Model %s returned non-object response body: type=%s raw_head=%s",
+                                model,
+                                type(data).__name__,
+                                raw_head,
+                            )
+                            continue
+
+                        choices = data.get("choices")
+                        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                            error_payload = data.get("error")
+                            error_detail = ""
+                            if isinstance(error_payload, dict):
+                                error_detail = json.dumps(error_payload, ensure_ascii=False)[:400]
+                            elif error_payload is not None:
+                                error_detail = str(error_payload)[:400]
+                            last_error = (
+                                f"LLM malformed response ({model}): missing choices; "
+                                f"error={error_detail or 'none'}; raw_head={raw_head}"
+                            )
+                            logger.warning(
+                                "Model %s returned malformed response body: keys=%s raw_head=%s",
+                                model,
+                                sorted(data.keys()),
+                                raw_head,
+                            )
+                            continue
+
+                        choice = choices[0]
                         message = choice.get("message", {})
                         content = self._coerce_message_text(message.get("content"))
 
@@ -373,6 +407,8 @@ class LLMClient:
 }
 """
 
+        required_files = list(app_requirements.get("required_files", []))
+        app_shell_only = required_files == ["frontend/src/App.tsx"]
         minimal_requirements = {
             "required_files": list(app_requirements.get("required_files", [])),
             "module_pages": [
@@ -385,18 +421,27 @@ class LLMClient:
                 for page in app_requirements.get("module_pages", [])
             ],
         }
+        app_shell_constraint = ""
+        if app_shell_only:
+            app_shell_constraint = (
+                "\n\n额外约束:\n"
+                "本批次只生成 `frontend/src/App.tsx` 这一份轻量路由壳文件。\n"
+                "请只保留路由注册、登录态守卫、页面 import、默认跳转等必要代码。\n"
+                "不要在 `App.tsx` 内联任何页面实现、超长样式对象、品牌 SVG、模拟数据数组、表格列定义、详情弹窗、统计卡片或业务处理逻辑。\n"
+                "不要把登录页、仪表盘或模块页面的 JSX 直接展开到 `App.tsx` 中；它们只应该通过 import 引用。\n"
+                "请将 `App.tsx` 控制为精简的成品路由壳，目标不超过 220 行。"
+            )
         user_prompt = (
             f"PRD:\n{prd}\n\n"
             f"本次只需要输出这些文件:\n{json.dumps(minimal_requirements, ensure_ascii=False, indent=2)}\n\n"
-            "请严格依据 PRD 完成这些源码文件，未要求的文件不要输出。"
+            f"请严格依据 PRD 完成这些源码文件，未要求的文件不要输出。{app_shell_constraint}"
         )
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        required_files = list(app_requirements.get("required_files", []))
-        max_tokens_override = 24000 if required_files == ["frontend/src/App.tsx"] else 16000
+        max_tokens_override = 9000 if app_shell_only else 16000
 
         return await self.chat_with_models(
             messages,
