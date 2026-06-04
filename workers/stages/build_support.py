@@ -12,17 +12,29 @@ from app.services.project_profile import build_frontend_profile_source
 from workers.stages.generated_backend import GENERATED_BACKEND_APP_FILES, write_generated_backend_files
 _CORE_INVALID_RETRY_BATCH_SIZE = 1
 _MODULE_INVALID_RETRY_BATCH_SIZE = 1
+_BASE_FRONTEND_DEPENDENCIES = {
+    "react": "18.3.0",
+    "react-dom": "18.3.0",
+    "react-router-dom": "6.22.0",
+}
 _CORE_FRONTEND_DEPENDENCIES = {
-    "@ant-design/icons": "^5.3.0",
-    "antd": "^5.15.0",
-    "axios": "^1.6.0",
-    "dayjs": "^1.11.0",
+    "@ant-design/icons": "5.3.0",
+    "antd": "5.15.0",
+    "axios": "1.6.0",
+    "dayjs": "1.11.0",
+}
+_CORE_FRONTEND_DEV_DEPENDENCIES = {
+    "@types/react": "18.3.0",
+    "@types/react-dom": "18.3.0",
+    "@vitejs/plugin-react": "4.2.0",
+    "typescript": "5.4.0",
+    "vite": "5.4.0",
 }
 _OPTIONAL_FRONTEND_DEPENDENCIES = {
-    "@ant-design/charts": "^2.6.5",
-    "@ant-design/pro-components": "^2.8.6",
-    "echarts": "^5.5.0",
-    "echarts-for-react": "^3.0.2",
+    "@ant-design/charts": "2.6.5",
+    "@ant-design/pro-components": "2.8.6",
+    "echarts": "5.5.0",
+    "echarts-for-react": "3.0.2",
 }
 _UNSUPPORTED_UTILITY_CLASS_TOKENS = (
     "bg-",
@@ -178,18 +190,8 @@ def _render_frontend_package_json() -> str:
             "version": "1.0.0",
             "type": "module",
             "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
-            "dependencies": {
-                "react": "^18.3.0",
-                "react-dom": "^18.3.0",
-                "react-router-dom": "^6.22.0",
-            },
-            "devDependencies": {
-                "@types/react": "^18.3.0",
-                "@types/react-dom": "^18.3.0",
-                "@vitejs/plugin-react": "^4.2.0",
-                "typescript": "^5.4.0",
-                "vite": "^5.4.0",
-            },
+            "dependencies": _BASE_FRONTEND_DEPENDENCIES,
+            "devDependencies": _CORE_FRONTEND_DEV_DEPENDENCIES,
         },
         ensure_ascii=False,
         indent=2,
@@ -1159,7 +1161,7 @@ def validate_generated_frontend_build(app_root: str) -> tuple[list[str], str | N
         package_lock.unlink()
 
     commands = [
-        ["npm", "install"],
+        ["npm", "install", "--no-audit", "--no-fund", "--prefer-offline"],
         ["node", "node_modules/typescript/bin/tsc", "-b"],
         ["node", "node_modules/vite/bin/vite.js", "build"],
     ]

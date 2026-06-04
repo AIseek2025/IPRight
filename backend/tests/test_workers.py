@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -2300,18 +2301,15 @@ export default function WorkflowPage() {
         frontend_root = tmp_path / "frontend"
         frontend_root.mkdir(parents=True, exist_ok=True)
         package_json = frontend_root / "package.json"
-        package_json.write_text(
-            '{"dependencies":{"react":"^18.3.0"}}',
-            encoding="utf-8",
-        )
+        package_json.write_text('{"dependencies":{"react":"18.3.0"}}', encoding="utf-8")
 
         _ensure_frontend_dependencies(str(frontend_root))
 
         updated = package_json.read_text(encoding="utf-8")
-        assert '"axios": "^1.6.0"' in updated
-        assert '"antd": "^5.15.0"' in updated
-        assert '"@ant-design/icons": "^5.3.0"' in updated
-        assert '"dayjs": "^1.11.0"' in updated
+        assert '"axios": "1.6.0"' in updated
+        assert '"antd": "5.15.0"' in updated
+        assert '"@ant-design/icons": "5.3.0"' in updated
+        assert '"dayjs": "1.11.0"' in updated
 
     def test_sync_frontend_dependencies_only_keeps_used_optional_packages(self, tmp_path):
         frontend_root = tmp_path / "frontend"
@@ -2322,10 +2320,10 @@ export default function WorkflowPage() {
             json.dumps(
                 {
                     "dependencies": {
-                        "react": "^18.3.0",
-                        "@ant-design/pro-components": "^2.8.6",
-                        "echarts": "^5.5.0",
-                        "echarts-for-react": "^3.0.2",
+                        "react": "18.3.0",
+                        "@ant-design/pro-components": "2.8.6",
+                        "echarts": "5.5.0",
+                        "echarts-for-react": "3.0.2",
                     }
                 }
             ),
@@ -2339,8 +2337,8 @@ export default function WorkflowPage() {
         sync_frontend_dependencies(str(frontend_root))
 
         updated = package_json.read_text(encoding="utf-8")
-        assert '"echarts": "^5.5.0"' in updated
-        assert '"echarts-for-react": "^3.0.2"' in updated
+        assert '"echarts": "5.5.0"' in updated
+        assert '"echarts-for-react": "3.0.2"' in updated
         assert '"@ant-design/pro-components"' not in updated
 
     def test_sync_frontend_dependencies_keeps_ant_design_charts_when_used(self, tmp_path):
@@ -2352,9 +2350,9 @@ export default function WorkflowPage() {
             json.dumps(
                 {
                     "dependencies": {
-                        "react": "^18.3.0",
-                        "@ant-design/charts": "^2.6.5",
-                        "@ant-design/pro-components": "^2.8.6",
+                        "react": "18.3.0",
+                        "@ant-design/charts": "2.6.5",
+                        "@ant-design/pro-components": "2.8.6",
                     }
                 }
             ),
@@ -2368,7 +2366,7 @@ export default function WorkflowPage() {
         sync_frontend_dependencies(str(frontend_root))
 
         updated = package_json.read_text(encoding="utf-8")
-        assert '"@ant-design/charts": "^2.6.5"' in updated
+        assert '"@ant-design/charts": "2.6.5"' in updated
         assert '"@ant-design/pro-components"' not in updated
 
     def test_ensure_backend_dependencies_adds_pyjwt(self, tmp_path):
@@ -3553,7 +3551,7 @@ src/services/api.ts(106,69): error TS2345: Argument of type 'PigQueryParams | un
 
         invalid_paths, compile_error = validate_generated_frontend_build(str(tmp_path))
 
-        assert calls[0] == ["npm", "install"]
+        assert calls[0] == ["npm", "install", "--no-audit", "--no-fund", "--prefer-offline"]
         assert invalid_paths == [
             "frontend/src/services/api.ts",
             "frontend/src/pages/PigsTransferPage.tsx",
@@ -5122,6 +5120,63 @@ export default function ChartsPage() {
         assert "export default function Dashboard()" in dashboard_text
         assert "新增数据源" in dashboard_text
         assert "<a href=" in dashboard_text
+
+    def test_apply_terminal_compile_fallback_real_compiles_for_dynamic_route_pages(self, tmp_path):
+        repo_node_modules = PROJECT_ROOT / "frontend" / "node_modules"
+        if not repo_node_modules.exists():
+            pytest.skip("frontend/node_modules is required for real compile probe")
+
+        app_root = tmp_path / "app"
+        profile = {
+            "product_name": "猎云多平台数据整合软件",
+            "version": "V1.0",
+            "modules": [
+                {"key": "datasources-id", "route": "/datasources/:id", "title": "数据源详情", "description": "查看数据源详情"},
+                {"key": "datasources-new", "route": "/datasources/new", "title": "新增数据源", "description": "录入新数据源"},
+                {"key": "tasks-new", "route": "/tasks/new", "title": "新建任务", "description": "创建新任务"},
+                {"key": "tasks-id", "route": "/tasks/:id", "title": "任务详情", "description": "查看任务详情"},
+                {"key": "rules", "route": "/rules", "title": "规则中心", "description": "查看规则"},
+            ],
+        }
+        prepare_seed_application(str(app_root), profile)
+        requirements = build_codegen_requirements(profile)["required_files"]
+        synthesized, repaired_paths = _apply_terminal_compile_fallback(
+            {relative_path: "broken" for relative_path in requirements},
+            profile,
+            requirements,
+        )
+        synthesized, applied, apply_error = _apply_normalized_generated_code_bundle(
+            str(app_root),
+            synthesized,
+            requirements,
+            preserve_paths=set(synthesized),
+        )
+
+        assert applied is True
+        assert apply_error is None
+        assert "frontend/src/pages/DatasourcesIdPage.tsx" in repaired_paths
+        assert "frontend/src/pages/DatasourcesNewPage.tsx" in repaired_paths
+        assert "frontend/src/pages/TasksNewPage.tsx" in repaired_paths
+
+        frontend_root = app_root / "frontend"
+        (frontend_root / "node_modules").symlink_to(repo_node_modules, target_is_directory=True)
+
+        for command in (
+            ["node", "node_modules/typescript/bin/tsc", "-b"],
+            ["node", "node_modules/vite/bin/vite.js", "build"],
+        ):
+            result = subprocess.run(
+                command,
+                cwd=str(frontend_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=180,
+                check=False,
+            )
+            output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            assert result.returncode == 0, output
 
     def test_generate_task_app_code_applies_terminal_compile_fallback_for_core_support_and_module(self, tmp_path, monkeypatch):
         import workers.stages.build_support as build_support
