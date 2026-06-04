@@ -372,6 +372,245 @@ scripts/ecs_acceptance_pull.py
 
 ---
 
+## 7.6 2026-06-04 真实热更新与 build 5 复跑记录
+
+本轮已针对真实失败任务 `678ea318-a606-43a9-8298-17bb737ac6a1` 完成一次正式热更新与线上复跑，重点结论如下。
+
+### 7.6.1 本轮上线代码
+
+- 本地已提交并推送：
+
+```text
+a70a88a Harden generated frontend dependency install path
+```
+
+- 服务器上已确认：
+
+```bash
+cd /opt/ipright
+git rev-parse --short HEAD
+git log -1 --oneline
+```
+
+返回：
+
+```text
+a70a88a
+a70a88a (HEAD, origin/main) Harden generated frontend dependency install path
+```
+
+### 7.6.2 本轮部署结果
+
+在 ECS 上执行 `bash scripts/ipright-ecs-full-deploy.sh` 后，已确认：
+
+1. `alembic upgrade head` 成功
+2. 前端 `tsc -b && vite build` 成功
+3. `ipright-api` 启动成功，`/health` 返回 `200`
+4. `ipright-worker` 启动成功，Celery 进入 `ready`
+
+本轮健康检查口径：
+
+```bash
+curl -fsSL http://127.0.0.1:18000/health
+sudo systemctl status ipright-api --no-pager | tail -n 20
+sudo systemctl status ipright-worker --no-pager | tail -n 20
+```
+
+### 7.6.3 Playwright 依赖告警说明
+
+部署日志中出现：
+
+```text
+python -m playwright install-deps chromium
+sh: apt-get: command not found
+```
+
+在当前阿里云 `dnf/yum` 系发行版上，这一条仍不是阻塞项。本轮之后端迁移、前端构建、systemd 重启与健康检查均已成功，因此该告警可视为：
+
+- 对“Playwright 官方 fallback 安装路径不适配当前系统”的提示
+- 不是本轮 API/Worker/前端发布失败原因
+
+若需要继续验证截图链，仍应优先沿用前文已经验证过的 RPM 包安装路径，而不是依赖 `install-deps chromium`。
+
+### 7.6.4 本轮暴露出的 3 个关键坑
+
+#### 坑 1：不要在 ECS 上进入本机 Mac 路径
+
+错误示例：
+
+```bash
+cd /Users/brando/Documents/trae_projects/CodeMaster/isolated_autoruns/IPRight
+```
+
+这会导致：
+
+```text
+fatal: not a git repository
+```
+
+在 ECS 上必须统一使用：
+
+```bash
+cd /opt/ipright
+```
+
+#### 坑 2：首次在 ECS 上操作 Git 时需要声明 safe.directory
+
+若出现：
+
+```text
+fatal: detected dubious ownership in repository at '/opt/ipright'
+```
+
+应先执行：
+
+```bash
+git config --global --add safe.directory /opt/ipright
+```
+
+然后再执行：
+
+```bash
+git pull --ff-only origin main
+```
+
+#### 坑 3：`/opt/ipright/current` 可能是旧 release，不要拿它当 Git 工作目录
+
+本轮已实测：
+
+```bash
+cd /opt/ipright/current
+git rev-parse --short origin/main
+git rev-list --left-right --count HEAD...origin/main
+```
+
+返回显示 `current` 对应的 release 落后 `origin/main` 29 个提交。
+
+这说明：
+
+- `/opt/ipright/current` 适合给 systemd / 静态发布使用
+- 不适合用来判断仓库是否最新
+- 所有 Git 拉代码、查提交、触发后台接口的运维动作，都应以 `/opt/ipright` 为准
+
+### 7.6.5 retry 接口的真实调用方式
+
+本轮已验证：`POST /api/v1/tasks/{task_id}/retry` 不能发空 body。
+
+若直接发送无 body 请求，会返回：
+
+```json
+{
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body"],
+      "msg": "Field required",
+      "input": null
+    }
+  ]
+}
+```
+
+正确调用方式至少需要发送一个空 JSON：
+
+```bash
+set -a
+. /opt/ipright/backend/.env.production
+set +a
+
+curl -sS \
+  -X POST \
+  -H "Authorization: Bearer $IPRIGHT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  "http://127.0.0.1:18000/api/v1/tasks/678ea318-a606-43a9-8298-17bb737ac6a1/retry" \
+  | python3 -m json.tool
+```
+
+本轮返回：
+
+```json
+{
+  "code": "OK",
+  "message": "重试已触发",
+  "data": {
+    "task_id": "678ea318-a606-43a9-8298-17bb737ac6a1"
+  }
+}
+```
+
+注意：
+
+- retry 接口不会直接返回 `build_id`
+- 若再次调用，且已有构建在跑，会返回 `BUILD_ALREADY_RUNNING`
+
+### 7.6.6 获取最新 build_id 的正确方式
+
+本轮已验证，应该通过 admin builds 列表查询该任务最新 build：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $IPRIGHT_ADMIN_TOKEN" \
+  "http://127.0.0.1:18000/api/v1/admin/builds?task_id=678ea318-a606-43a9-8298-17bb737ac6a1" \
+  | python3 -m json.tool
+```
+
+然后取 `data[0].id` 作为最新 build。
+
+本轮获取到：
+
+```text
+e6cb411a-6142-4443-8dae-bbacda136847
+```
+
+继续查询：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $IPRIGHT_ADMIN_TOKEN" \
+  "http://127.0.0.1:18000/api/v1/admin/builds/e6cb411a-6142-4443-8dae-bbacda136847" \
+  | python3 -m json.tool
+```
+
+查询时的实时状态为：
+
+- `build_no = 5`
+- `status = running`
+- `current_stage = build`
+- `plan` 已成功
+- `build` 正在执行
+
+### 7.6.7 本轮 worker 关键证据
+
+本轮新重试不是旧日志回放，而是真正启动了 build 5。关键日志如下：
+
+```text
+Jun 04 18:29:13 ... Running stage plan for task 678ea318-a606-43a9-8298-17bb737ac6a1
+Jun 04 18:29:13 ... [plan] Generating PRD for task 678ea318-a606-43a9-8298-17bb737ac6a1
+Jun 04 18:29:28 ... Running stage build for task 678ea318-a606-43a9-8298-17bb737ac6a1
+Jun 04 18:29:28 ... [build] Generating app and manifests for task 678ea318-a606-43a9-8298-17bb737ac6a1
+```
+
+这说明：
+
+- 新代码已经成功参与到真实任务复跑
+- 当前阻塞点已经不在服务存活，而在 build 5 的最终结果
+
+### 7.6.8 后续标准操作口径
+
+后续若继续对真实任务做线上复跑，统一按以下顺序：
+
+1. `cd /opt/ipright`
+2. `git config --global --add safe.directory /opt/ipright`
+3. `git pull --ff-only origin main`
+4. `bash scripts/ipright-ecs-full-deploy.sh`
+5. `curl -fsSL http://127.0.0.1:18000/health`
+6. 以 `-d '{}'` 方式调用 retry 接口
+7. 使用 `/api/v1/admin/builds?task_id=...` 获取最新 build id
+8. 再用 `/api/v1/admin/builds/{build_id}` 跟踪最终状态
+
+---
+
 ## 8. 基础设施推荐部署方式
 
 推荐使用：
