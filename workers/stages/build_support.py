@@ -2180,6 +2180,9 @@ def _synthesize_module_compile_files(
 
         normalized = content
         changed = False
+        if "PageHeader" in normalized:
+            normalized = fallback_page
+            changed = True
         for invalid_icon, safe_icon in icon_replacements.items():
             if invalid_icon in normalized:
                 normalized = re.sub(rf"\b{invalid_icon}\b", safe_icon, normalized)
@@ -2240,6 +2243,11 @@ def _synthesize_module_compile_files(
         if normalized_nullable_numbers != normalized:
             normalized = normalized_nullable_numbers
             changed = True
+        if "records: '-'" in normalized and "records?: number;" in normalized:
+            normalized_records_union = normalized.replace("records?: number;", "records?: number | string;")
+            if normalized_records_union != normalized:
+                normalized = normalized_records_union
+                changed = True
         normalized_safe_rule = normalized.replace("detailModal.rule.dataSourceId", "detailModal.rule?.dataSourceId ?? ''")
         if normalized_safe_rule != normalized:
             normalized = normalized_safe_rule

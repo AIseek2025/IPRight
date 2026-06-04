@@ -5028,6 +5028,77 @@ export default function ChartsPage() {
         assert "export default function U56FEU8868U7F16U8F91Page()" in page_text
         assert "图表编辑" in page_text
 
+    def test_synthesize_module_compile_files_falls_back_when_pageheader_is_used(self):
+        profile = {
+            "modules": [
+                {
+                    "key": "sources-id",
+                    "route": "/sources/:id",
+                    "title": "源数据详情",
+                    "description": "查看源数据详情",
+                }
+            ]
+        }
+        generated_files = {
+            "frontend/src/pages/SourcesIdPage.tsx": """
+import React from 'react';
+import { PageHeader, Typography } from 'antd';
+
+export default function SourcesIdPage() {
+  return (
+    <div>
+      <PageHeader title="源数据详情" />
+      <Typography.Text>内容</Typography.Text>
+    </div>
+  );
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            profile,
+            ["frontend/src/pages/SourcesIdPage.tsx"],
+            overwrite_existing=True,
+            force_safe_fallback=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/SourcesIdPage.tsx"]
+        page_text = synthesized["frontend/src/pages/SourcesIdPage.tsx"]
+        assert "PageHeader" not in page_text
+        assert "当前页面已启用编译安全渲染" in page_text
+        assert "<table>" in page_text
+
+    def test_synthesize_module_compile_files_allows_string_placeholder_for_numeric_records(self):
+        generated_files = {
+            "frontend/src/pages/TasksPage.tsx": """
+export interface TaskRecord {
+  id: string;
+  records?: number;
+}
+
+const mockTasks: TaskRecord[] = [
+  { id: 'TASK001', records: 12 },
+  { id: 'TASK002', records: '-' }
+];
+
+export default function TasksPage() {
+  return <div>{mockTasks.length}</div>;
+}
+""",
+        }
+
+        synthesized, repaired_paths = _synthesize_module_compile_files(
+            generated_files,
+            ["frontend/src/pages/TasksPage.tsx"],
+            overwrite_existing=True,
+        )
+
+        assert repaired_paths == ["frontend/src/pages/TasksPage.tsx"]
+        page_text = synthesized["frontend/src/pages/TasksPage.tsx"]
+        assert "records?: number | string;" in page_text
+        assert "records: '-'" in page_text
+
     def test_apply_terminal_compile_fallback_replaces_constants_with_plain_objects(self):
         synthesized, repaired_paths = _apply_terminal_compile_fallback(
             {"frontend/src/types/constants.ts": "export enum Broken { A = 'a' }"},
