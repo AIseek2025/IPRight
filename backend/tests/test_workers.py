@@ -26,6 +26,9 @@ from workers.stages.build_support import (
     _ensure_backend_dependencies,
     _ensure_frontend_dependencies,
     _extract_frontend_compile_error_paths,
+    _render_structured_dashboard_tsx,
+    _render_structured_login_tsx,
+    _render_frontend_package_json,
     _synthesize_module_compile_files,
     _synthesize_support_runtime_files,
     build_seed_copy_ignore,
@@ -2310,6 +2313,12 @@ export default function WorkflowPage() {
         assert '"antd": "5.15.0"' in updated
         assert '"@ant-design/icons": "5.3.0"' in updated
         assert '"dayjs": "1.11.0"' in updated
+
+    def test_render_frontend_package_json_pins_installable_dev_versions(self):
+        updated = _render_frontend_package_json()
+        assert '"typescript": "5.4.5"' in updated
+        assert '"vite": "5.4.21"' in updated
+        assert '"@vitejs/plugin-react": "4.2.0"' in updated
 
     def test_sync_frontend_dependencies_only_keeps_used_optional_packages(self, tmp_path):
         frontend_root = tmp_path / "frontend"
@@ -5191,6 +5200,24 @@ export default function TasksPage() {
         assert "export default function Dashboard()" in dashboard_text
         assert "新增数据源" in dashboard_text
         assert "<a href=" in dashboard_text
+
+    def test_render_structured_login_tsx_contains_capture_friendly_login_signals(self):
+        login_text = _render_structured_login_tsx({"product_name": "测试平台"})
+
+        assert "import { useState } from 'react';" in login_text
+        assert "<h1>登录页</h1>" in login_text
+        assert "name=\"username\"" in login_text
+        assert "name=\"password\"" in login_text
+        assert "placeholder=\"请输入用户名\"" in login_text
+        assert "type=\"password\"" in login_text
+        assert "登录" in login_text
+
+    def test_render_structured_dashboard_tsx_contains_dashboard_markers(self):
+        dashboard_text = _render_structured_dashboard_tsx({"product_name": "测试平台", "modules": []})
+
+        assert "<h1>系统首页</h1>" in dashboard_text
+        assert "工作台与概览页" in dashboard_text
+        assert "测试平台" in dashboard_text
 
     def test_apply_terminal_compile_fallback_real_compiles_for_dynamic_route_pages(self, tmp_path):
         repo_node_modules = PROJECT_ROOT / "frontend" / "node_modules"

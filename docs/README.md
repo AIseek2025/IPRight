@@ -39,19 +39,37 @@
 
 ## 运维与治理
 
-1. `IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
-   - 生产部署、预检、Playwright 修复、任务复跑手册
+1. `deploy/docs/DEPLOYMENT_SOP_INDEX.md`
+   - 部署、验收、排障与发布报告的统一入口页
 
-2. `IPRIGHT_ECS_DEPLOY_PRODUCTION_README.md`
+2. `deploy/docs/IPRIGHT_ECS_DEPLOY_PRODUCTION_README.md`
    - 现网 ECS 部署说明与环境约束
 
-3. `IPRIGHT_CLEANUP_STRATEGY_AND_RESULT.md`
+3. `deploy/docs/DEPLOY_CHECKLIST.md`
+   - 每次 ECS 上线前后的固定检查清单
+
+4. `deploy/docs/OPERATIONS_MANUAL.md`
+   - 日常值班、巡检、热修、回滚与真实任务复跑手册
+
+5. `deploy/docs/PHASE1_RELEASE_RUNBOOK.md`
+   - 当前阶段标准发布动作与验收顺序
+
+6. `deploy/docs/PHASE1_RELEASE_GATES_AND_GRADUAL_ROLLOUT.md`
+   - 发布门禁、渐进式放量与回退触发条件
+
+7. `deploy/docs/IPRIGHT_ECS_DEPLOY_REPORT_20260604.md`
+   - 2026-06-04 真实 ECS 部署与 build 复跑报告
+
+8. `deploy/docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
+   - 生产部署、预检、Playwright 修复、任务复跑补充手册
+
+9. `IPRIGHT_CLEANUP_STRATEGY_AND_RESULT.md`
    - 本地与 ECS 瘦身边界、清理策略与实际结果
 
-4. `IPRIGHT_REPOSITORY_RETENTION_AND_REFACTOR_PLAN.md`
+10. `IPRIGHT_REPOSITORY_RETENTION_AND_REFACTOR_PLAN.md`
    - 仓库长期保留、合并、淘汰、归档方案
 
-5. `IPRIGHT_INDEPENDENT_DELIVERY_CHECKLIST.md`
+11. `IPRIGHT_INDEPENDENT_DELIVERY_CHECKLIST.md`
    - 新任务独立开发、页面与文档自检清单
 
 ## 归档区

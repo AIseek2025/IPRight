@@ -231,8 +231,8 @@
 - `backend/tests/test_workers.py`
 - `deploy/docker-compose.production.yml`
 - `docs/IPRIGHT_DOCUMENT_GENERATION_RULES.md`
-- `docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
-- `docs/IPRIGHT_ECS_DEPLOY_PRODUCTION_README.md`
+- `deploy/docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
+- `deploy/docs/IPRIGHT_ECS_DEPLOY_PRODUCTION_README.md`
 - `scripts/regenerate_task_manual.py`
 - `scripts/ipright-ecs-rerun-doc-fixes.sh`
 - `assets/fonts/IPRightCJK.ttf`
@@ -285,7 +285,7 @@
 2. 凡是改变长期设计约束的改动，都应同时更新：
    - `docs/IPRIGHT_TECH_ARCHITECTURE.md`
    - `docs/IPRIGHT_DOCUMENT_GENERATION_RULES.md`
-   - `docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
+   - `deploy/docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
 3. 阶段性复盘、验收纪要、线上事故排查记录，优先进入 `docs/archive/`；只有沉淀为长期基线的结论，才回写主文档区。  
 4. 若后续出现新的系统级重构，建议按月份继续维护新的“架构变更记录”文件，避免单文件过度膨胀。  
 
