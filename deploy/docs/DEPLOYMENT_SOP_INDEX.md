@@ -68,8 +68,14 @@ bash scripts/ipright-ecs-full-deploy.sh
 
 ```bash
 cd /Users/brando/Documents/trae_projects/CodeMaster/isolated_autoruns/IPRight
-scripts/ipright-release.sh admin@8.218.209.218 /opt/ipright
+scripts/ipright-release.sh ipright-ecs /opt/ipright
 ```
+
+说明：
+
+- 当前正式 SSH 入口是 `admin@2222`
+- 建议先按 `deploy/docs/IPRIGHT_SSH_ACCESS_RUNBOOK.md` 配置本地 `Host ipright-ecs`
+- 如果未配置别名，则不要直接运行上面的命令，改用显式 `ssh`/`scp -p 2222` 的发布方式
 
 ### 3.3 ECS 本机验收
 
@@ -125,6 +131,7 @@ curl -sS \
 - 运维手册：`deploy/docs/OPERATIONS_MANUAL.md`
 - 发布 Runbook：`deploy/docs/PHASE1_RELEASE_RUNBOOK.md`
 - 发布门禁与灰度：`deploy/docs/PHASE1_RELEASE_GATES_AND_GRADUAL_ROLLOUT.md`
+- SSH 入口与恢复：`deploy/docs/IPRIGHT_SSH_ACCESS_RUNBOOK.md`
 - deploy 目录说明：`deploy/README.md`
 - 2026-06-04 真实部署报告：`deploy/docs/IPRIGHT_ECS_DEPLOY_REPORT_20260604.md`
 - 审计修复报告：`docs/IPRIGHT_CODE_AUDIT_FIX_REPORT_2026-05-26.md`

@@ -31,9 +31,11 @@
    - 当前阶段标准发布路径
 6. `deploy/docs/PHASE1_RELEASE_GATES_AND_GRADUAL_ROLLOUT.md`
    - 发布门禁、灰度和回退触发条件
-7. `deploy/docs/IPRIGHT_ECS_DEPLOY_REPORT_20260604.md`
+7. `deploy/docs/IPRIGHT_SSH_ACCESS_RUNBOOK.md`
+   - SSH 最终入口、`2222` 值班口径与恢复记录
+8. `deploy/docs/IPRIGHT_ECS_DEPLOY_REPORT_20260604.md`
    - 2026-06-04 真实 ECS 部署与 build 复跑报告
-8. `deploy/docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
+9. `deploy/docs/IPRIGHT_DEPLOYMENT_REFERENCE_MANUAL.md`
    - 生产部署补充手册
 
 ## 3. 配置模板
@@ -64,6 +66,12 @@
   - 标准化 release 发布，带 `current` 软链切换
 - `scripts/ipright-ecs-rerun-doc-fixes.sh`
   - 文档修复后的定向复跑辅助脚本
+
+当前 SSH 入口基线：
+
+- 远程登录、发布和巡检统一优先走 `admin@2222`
+- 若本地使用 `~/.ssh/config`，建议把 `ipright-ecs` 映射到 `8.218.209.218:2222`
+- 若临时不用别名，需为 `ssh`/`scp` 显式补 `-p 2222` / `-P 2222`
 
 ## 5. 使用原则
 
